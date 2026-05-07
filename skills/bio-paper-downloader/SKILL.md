@@ -106,19 +106,6 @@ Override with `--pdf-dir` and `--metadata-dir` to change output locations.
 - `data/metadata/*.json` — paper metadata (one JSON per paper)
 - `data/downloaded.json` — state file tracking all downloaded IDs
 
-## Other Scripts (internal helpers)
-
-The following scripts are used internally by `paper_cli.py` but can also be
-invoked directly for advanced workflows:
-
-| Script | Purpose |
-|--------|---------|
-| `paper_cli.py` | **Primary** unified CLI (search, find, get) |
-| `search_biorxiv.py` | Low-level: query bioRxiv API by date range |
-| `search_arxiv.py` | Low-level: query arXiv API by categories |
-| `merge_deduplicate.py` | Low-level: merge + deduplicate paper lists |
-| `download_pdfs.py` | Low-level: batch download PDFs from JSON list |
-
 ## Configuration
 
 All defaults come from `config.yaml`:
