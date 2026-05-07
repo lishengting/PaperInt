@@ -1,7 +1,7 @@
 ---
 name: bio-paper-downloader
 description: Search and download bioinformatics papers from arXiv, bioRxiv, medRxiv, and PubMed. Supports keyword search, title search, URL download, and list-only mode via a single unified CLI.
-compatibility: Requires Python 3. Direct PDF downloads use stdlib only. Browser-based bioRxiv/medRxiv downloads need Playwright (pip install playwright && playwright install chromium).
+compatibility: Requires Python 3 and google-chrome. Direct PDF downloads use stdlib only. Browser-based downloads (bioRxiv/medRxiv/PubMed) need Playwright (pip install playwright). On headless servers use xvfb-run.
 metadata:
   skit:
     version: 0.1.0
@@ -87,28 +87,35 @@ URLs are auto-detected by domain pattern. Generic PDF URLs also work.
 
 | Source | Search API | PDF Download | Notes |
 |--------|-----------|-------------|-------|
-| `arxiv` | arXiv API | Direct PDF | Most reliable for CS/bioinfo preprints |
-| `biorxiv` | bioRxiv API | Browser (fallback) | Biology preprints; Cloudflare requires browser |
-| `medrxiv` | medRxiv API | Browser (fallback) | Medical/clinical preprints; Cloudflare requires browser |
-| `pubmed` | NCBI E-utilities | PMC (if available) | Metadata always saved; PDF via PMC free full text |
+| `arxiv` | arXiv API | Direct HTTP | Most reliable for CS/bioinfo preprints |
+| `biorxiv` | bioRxiv API | Browser | Biology preprints; Cloudflare requires headed Chrome |
+| `medrxiv` | medRxiv API | Browser | Medical/clinical preprints; Cloudflare requires headed Chrome |
+| `pubmed` | NCBI E-utilities | Browser via DOI | Follows DOI to publisher page, finds PDF link |
 
 ### Browser-Based PDF Download
 
 bioRxiv and medRxiv use Cloudflare protection that blocks direct HTTP PDF
-downloads. Pass `--browser` to enable Playwright-based fallback:
+downloads. PubMed papers link to publisher websites (Nature, Springer, etc.)
+that require a real browser. Pass `--browser` to enable headed-Chrome downloads:
 
 ```bash
+# bioRxiv / medRxiv: bypass Cloudflare
 python3 scripts/paper_cli.py search -k "methylation" -s biorxiv -n 1 --browser
+
+# PubMed: follow DOI → publisher page → PDF link
+python3 scripts/paper_cli.py search -k "deep learning" -s pubmed -n 1 --browser
 ```
 
-The browser script (`download_biorxiv_browser.py`) is fully self-contained:
-1. Launch Playwright's Chromium (headless)
-2. Open the article page to pass Cloudflare challenge
-3. Navigate to the PDF page in the same session
-4. Fetch PDF bytes via in-page JavaScript
-5. Return the PDF to `paper_cli.py`
+Two browser scripts handle the download:
+- `download_biorxiv_browser.py` — navigates article page → PDF page via same session
+- `download_publisher_pdf.py` — follows DOI to publisher, locates PDF link, downloads
 
-Requirements: `pip install playwright && playwright install chromium`
+Both launch a real headed Chrome with a persistent profile, wait for anti-bot
+challenges (Cloudflare/reCAPTCHA) to resolve, then fetch the PDF through the
+authenticated browser session.
+
+Requirements: `google-chrome`, `pip install playwright`.
+On headless servers, prefix with `xvfb-run`.
 
 ## State Tracking
 

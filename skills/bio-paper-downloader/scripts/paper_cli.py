@@ -422,6 +422,27 @@ def _browser_download(doi, server, config):
     return None
 
 
+def _publisher_download(doi, pmid, config):
+    """Call the publisher-based PDF downloader as a subprocess."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'download_publisher_pdf.py')
+    cmd = [sys.executable, script, '--doi', doi, '-o', '/dev/stdout',
+           '--timeout', str(tout(config))]
+    # We use a temp dir for output — the script can save directly
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd[cmd.index('/dev/stdout')] = tmpdir
+        r = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=tout(config) + 60)
+        if r.returncode == 0:
+            safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+            pdf_path = os.path.join(tmpdir, safe_name)
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as f:
+                    return f.read()
+    return None
+
+
 def _pubmed_lookup_pmc(pmid, config):
     """Look up PMC ID for a PubMed article."""
     sr = pubmed_api('elink.fcgi', {
@@ -475,12 +496,16 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
         pdf_data = download_preprint(paper.get('doi', pid), src, config,
                                      use_browser=use_browser)
     elif src == 'pubmed':
-        # Use pmc_id from paper metadata if already fetched, else look it up
-        pmc_id = paper.get('pmc_id')
-        if not pmc_id:
-            pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
-        if pmc_id:
-            pdf_data = _download_pmc_pdf(pmc_id, config)
+        # 1) Try DOI → publisher PDF (if --browser enabled and DOI available)
+        if use_browser and paper.get('doi'):
+            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config)
+        # 2) Fall back to PMC
+        if not pdf_data:
+            pmc_id = paper.get('pmc_id')
+            if not pmc_id:
+                pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
+            if pmc_id:
+                pdf_data = _download_pmc_pdf(pmc_id, config)
 
     if pdf_data:
         with open(os.path.join(pdf_dir, f"{safe}.pdf"), 'wb') as f:
@@ -732,9 +757,10 @@ def _add_output_args(p):
 def _add_browser_arg(p):
     """Add --browser flag to a sub-parser."""
     p.add_argument('--browser', action='store_true',
-                   help='Use Playwright browser as fallback for bioRxiv/medRxiv ' +
-                        'PDF downloads (bypasses Cloudflare). ' +
-                        'Requires: pip install playwright && playwright install chromium')
+                   help='Use Chrome browser for PDF downloads. ' +
+                        'bioRxiv/medRxiv: bypasses Cloudflare. ' +
+                        'PubMed: follows DOI to publisher page for PDF. ' +
+                        'Requires: google-chrome, pip install playwright')
 
 
 def main():
