@@ -15,7 +15,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -368,8 +370,8 @@ def download_arxiv(arxiv_id, config):
         return None
 
 
-def download_preprint(doi, server, config):
-    """Download PDF from biorxiv or medrxiv."""
+def download_preprint(doi, server, config, use_browser=False):
+    """Download PDF from biorxiv or medrxiv. Falls back to Playwright browser if enabled."""
     headers = {
         'User-Agent': ua(config),
         'Accept': 'application/pdf,*/*;q=0.9',
@@ -389,6 +391,34 @@ def download_preprint(doi, server, config):
         except Exception:
             pass
         time.sleep(1)
+
+    if use_browser:
+        print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
+        try:
+            data = _browser_download(doi, server, config)
+            if data:
+                return data
+        except Exception as e:
+            print(f"  Browser fallback error: {e}", file=sys.stderr)
+
+    return None
+
+
+def _browser_download(doi, server, config):
+    """Call the Playwright-based downloader as a subprocess."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'download_biorxiv_browser.py')
+    with tempfile.TemporaryDirectory() as tmpdir:
+        r = subprocess.run(
+            [sys.executable, script, doi, '-o', tmpdir,
+             '--timeout', str(tout(config))],
+            capture_output=True, text=True, timeout=tout(config) + 60)
+        if r.returncode == 0:
+            safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+            pdf_path = os.path.join(tmpdir, safe_name)
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as f:
+                    return f.read()
     return None
 
 
@@ -419,7 +449,7 @@ def _download_pmc_pdf(pmc_id, config):
     return None
 
 
-def download_paper(paper, config, pdf_dir, metadata_dir, state):
+def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
@@ -442,7 +472,8 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state):
     if src == 'arxiv':
         pdf_data = download_arxiv(paper.get('arxiv_id', pid), config)
     elif src in ('biorxiv', 'medrxiv'):
-        pdf_data = download_preprint(paper.get('doi', pid), src, config)
+        pdf_data = download_preprint(paper.get('doi', pid), src, config,
+                                     use_browser=use_browser)
     elif src == 'pubmed':
         # Use pmc_id from paper metadata if already fetched, else look it up
         pmc_id = paper.get('pmc_id')
@@ -616,7 +647,8 @@ def cmd_get(args, config):
         return 0
 
     state = load_state(args.state_file)
-    ok = download_paper(paper, config, args.pdf_dir, args.metadata_dir, state)
+    ok = download_paper(paper, config, args.pdf_dir, args.metadata_dir, state,
+                        use_browser=args.browser)
     save_state(args.state_file, state)
     if ok is True:
         print("Downloaded")
@@ -646,7 +678,8 @@ def _show_or_download(papers, args, config, single_best=False):
     for i, p in enumerate(papers, 1):
         if not single_best:
             print(f"[{i}/{len(papers)}] {p['paper_id']}")
-        result = download_paper(p, config, args.pdf_dir, args.metadata_dir, state)
+        result = download_paper(p, config, args.pdf_dir, args.metadata_dir, state,
+                                use_browser=args.browser)
         if result is True:
             ok += 1
         elif result is False:
@@ -696,6 +729,14 @@ def _add_output_args(p):
                    help='Download-tracking state file (default: data/downloaded.json)')
 
 
+def _add_browser_arg(p):
+    """Add --browser flag to a sub-parser."""
+    p.add_argument('--browser', action='store_true',
+                   help='Use Playwright browser as fallback for bioRxiv/medRxiv ' +
+                        'PDF downloads (bypasses Cloudflare). ' +
+                        'Requires: pip install playwright && playwright install chromium')
+
+
 def main():
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
@@ -729,6 +770,7 @@ def main():
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only — list matching papers without downloading')
     _add_output_args(sp)
+    _add_browser_arg(sp)
 
     # ---- find ----
     fp = sub.add_parser(
@@ -746,6 +788,7 @@ def main():
     fp.add_argument('-l', '--list', action='store_true',
                     help='Preview only — show the best match without downloading')
     _add_output_args(fp)
+    _add_browser_arg(fp)
 
     # ---- get ----
     gp = sub.add_parser(
@@ -763,6 +806,7 @@ def main():
     gp.add_argument('-l', '--list', action='store_true',
                     help='Parse and show paper info from the URL without downloading')
     _add_output_args(gp)
+    _add_browser_arg(gp)
 
     args = p.parse_args()
     config = load_config(args.config)

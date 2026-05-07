@@ -1,2 +1,6 @@
 # Output data (runtime artifacts)
 data/
+
+# Python cache
+__pycache__/
+*.pyc
