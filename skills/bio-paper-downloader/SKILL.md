@@ -1,7 +1,7 @@
 ---
 name: bio-paper-downloader
-description: Search and download bioinformatics papers from arXiv and bioRxiv. Supports keyword search, title search, URL download, and list-only mode. One unified CLI for all operations.
-compatibility: Requires Python 3 and network access to bioRxiv and arXiv APIs. No additional system dependencies needed.
+description: Search and download bioinformatics papers from arXiv, bioRxiv, medRxiv, and PubMed. Supports keyword search, title search, URL download, and list-only mode via a single unified CLI.
+compatibility: Requires Python 3 and network access to public APIs. No additional system dependencies needed.
 metadata:
   skit:
     version: 0.1.0
@@ -13,6 +13,8 @@ metadata:
       - preprint
       - paper-download
       - biorxiv
+      - arxiv
+      - pubmed
       - arxiv
 ---
 
@@ -27,83 +29,68 @@ handled by an external orchestrator).
 
 ## Quick Start
 
-All functionality is exposed through a single CLI:
+All functionality via a single CLI:
 
 ```
 python3 scripts/paper_cli.py {search|find|get} [options]
 ```
 
-Global options: `--config` (config file path, default `config.yaml`).
+Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed`
 
-All commands support `-l` / `--list` to preview results without downloading.
+Global options: `--config CONFIG` (default `config.yaml`).
+All commands support `-l` / `--list` to preview without downloading.
 
 ## Command Reference
 
-### search — search by keywords, download latest N papers
+### search — keyword search, download latest N papers
 
 ```bash
-# Download latest 3 methylation + single-cell papers from arXiv
-python3 scripts/paper_cli.py search -k "methylation,single-cell" -s arxiv -n 3
+# Download latest 3 methylation + single-cell papers from arXiv (default)
+python3 scripts/paper_cli.py search -k "methylation,single-cell" -n 3
 
-# Use default keywords from config, download 1 paper from arXiv (defaults)
-python3 scripts/paper_cli.py search
+# Search PubMed for CRISPR papers, list only
+python3 scripts/paper_cli.py search -k "CRISPR,gene editing" -s pubmed -n 5 -l
 
-# Search bioRxiv, apply config relevance filter, list only
-python3 scripts/paper_cli.py search -k "CRISPR" -s biorxiv -f -l
-
-# Short form
-python3 scripts/paper_cli.py search -k "tumor,immunotherapy" -n 2 -l
+# Search medRxiv for COVID papers, download 2
+python3 scripts/paper_cli.py search -k "vaccine,immunity" -s medrxiv -n 2
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-k, --keywords` | from config `keywords.include` | Comma-separated keywords |
-| `-s, --source` | from config `search.default_source` (arxiv) | `arxiv` or `biorxiv` |
-| `-n, --num` | from config `search.default_num` (1) | Number of papers to download |
-| `-f, --filter` | off | Apply config keyword relevance filter |
-| `-l, --list` | off | List only, don't download |
+| `-k, --keywords` | config | Comma-separated keywords |
+| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed` |
+| `-n, --num` | config (1) | Number of papers |
+| `-f, --filter` | off | Config keyword relevance filter |
+| `-l, --list` | off | List only, no download |
 
-### find — search by paper title
+### find — search by title
 
 ```bash
-# Search for a specific paper by title on arXiv
 python3 scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
-
-# Search bioRxiv, list matches
-python3 scripts/paper_cli.py find -t "CRISPR editing epigenetics" -s biorxiv -l
+python3 scripts/paper_cli.py find -t "CRISPR editing methylation" -s pubmed -l
 ```
 
-Options:
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-t, --title` | (required) | Paper title to search |
-| `-s, --source` | from config `search.default_source` | `arxiv` or `biorxiv` |
-| `-l, --list` | off | List top matches, don't download |
-
-When not in list mode, only the best match is downloaded.
+Downloads only the best match (unless `-l`).
 
 ### get — download by URL
 
 ```bash
-# Download from arXiv
 python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
-
-# Download from bioRxiv
 python3 scripts/paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
-
-# With full PDF URL
-python3 scripts/paper_cli.py get -u "https://arxiv.org/pdf/2301.00001.pdf"
+python3 scripts/paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
 ```
 
-Options:
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-u, --url` | (required) | Paper URL (arXiv or bioRxiv) |
-| `-l, --list` | off | Only show parsed URL, don't download |
+URLs are auto-detected by domain pattern. Generic PDF URLs also work.
 
-The URL is auto-detected: arXiv abs/pdf URLs and bioRxiv content URLs are
-all parsed to extract the paper ID.
+## Sources
+
+| Source | Search API | PDF Download | Notes |
+|--------|-----------|-------------|-------|
+| `arxiv` | arXiv API | Direct PDF | Most reliable for CS/bioinfo preprints |
+| `biorxiv` | bioRxiv API | Direct PDF | Biology preprints |
+| `medrxiv` | medRxiv API | Direct PDF | Medical/clinical preprints |
+| `pubmed` | NCBI E-utilities | PMC (if available) | Metadata always saved; PDF via PMC free full text |
 
 ## State Tracking
 

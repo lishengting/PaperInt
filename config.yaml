@@ -10,10 +10,6 @@
 
 # --- API Endpoints ---
 apis:
-  biorxiv:
-    details_url: "https://api.biorxiv.org/details/biorxiv/{start_date}/{end_date}/100"
-    pdf_url_template: "https://www.biorxiv.org/content/{doi}.full.pdf"
-    pdf_fallback_template: "https://www.biorxiv.org/content/{doi}"
   arxiv:
     search_url: "https://export.arxiv.org/api/query"
     pdf_url_template: "https://arxiv.org/pdf/{arxiv_id}.pdf"
@@ -25,6 +21,12 @@ apis:
       - "q-bio.CB"
       - "cs.CE"
     max_results: 50
+  biorxiv:
+    base_url: "https://api.biorxiv.org"
+  medrxiv:
+    base_url: "https://api.medrxiv.org"
+  pubmed:
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
 # --- Search Defaults ---
 search:
