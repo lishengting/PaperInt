@@ -26,6 +26,12 @@ apis:
       - "cs.CE"
     max_results: 50
 
+# --- Search Defaults ---
+search:
+  default_source: "arxiv"       # arxiv | biorxiv
+  default_num: 1                # number of papers to download
+  date_range_days: 90           # lookback window for keyword/title search
+
 # --- Download Defaults ---
 download:
   date_range_days: 7

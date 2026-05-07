@@ -1,6 +1,6 @@
 ---
 name: bio-paper-downloader
-description: Search and download bioinformatics preprint papers from bioRxiv and arXiv. Query APIs by date range or categories, filter by configurable keywords, download PDFs, and save metadata with deduplication.
+description: Search and download bioinformatics papers from arXiv and bioRxiv. Supports keyword search, title search, URL download, and list-only mode. One unified CLI for all operations.
 compatibility: Requires Python 3 and network access to bioRxiv and arXiv APIs. No additional system dependencies needed.
 metadata:
   skit:
@@ -20,128 +20,134 @@ metadata:
 
 ## When To Use
 
-Use this skill when the user asks to find and download bioinformatics-related
-papers from bioRxiv or arXiv. Do not use it for generic web searches, PDF
-reading, paper interpretation, or scheduled/cron-based periodic downloading
-(timing is handled by an external orchestrator).
+Use this skill when the user asks to find and download bioinformatics papers
+from arXiv or bioRxiv. Do not use it for generic web searches, paper
+interpretation, or scheduled/cron-based periodic downloading (timing is
+handled by an external orchestrator).
 
-## Core Concepts
+## Quick Start
 
-The downloader searches two preprint sources independently, merges results,
-deduplicates by DOI, applies configurable keyword filtering, downloads PDFs,
-and saves metadata. A state file (`data/downloaded.json`) tracks what has
-already been downloaded to avoid re-fetching.
+All functionality is exposed through a single CLI:
 
-Workflow:
-
-1. Search bioRxiv by date range and keywords
-2. Search arXiv by configured categories
-3. Merge and deduplicate results across sources
-4. Download PDFs and save metadata for new papers
-
-All configuration (API endpoints, keywords, download settings) comes from the
-shared `config.yaml` at the project root.
-
-## Workflow
-
-### Read Configuration
-
-First, locate and read the shared `config.yaml`. The skill directory is
-`skills/bio-paper-downloader/`; the config file lives at `config.yaml`
-in the parent of `skills/`.
-
-### Prepare Output Directories
-
-Create the data directories if they do not exist:
-
-```bash
-mkdir -p data/pdf data/metadata
+```
+python3 scripts/paper_cli.py {search|find|get} [options]
 ```
 
-### Step 1: Search bioRxiv
+Global options: `--config` (config file path, default `config.yaml`).
 
-Use `scripts/search_biorxiv.py` to query the bioRxiv API:
+All commands support `-l` / `--list` to preview results without downloading.
+
+## Command Reference
+
+### search — search by keywords, download latest N papers
 
 ```bash
-python3 scripts/search_biorxiv.py \
-  --config config.yaml \
-  --days 7 \
-  --output data/biorxiv_results.json
+# Download latest 3 methylation + single-cell papers from arXiv
+python3 scripts/paper_cli.py search -k "methylation,single-cell" -s arxiv -n 3
+
+# Use default keywords from config, download 1 paper from arXiv (defaults)
+python3 scripts/paper_cli.py search
+
+# Search bioRxiv, apply config relevance filter, list only
+python3 scripts/paper_cli.py search -k "CRISPR" -s biorxiv -f -l
+
+# Short form
+python3 scripts/paper_cli.py search -k "tumor,immunotherapy" -n 2 -l
 ```
 
 Options:
-- `--start`, `--end`: explicit date range (YYYY-MM-DD)
-- `--days`: lookback from today (default from config)
-- `--state-file`: path to state file for skipping already-downloaded papers
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-k, --keywords` | from config `keywords.include` | Comma-separated keywords |
+| `-s, --source` | from config `search.default_source` (arxiv) | `arxiv` or `biorxiv` |
+| `-n, --num` | from config `search.default_num` (1) | Number of papers to download |
+| `-f, --filter` | off | Apply config keyword relevance filter |
+| `-l, --list` | off | List only, don't download |
 
-### Step 2: Search arXiv
-
-Use `scripts/search_arxiv.py` to query the arXiv API:
-
-```bash
-python3 scripts/search_arxiv.py \
-  --config config.yaml \
-  --max 50 \
-  --output data/arxiv_results.json
-```
-
-### Step 3: Merge and Deduplicate
-
-Use `scripts/merge_deduplicate.py` to combine results from both sources:
+### find — search by paper title
 
 ```bash
-python3 scripts/merge_deduplicate.py \
-  --config config.yaml \
-  --inputs data/biorxiv_results.json data/arxiv_results.json \
-  --output data/merged_papers.json
+# Search for a specific paper by title on arXiv
+python3 scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
+
+# Search bioRxiv, list matches
+python3 scripts/paper_cli.py find -t "CRISPR editing epigenetics" -s biorxiv -l
 ```
 
-This step normalizes both sources into a common paper schema, deduplicates by
-DOI, and re-applies keyword filtering from config.
+Options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-t, --title` | (required) | Paper title to search |
+| `-s, --source` | from config `search.default_source` | `arxiv` or `biorxiv` |
+| `-l, --list` | off | List top matches, don't download |
 
-### Step 4: Download PDFs
+When not in list mode, only the best match is downloaded.
 
-Use `scripts/download_pdfs.py` to fetch PDFs and save metadata:
+### get — download by URL
 
 ```bash
-python3 scripts/download_pdfs.py \
-  --config config.yaml \
-  --papers data/merged_papers.json \
-  --pdf-dir data/pdf \
-  --metadata-dir data/metadata \
-  --state-file data/downloaded.json
+# Download from arXiv
+python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
+
+# Download from bioRxiv
+python3 scripts/paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
+
+# With full PDF URL
+python3 scripts/paper_cli.py get -u "https://arxiv.org/pdf/2301.00001.pdf"
 ```
 
-### Summarize Results
+Options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-u, --url` | (required) | Paper URL (arXiv or bioRxiv) |
+| `-l, --list` | off | Only show parsed URL, don't download |
 
-After all steps, report the totals: papers found, newly downloaded, skipped
-(already present or filtered out).
+The URL is auto-detected: arXiv abs/pdf URLs and bioRxiv content URLs are
+all parsed to extract the paper ID.
 
-## Helper Scripts
+## State Tracking
 
-Resolve scripts from this skill's `scripts/` directory.
+All commands use `--state-file` (default `data/downloaded.json`) to avoid
+re-downloading papers. State is a JSON dict with a `downloaded` array of
+paper IDs.
 
-| Script | Purpose |
-|--------|---------|
-| `search_biorxiv.py` | Query bioRxiv API by date range, filter by keywords |
-| `search_arxiv.py` | Query arXiv API by categories, output JSON |
-| `merge_deduplicate.py` | Merge bioRxiv+arXiv results, dedupe by DOI |
-| `download_pdfs.py` | Download PDFs from normalized paper list |
+Override with `--pdf-dir` and `--metadata-dir` to change output locations.
 
 ## Output
 
 - `data/pdf/*.pdf` — downloaded paper PDFs
-- `data/metadata/*.json` — paper metadata (one JSON file per paper)
-- `data/downloaded.json` — state file tracking all downloaded DOIs/IDs
-- Intermediate JSON files from each step for inspection or piping
+- `data/metadata/*.json` — paper metadata (one JSON per paper)
+- `data/downloaded.json` — state file tracking all downloaded IDs
+
+## Other Scripts (internal helpers)
+
+The following scripts are used internally by `paper_cli.py` but can also be
+invoked directly for advanced workflows:
+
+| Script | Purpose |
+|--------|---------|
+| `paper_cli.py` | **Primary** unified CLI (search, find, get) |
+| `search_biorxiv.py` | Low-level: query bioRxiv API by date range |
+| `search_arxiv.py` | Low-level: query arXiv API by categories |
+| `merge_deduplicate.py` | Low-level: merge + deduplicate paper lists |
+| `download_pdfs.py` | Low-level: batch download PDFs from JSON list |
+
+## Configuration
+
+All defaults come from `config.yaml`:
+
+- `search.default_source` — default preprint source (`arxiv`)
+- `search.default_num` — default paper count (1)
+- `keywords.include` / `keywords.exclude` — default search keywords
+- `apis.arxiv.*` / `apis.biorxiv.*` — API endpoints and URL patterns
+- `download.*` — rate limits, timeouts, file size thresholds
 
 ## Rules
 
 - Do not schedule periodic downloads; this skill runs on demand.
-- Respect rate limits: wait `download.request_delay_seconds` between API calls.
-- Validate PDF downloads by checking the `%PDF` magic bytes at the start of
-  each response body.
-- Skip files smaller than `download.min_pdf_size_bytes` (default 10000 bytes).
-- Skip papers already present in the state file (`data/downloaded.json`).
-- Never modify `config.yaml`; it is the shared configuration read by all skills.
-- If a paper has no DOI or arXiv ID, skip it with a warning.
+- Respect rate limits: arXiv and bioRxiv both enforce strict rate limiting.
+  The script waits `download.request_delay_seconds` between API calls.
+- Validate bioRxiv PDF downloads by checking `%PDF` magic bytes.
+- Validate arXiv downloads by minimum file size (default 10000 bytes).
+- Skip papers already present in the state file.
+- Never modify `config.yaml`; it is the shared configuration.
