@@ -666,38 +666,103 @@ def _show_or_download(papers, args, config, single_best=False):
 # Entry
 # ---------------------------------------------------------------------------
 
+EXAMPLES = """\
+examples:
+  # Keyword mode — search latest N papers from arXiv (default)
+  paper_cli.py search -k "methylation,single-cell" -n 3
+  paper_cli.py search -k "CRISPR" -s pubmed -n 5 -l
+  paper_cli.py search -f                     # use config keywords + filter
+
+  # Title mode — find a specific paper by title
+  paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
+  paper_cli.py find -t "CRISPR editing" -s pubmed -l
+
+  # URL mode — download from a direct link
+  paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
+  paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
+  paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+  paper_cli.py get -u "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8371605/"
+
+sources: arxiv, biorxiv, medrxiv, pubmed"""
+
+
+def _add_output_args(p):
+    """Add shared output-directory options to a sub-parser."""
+    p.add_argument('--pdf-dir', default='data/pdf',
+                   help='Directory for downloaded PDFs (default: data/pdf)')
+    p.add_argument('--metadata-dir', default='data/metadata',
+                   help='Directory for paper metadata JSON (default: data/metadata)')
+    p.add_argument('--state-file', default='data/downloaded.json',
+                   help='Download-tracking state file (default: data/downloaded.json)')
+
+
 def main():
-    p = argparse.ArgumentParser(description='Search and download papers from arXiv, bioRxiv, medRxiv, PubMed')
-    p.add_argument('--config', default='config.yaml', help='Config file path')
-    sub = p.add_subparsers(dest='cmd', required=True)
+    p = argparse.ArgumentParser(
+        prog='paper_cli.py',
+        description='Unified paper search & download CLI — arXiv, bioRxiv, medRxiv, PubMed.',
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument('--config', default='config.yaml',
+                   help='Path to shared YAML config file (default: config.yaml)')
+    sub = p.add_subparsers(dest='cmd', required=True,
+                           title='commands',
+                           description='"search" by keywords, "find" by title, or "get" by URL')
 
-    # search
-    sp = sub.add_parser('search', help='Search by keywords')
-    sp.add_argument('-k', '--keywords', help='Comma-separated keywords (default: from config)')
-    sp.add_argument('-s', '--source', choices=SOURCES, help='Source (default: from config)')
-    sp.add_argument('-n', '--num', type=int, help='Number of papers (default: from config)')
-    sp.add_argument('-f', '--filter', action='store_true', help='Apply config keyword filter')
-    sp.add_argument('-l', '--list', action='store_true', help='List only, no download')
-    sp.add_argument('--pdf-dir', default='data/pdf')
-    sp.add_argument('--metadata-dir', default='data/metadata')
-    sp.add_argument('--state-file', default='data/downloaded.json')
+    # ---- search ----
+    sp = sub.add_parser(
+        'search',
+        help='Search papers by keyword, download latest N results',
+        description='Keyword search: query a source for papers matching keywords, '
+                    'return the most recent N matches (optionally downloading PDFs).',
+        epilog='See "paper_cli.py --help" for full examples.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument('-k', '--keywords',
+                    help='Comma-separated search keywords (default: keywords.include from config)')
+    sp.add_argument('-s', '--source', choices=SOURCES,
+                    help='Paper source to search (default: search.default_source from config)')
+    sp.add_argument('-n', '--num', type=int,
+                    help='Max number of papers to return (default: search.default_num from config)')
+    sp.add_argument('-f', '--filter', action='store_true',
+                    help='Apply config keywords.include/exclude relevance filter before download')
+    sp.add_argument('-l', '--list', action='store_true',
+                    help='Preview only — list matching papers without downloading')
+    _add_output_args(sp)
 
-    # find
-    fp = sub.add_parser('find', help='Search by title')
-    fp.add_argument('-t', '--title', required=True, help='Paper title')
-    fp.add_argument('-s', '--source', choices=SOURCES, help='Source (default: from config)')
-    fp.add_argument('-l', '--list', action='store_true', help='List only, no download')
-    fp.add_argument('--pdf-dir', default='data/pdf')
-    fp.add_argument('--metadata-dir', default='data/metadata')
-    fp.add_argument('--state-file', default='data/downloaded.json')
+    # ---- find ----
+    fp = sub.add_parser(
+        'find',
+        help='Search for a specific paper by title',
+        description='Title search: look up a paper by its title and download '
+                    'the best match (first result).',
+        epilog='See "paper_cli.py --help" for full examples.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    fp.add_argument('-t', '--title', required=True,
+                    help='Paper title to search for (required)')
+    fp.add_argument('-s', '--source', choices=SOURCES,
+                    help='Paper source to search (default: search.default_source from config)')
+    fp.add_argument('-l', '--list', action='store_true',
+                    help='Preview only — show the best match without downloading')
+    _add_output_args(fp)
 
-    # get
-    gp = sub.add_parser('get', help='Download by URL')
-    gp.add_argument('-u', '--url', required=True, help='Paper URL')
-    gp.add_argument('-l', '--list', action='store_true', help='Show parsed info only')
-    gp.add_argument('--pdf-dir', default='data/pdf')
-    gp.add_argument('--metadata-dir', default='data/metadata')
-    gp.add_argument('--state-file', default='data/downloaded.json')
+    # ---- get ----
+    gp = sub.add_parser(
+        'get',
+        help='Download a paper directly from a URL',
+        description='URL download: auto-detect the source from the URL pattern '
+                    'and download the paper (and/or its metadata). '
+                    'Supports arXiv abs/pdf links, bioRxiv/medRxiv content links, '
+                    'PubMed abstract links, PMC article links, and generic .pdf URLs.',
+        epilog='See "paper_cli.py --help" for full examples.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    gp.add_argument('-u', '--url', required=True,
+                    help='Paper URL (arXiv, bioRxiv, medRxiv, PubMed, PMC, or direct PDF)')
+    gp.add_argument('-l', '--list', action='store_true',
+                    help='Parse and show paper info from the URL without downloading')
+    _add_output_args(gp)
 
     args = p.parse_args()
     config = load_config(args.config)
