@@ -1,0 +1,259 @@
+# =============================================================================
+# Shared Configuration for Paper Downloading and Interpretation Skills
+# =============================================================================
+#
+# This file is the single source of truth for all configurable parameters.
+# Edit this file to tune keywords, system prompts, tag definitions, and API
+# endpoints without touching scripts or SKILL.md files.
+#
+# =============================================================================
+
+# --- API Endpoints ---
+apis:
+  biorxiv:
+    details_url: "https://api.biorxiv.org/details/biorxiv/{start_date}/{end_date}/100"
+    pdf_url_template: "https://www.biorxiv.org/content/{doi}.full.pdf"
+    pdf_fallback_template: "https://www.biorxiv.org/content/{doi}"
+  arxiv:
+    search_url: "https://export.arxiv.org/api/query"
+    pdf_url_template: "https://arxiv.org/pdf/{arxiv_id}.pdf"
+    abs_url_template: "https://arxiv.org/abs/{arxiv_id}"
+    categories:
+      - "q-bio.BM"
+      - "q-bio.GN"
+      - "q-bio.MN"
+      - "q-bio.CB"
+      - "cs.CE"
+    max_results: 50
+
+# --- Download Defaults ---
+download:
+  date_range_days: 7
+  min_pdf_size_bytes: 10000
+  pdf_text_max_chars: 15000
+  request_delay_seconds: 3
+  user_agent: "PaperInt-Skills/1.0 (mailto:example@example.com)"
+  timeout_seconds: 60
+
+# --- Filtering Keywords ---
+keywords:
+  include:
+    - "bioinformatic"
+    - "computational biology"
+    - "genomic"
+    - "transcriptom"
+    - "proteom"
+    - "metabolom"
+    - "single-cell"
+    - "scrna"
+    - "rna-seq"
+    - "dna-seq"
+    - "chip-seq"
+    - "atac-seq"
+    - "methylation"
+    - "epigenetic"
+    - "metagenom"
+    - "microbiome"
+    - "phylogen"
+    - "sequence alignment"
+    - "gene expression"
+    - "protein structure"
+    - "alphafold"
+    - "crispr"
+    - "synthetic biology"
+    - "systems biology"
+    - "single cell"
+    - "spatial transcript"
+    - "scRNA-seq"
+    - "bulk RNA-seq"
+    - "whole genome"
+    - "whole exome"
+    - "variant calling"
+    - "snp calling"
+    - "differential expression"
+    - "pathway analysis"
+    - "network analysis"
+    - "machine learning"
+    - "deep learning"
+    - "neural network"
+    - "language model"
+  include_min_match: 2
+
+  exclude:
+    - "ethereum"
+    - "bitcoin"
+    - "cryptocurrency"
+    - "blockchain"
+    - "financial trading"
+    - "stock market"
+    - "aeroelastic"
+    - "flight dynamic"
+    - "gust load"
+    - "concrete"
+    - "battery electrode"
+    - "electromagnetic"
+    - "microwave"
+    - "control system"
+    - "feedback linearisation"
+    - "UAV"
+    - "aircraft"
+    - "cantilevered plate"
+    - "damage identification"
+    - "frequency response"
+    - "flight dynamics"
+    - "gust alleviation"
+    - "nonlinear aeroelastic"
+
+# --- Tag Definitions ---
+tags:
+  definitions:
+    - id: 18
+      label: "单细胞测序"
+      patterns:
+        - "\\bsingle.cell\\b"
+        - "\\bscrna\\b"
+        - "\\bscRNA-seq\\b"
+        - "\\bspatial transcriptom"
+    - id: 17
+      label: "RNA-seq"
+      patterns:
+        - "\\brna-seq\\b"
+        - "\\btranscriptom\\b"
+        - "\\bdifferential expression\\b"
+    - id: 19
+      label: "基因组学"
+      patterns:
+        - "\\bgenom\\b"
+        - "\\bwhole genome\\b"
+        - "\\bwhole exome\\b"
+        - "\\bwgs\\b"
+        - "\\bwes\\b"
+    - id: 20
+      label: "蛋白质组学"
+      patterns:
+        - "\\bproteom\\b"
+        - "\\bprotein structure\\b"
+        - "\\bprotein sequence\\b"
+        - "\\bamino acid\\b"
+    - id: 21
+      label: "代谢组学"
+      patterns:
+        - "\\bmetabolom\\b"
+        - "\\bmetabolite\\b"
+    - id: 22
+      label: "多组学整合"
+      patterns:
+        - "\\bmulti.omics?\\b"
+        - "\\bintegrative\\b"
+    - id: 23
+      label: "表观遗传"
+      patterns:
+        - "\\bepigenetic\\b"
+        - "\\bchip-seq\\b"
+        - "\\batac-seq\\b"
+        - "\\bmethylation\\b"
+        - "\\bhistone\\b"
+    - id: 24
+      label: "宏基因组"
+      patterns:
+        - "\\bmetagenom\\b"
+        - "\\bmicrobiome\\b"
+        - "\\b16s\\b"
+    - id: 29
+      label: "深度学习"
+      patterns:
+        - "\\bdeep learning\\b"
+        - "\\bneural network\\b"
+        - "\\bcnn\\b"
+        - "\\brnn\\b"
+        - "\\blstm\\b"
+        - "\\btransformer\\b"
+    - id: 28
+      label: "机器学习"
+      patterns:
+        - "\\bmachine learning\\b"
+        - "\\brandom forest\\b"
+        - "\\bsvm\\b"
+        - "\\bgradient boosting\\b"
+    - id: 11
+      label: "AlphaFold"
+      patterns:
+        - "\\balphafold\\b"
+        - "\\bprotein folding\\b"
+    - id: 12
+      label: "大语言模型"
+      patterns:
+        - "\\blarge language model\\b"
+        - "\\bllm\\b"
+        - "\\bgpt\\b"
+  base_tag_ids: [2, 9]
+  ai_parent_tag_id: 1
+
+# --- LLM Configuration ---
+llm:
+  api_base_url: "http://localhost:8080/v1"
+  api_key_env: "LLM_API_KEY"
+  model: "qwen3-235b-a22b"
+  backup_model: "qwen3-235b-a22b"
+  backup_base_url: "http://localhost:8080/v1"
+  temperature: 0.3
+  max_tokens: 4000
+  timeout_seconds: 120
+
+# --- Interpretation System Prompts ---
+system_prompts:
+  full_text: |-
+    你是一位资深的生物信息学论文解读专家。你的任务是将学术论文转化为专业、深入、易懂的中文技术文章。
+
+    解读要求：
+    1. **标题**：创建一个吸引人的中文标题，突出论文核心创新点，格式如：【论文解读】xxx
+    2. **研究背景**（300-400字）：解释该研究领域的背景、现有问题和研究动机
+    3. **核心方法**（400-500字）：详细解释论文提出的方法、算法或技术路线
+    4. **主要发现与结果**（300-400字）：总结实验结果、性能评估和关键发现
+    5. **讨论与意义**（200-300字）：分析研究的创新点、局限性和对领域的影响
+    6. **实践启示**（150-200字）：该研究对实际工作的指导意义
+    7. **精炼总结**：3-5条bullet points，每条一句话，概括核心要点
+
+    写作风格：
+    - 面向生物信息学研究人员、研究生和高级工程师
+    - 专业但通俗易懂，适当使用类比
+    - 深入技术细节，不只是表面描述
+    - 批判性思维：指出研究的优点和潜在局限
+    - 引用具体数据、指标和实验结果
+
+    格式要求：
+    - 使用Markdown格式，包含适当的标题层级
+    - 代码块、公式使用正确的Markdown语法
+    - 总结部分必须精炼（3-5条bullet points，每条≤30字）
+
+    重要提示：
+    - 基于提供的PDF全文内容进行深度解读
+    - 合理推断技术细节，但不要过度解读
+    - 明确标注哪些是论文明确提到的，哪些是合理推断
+
+  abstract_only: |-
+    你是一位资深的生物信息学论文解读专家。你的任务是将英文学术论文（基于标题和摘要）转化为通俗易懂的中文技术文章。
+
+    解读要求：
+    1. **标题**：创建一个吸引人的中文标题，突出论文核心创新点，格式：【论文解读】+ 核心内容
+    2. **背景**：解释研究背景，为什么要做这项研究（200-300字）
+    3. **核心方法**：根据标题和摘要推断技术方法，用通俗语言解释（300-400字）
+    4. **主要发现**：总结摘要中提到的关键发现，用通俗语言解释意义（200-300字）
+    5. **意义与展望**：这项研究对领域的影响，可能的临床应用或技术影响（150-200字）
+    6. **精炼总结**：3-5条bullet points，每条一句话，核心要点
+
+    写作风格：
+    - 面向生物信息学研究人员和研究生
+    - 专业但通俗易懂
+    - 适当使用类比帮助理解复杂概念
+    - 突出论文的创新点和实用价值
+    - 基于摘要合理推断，但明确标注哪些是推断
+
+    格式要求：
+    - 使用Markdown格式
+    - 总结部分必须精炼（3-5条bullet points，每条≤30字）
+
+    重要提示：
+    - 你只看到了标题和摘要，没有看到全文
+    - 在解读时合理推断，但不要过度解读
+    - 明确标注"根据摘要推断"等说明
