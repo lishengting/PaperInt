@@ -310,7 +310,104 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
     return all_papers[:max_results], scanned
 
 
-def preprint_search_title(title, config, server='biorxiv'):
+async def _preprint_search_title_browser(title, server, config, max_results, chrome_port):
+    """Search biorxiv/medrxiv by title using Chrome browser — connect to existing CDP."""
+    import asyncio as _asyncio
+    from playwright.async_api import async_playwright
+
+    query = urllib.parse.quote(title)
+    url = f'https://www.{server}.org/search/{query}'
+
+    print(f"  Searching {server}...")
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
+        ctx = browser.contexts[0]
+        page = await ctx.new_page()
+
+        await page.goto(url, wait_until='domcontentloaded', timeout=120000)
+
+        for _ in range(30):
+            await _asyncio.sleep(4)
+            page_title = await page.title()
+            if 'Search Results' in page_title or 'search' in page_title.lower():
+                break
+
+        # Extract search result cards
+        raw = await page.evaluate(f'''
+            () => {{
+                const results = [];
+                const items = document.querySelectorAll('.highwire-article-citation, .search-result, article.search-result, li.search-result');
+                items.forEach((el) => {{
+                    if (results.length >= {max_results}) return;
+                    const titleEl = el.querySelector('.highwire-cite-title, .title, h4 a, .highwire-cite-title a');
+                    const title = titleEl?.innerText?.trim() || '';
+                    const link = titleEl?.getAttribute('href') || '';
+                    const authorsEl = el.querySelector('.highwire-citation-authors, .authors, .contributors');
+                    const authors = authorsEl?.innerText?.trim() || '';
+                    const snippetEl = el.querySelector('.highwire-cite-snippet, .snippet, .abstract');
+                    const snippet = snippetEl?.innerText?.trim().substring(0, 500) || '';
+                    const doiEl = el.querySelector('.highwire-cite-metadata-doi, .doi');
+                    const doiText = doiEl?.innerText?.trim() || '';
+                    const dateEl = el.querySelector('.highwire-cite-metadata-pub-date, .pub-date, .date');
+                    const dateText = dateEl?.innerText?.trim() || '';
+
+                    results.push({{
+                        title: title,
+                        link: link,
+                        authors: authors,
+                        snippet: snippet,
+                        doiText: doiText,
+                        date: dateText,
+                    }});
+                }});
+                return results;
+            }}
+        ''')
+
+        await page.close()
+
+    papers = []
+    for r in raw:
+        if not r['title']:
+            continue
+
+        # Extract DOI from various fields
+        doi = ''
+        for src in [r['link'], r['doiText']]:
+            m = re.search(r'(10\.\d{{4,}}/[^\s&]+)', src)
+            if m:
+                doi = m.group(1).rstrip('.')
+                break
+
+        paper_id = doi or r['link'].split('/')[-1] or str(hash(r['title']) % 100000000)
+
+        # Build full abs_url from relative link
+        abs_url = r['link']
+        if abs_url and not abs_url.startswith('http'):
+            abs_url = f'https://www.{server}.org' + abs_url
+
+        papers.append(make_paper(
+            server, paper_id, r['title'], r['authors'],
+            r['snippet'], r['date'], '',
+            f"https://www.{server}.org/content/{doi}.full.pdf" if doi else '',
+            abs_url, doi=doi or None,
+        ))
+
+    return papers
+
+
+def preprint_search_title(title, config, server='biorxiv', use_browser=False):
+    """Search a preprint server by title.
+
+    When use_browser=True, uses Chrome to search the site's search page
+    (much more accurate for title matching).
+    """
+    if use_browser:
+        import asyncio as _asyncio
+        return _asyncio.run(_preprint_search_title_browser(
+            title, server, config, max_results=20,
+            chrome_port=_get_or_start_chrome())), 0
+
     keywords = [w.lower() for w in title.split() if w.lower() not in STOP_WORDS]
     papers, scanned = preprint_search(keywords, config, server, max_results=500, max_scan=500)
 
@@ -322,6 +419,41 @@ def preprint_search_title(title, config, server='biorxiv'):
     for p in papers:
         p.pop('_score', None)
     return papers, scanned
+
+
+def _get_or_start_chrome():
+    """Get or create a reusable Chrome debugging port."""
+    profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
+    os.makedirs(profile, exist_ok=True)
+
+    # Check for existing Chrome on our profile
+    r = subprocess.run(['pgrep', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        # Find the debugging port from the existing Chrome process
+        r2 = subprocess.run(['pgrep', '-a', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
+        import re as _re
+        m = _re.search(r'--remote-debugging-port=(\d+)', r2.stdout)
+        if m:
+            return int(m.group(1))
+
+    # Start new Chrome
+    port = None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        port = s.getsockname()[1]
+
+    subprocess.run(['pkill', '-f', f'remote-debugging-port={port}'], capture_output=True)
+    time.sleep(1)
+
+    subprocess.Popen([
+        'google-chrome',
+        f'--remote-debugging-port={port}',
+        f'--user-data-dir={profile}',
+        '--no-first-run', '--no-default-browser-check', '--no-sandbox',
+        'about:blank',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+    time.sleep(3)
+    return port
 
 
 # ---------------------------------------------------------------------------
@@ -751,7 +883,7 @@ def detect_url(url, config):
 SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'all']
 
 
-def scholar_search(keywords, config, max_results=10):
+def scholar_search(keywords, config, max_results=10, chrome_port=None):
     """Search Google Scholar and return normalized paper list."""
     try:
         from playwright.async_api import async_playwright
@@ -760,11 +892,15 @@ def scholar_search(keywords, config, max_results=10):
         return [], 0
 
     import asyncio as _asyncio
-    return _asyncio.run(_scholar_search_async(keywords, config, max_results))
+    return _asyncio.run(_scholar_search_async(keywords, config, max_results, chrome_port=chrome_port))
 
 
-async def _scholar_search_async(keywords, config, max_results):
-    """Async implementation of scholar search."""
+async def _scholar_search_async(keywords, config, max_results, chrome_port=None):
+    """Async implementation of scholar search.
+
+    If chrome_port is provided, connects to existing Chrome instead of
+    launching a new instance. Caller manages Chrome lifecycle in that case.
+    """
     import asyncio as _asyncio
     from playwright.async_api import async_playwright
 
@@ -773,30 +909,13 @@ async def _scholar_search_async(keywords, config, max_results):
 
     print(f"  Searching Google Scholar...")
 
-    # Setup Chrome
-    profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
-
-    port = None
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        port = s.getsockname()[1]
-
-    os.makedirs(profile, exist_ok=True)
-    subprocess.run(['pkill', '-f', f'remote-debugging-port={port}'], capture_output=True)
-    time.sleep(1)
-
-    chrome = subprocess.Popen([
-        'google-chrome',
-        f'--remote-debugging-port={port}',
-        f'--user-data-dir={profile}',
-        '--no-first-run', '--no-default-browser-check', '--no-sandbox',
-        'about:blank',
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
-    time.sleep(3)
+    own_chrome = chrome_port is None
+    if own_chrome:
+        chrome_port = _get_or_start_chrome()
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{port}')
+            browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
             ctx = browser.contexts[0]
             page = await ctx.new_page()
 
@@ -847,10 +966,11 @@ async def _scholar_search_async(keywords, config, max_results):
 
             await browser.close()
     finally:
-        try:
-            os.killpg(os.getpgid(chrome.pid), signal.SIGTERM)
-        except Exception:
-            pass
+        if own_chrome:
+            try:
+                subprocess.run(['pkill', '-f', f'remote-debugging-port={chrome_port}'], capture_output=True)
+            except Exception:
+                pass
 
     # Normalize results
     import asyncio  # re-import for sleep in normalize loop
@@ -905,11 +1025,11 @@ async def _scholar_search_async(keywords, config, max_results):
     return normalized, len(raw)
 
 
-def scholar_search_title(title, config, max_results=5):
+def scholar_search_title(title, config, max_results=5, chrome_port=None):
     """Search Google Scholar by title — returns best matches."""
     import asyncio as _asyncio
     keywords = [title]
-    return _asyncio.run(_scholar_search_async(keywords, config, max_results))
+    return _asyncio.run(_scholar_search_async(keywords, config, max_results, chrome_port=chrome_port))
 
 
 # ---------------------------------------------------------------------------
@@ -1124,7 +1244,8 @@ def cmd_find(args, config):
     if source == 'arxiv':
         papers = arxiv_search_title(args.title, config, 10)
     elif source in ('biorxiv', 'medrxiv'):
-        papers, scanned = preprint_search_title(args.title, config, source)
+        papers, scanned = preprint_search_title(args.title, config, source,
+                                                  use_browser=args.browser)
     elif source == 'pubmed':
         papers, scanned = pubmed_search_title(args.title, config, 10)
     elif source == 'scholar':
@@ -1136,6 +1257,8 @@ def cmd_find(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
+        # Start one Chrome instance shared by all browser-based searches
+        chrome_port = _get_or_start_chrome()
         # Search each source with the complete title, merge by relevance
         all_papers = []
         try:
@@ -1145,13 +1268,13 @@ def cmd_find(args, config):
         except Exception as e:
             print(f"  arxiv: error - {e}", file=sys.stderr)
         try:
-            papers, _ = preprint_search_title(args.title, config, 'biorxiv')
+            papers, _ = preprint_search_title(args.title, config, 'biorxiv', use_browser=True)
             all_papers.extend(papers)
             print(f"  biorxiv: {len(papers)} results")
         except Exception as e:
             print(f"  biorxiv: error - {e}", file=sys.stderr)
         try:
-            papers, _ = preprint_search_title(args.title, config, 'medrxiv')
+            papers, _ = preprint_search_title(args.title, config, 'medrxiv', use_browser=True)
             all_papers.extend(papers)
             print(f"  medrxiv: {len(papers)} results")
         except Exception as e:
@@ -1163,11 +1286,16 @@ def cmd_find(args, config):
         except Exception as e:
             print(f"  pubmed: error - {e}", file=sys.stderr)
         try:
-            papers, _ = scholar_search_title(args.title, config, 10)
+            papers, _ = scholar_search_title(args.title, config, 10, chrome_port=chrome_port)
             all_papers.extend(papers)
             print(f"  scholar: {len(papers)} results")
         except Exception as e:
             print(f"  scholar: error - {e}", file=sys.stderr)
+        # Clean up shared Chrome
+        try:
+            subprocess.run(['pkill', '-f', f'remote-debugging-port={chrome_port}'], capture_output=True)
+        except Exception:
+            pass
 
         if all_papers:
             merged = _merge_dedup(all_papers)
