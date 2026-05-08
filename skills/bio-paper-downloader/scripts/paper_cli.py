@@ -47,6 +47,16 @@ def _ssl_context():
     ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     return ctx
 
+STOP_WORDS = frozenset({
+    'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being', 'and', 'or', 'not',
+    'but', 'if', 'then', 'else', 'when', 'up', 'so', 'as', 'its', 'it',
+    'that', 'this', 'these', 'those', 'from', 'has', 'have', 'had', 'do',
+    'does', 'did', 'will', 'would', 'can', 'could', 'may', 'might', 'we',
+    'no', 'than', 'also', 'all', 'into', 'about', 'after', 'some', 'such',
+    'only', 'other', 'more', 'their', 'them', 'our', 'us', 'he', 'she',
+})
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
@@ -232,9 +242,8 @@ def arxiv_search(keywords, config, max_results=50):
 
 
 def arxiv_search_title(title, config, max_results=10):
-    """Search arXiv by title — score by word overlap, sort by relevance."""
-    keywords = [w.lower() for w in title.split()]
-    xml_data = arxiv_api(' AND '.join(f'all:"{kw}"' for kw in keywords), config, max_results * 3)
+    """Search arXiv by title — exact title field search, scored by relevance."""
+    xml_data = arxiv_api(f'ti:"{title}"', config, max_results)
     papers = arxiv_parse(xml_data) if xml_data else []
     tw = set(title.lower().split())
     for p in papers:
@@ -302,7 +311,7 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
 
 
 def preprint_search_title(title, config, server='biorxiv'):
-    keywords = [w.lower() for w in title.split()]
+    keywords = [w.lower() for w in title.split() if w.lower() not in STOP_WORDS]
     papers, scanned = preprint_search(keywords, config, server, max_results=500, max_scan=500)
 
     tw = set(title.lower().split())
@@ -394,9 +403,8 @@ def pubmed_search(keywords, config, max_results=50):
 
 
 def pubmed_search_title(title, config, max_results=10):
-    """Search PubMed by title — score by word overlap, sort by relevance."""
-    keywords = [w.lower() for w in title.split()]
-    papers, total = pubmed_search(keywords, config, max_results * 3)
+    """Search PubMed by title — exact title field search, scored by relevance."""
+    papers, total = pubmed_search([f'{title}[Title]'], config, max_results)
     tw = set(title.lower().split())
     for p in papers:
         pw = set(p['title'].lower().split())
@@ -1128,16 +1136,52 @@ def cmd_find(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        keywords = [w.strip() for w in args.title.split()]
-        papers = search_all(keywords, config, max_results=10, use_browser=True, sort_by='relevance')
-        # Re-score against original title for final ordering
-        tw = set(args.title.lower().split())
-        for p in papers:
-            pw = set(p['title'].lower().split())
-            p['_score'] = len(tw & pw) / max(len(tw), 1)
-        papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-        for p in papers:
-            p.pop('_score', None)
+        # Search each source with the complete title, merge by relevance
+        all_papers = []
+        try:
+            papers = arxiv_search_title(args.title, config, 10)
+            all_papers.extend(papers)
+            print(f"  arxiv: {len(papers)} results")
+        except Exception as e:
+            print(f"  arxiv: error - {e}", file=sys.stderr)
+        try:
+            papers, _ = preprint_search_title(args.title, config, 'biorxiv')
+            all_papers.extend(papers)
+            print(f"  biorxiv: {len(papers)} results")
+        except Exception as e:
+            print(f"  biorxiv: error - {e}", file=sys.stderr)
+        try:
+            papers, _ = preprint_search_title(args.title, config, 'medrxiv')
+            all_papers.extend(papers)
+            print(f"  medrxiv: {len(papers)} results")
+        except Exception as e:
+            print(f"  medrxiv: error - {e}", file=sys.stderr)
+        try:
+            papers, _ = pubmed_search_title(args.title, config, 10)
+            all_papers.extend(papers)
+            print(f"  pubmed: {len(papers)} results")
+        except Exception as e:
+            print(f"  pubmed: error - {e}", file=sys.stderr)
+        try:
+            papers, _ = scholar_search_title(args.title, config, 10)
+            all_papers.extend(papers)
+            print(f"  scholar: {len(papers)} results")
+        except Exception as e:
+            print(f"  scholar: error - {e}", file=sys.stderr)
+
+        if all_papers:
+            merged = _merge_dedup(all_papers)
+            tw = set(args.title.lower().split())
+            for p in merged:
+                pw = set(p['title'].lower().split())
+                p['_score'] = len(tw & pw) / max(len(tw), 1)
+            merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
+            for p in merged:
+                p.pop('_score', None)
+            print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
+            papers = merged
+        else:
+            papers = []
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
