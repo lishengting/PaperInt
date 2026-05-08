@@ -1,10 +1,10 @@
 ---
 name: bio-paper-interpreter
-description: Interpret bioinformatics papers into structured Chinese technical articles. Extract text from PDFs, filter for bioinformatics relevance, match topic tags, and generate LLM-powered interpretations in full-text or abstract-only mode.
-compatibility: Requires Python 3, bash, poppler-utils (pdftotext), and network access to an OpenAI-compatible LLM API endpoint.
+description: Interpret bioinformatics papers into structured Chinese technical reports. Filter for bioinformatics relevance, match topic tags, extract PDF text, and generate LLM-powered or Claude Code direct interpretations.
+compatibility: Requires Python 3, bash, poppler-utils (pdftotext). External LLM path requires network access to an OpenAI-compatible API endpoint.
 metadata:
   skit:
-    version: 0.1.0
+    version: 0.2.0
     requires:
       bins:
         - python3
@@ -17,12 +17,12 @@ metadata:
       - llm
 ---
 
-# Bio Paper Interpreter
+# Bio-Paper-Interpreter
 
 ## When To Use
 
 Use this skill when the user asks to interpret downloaded paper PDFs or
-metadata into Chinese-language technical summaries. Do not use it for
+metadata into Chinese-language structured technical reports. Do not use it for
 scheduled/cron-based periodic interpretation, Flarum publishing, or generic
 translation tasks.
 
@@ -30,227 +30,61 @@ translation tasks.
 
 ### Path A: Claude Code Direct (default when using Claude Code)
 
-Claude Code reads the paper metadata and PDF directly, then interprets it
-using the system prompts from `config.yaml` — no external LLM API needed.
+Claude Code reads the paper content and system prompts from `config.yaml`
+directly, then interprets without any external API. This is the default
+when the user is working inside Claude Code.
 
-1. Read paper metadata from `data/metadata/{doi}.json`
-2. Extract PDF text via `pdftotext` (use `extract_pdf_text.sh`)
-3. Run `filter_relevance.py` and `match_tags.py` to validate and tag
-4. Read the system prompt from `config.yaml` (`system_prompts.full_text` or
-   `system_prompts.abstract_only`)
-5. Interpret the paper directly and save to `data/interpreted/{doi}.json`
+### Path B: External LLM Pipeline
 
-### Path B: External LLM Pipeline (for batch/cron/automation)
+Uses the configured LLM API endpoint (`config.yaml` → `llm.api_base_url`)
+to interpret papers programmatically. Requires `LLM_API_KEY` set and the
+LLM service running. Suitable for batch processing and automation.
 
-Uses the configured LLM API endpoint to interpret papers programmatically.
-Follows the 6-step pipeline described below. Requires the LLM API to be
-running and `LLM_API_KEY` set.
+## Core Protocol
 
-## Core Concepts
+The filesystem is the state machine. `data/interpreted/execution_log.md` is
+the state log. Recover by reading files, not by relying on chat memory.
 
-The interpreter has two content modes:
+1. Ensure `data/interpreted/` exists.
+2. Read `execution_log.md` to find the current phase for each paper.
+3. Load the reference file for the current phase.
+4. Read all completed prior phase outputs required by the current phase.
 
-- **Full-text mode**: Extracts text from a PDF via `pdftotext`, feeds the
-  truncated content to an LLM with the full-text system prompt from config.
-- **Abstract-only mode**: Uses paper metadata (title, abstract, authors) when
-  PDF text cannot be extracted or is too short (< 1000 characters).
+## Phase Map
 
-Relevance filtering runs first — non-bioinformatics papers are skipped.
-Tag matching assigns topic categories based on configured regex patterns.
+| Phase | Output | Reference | Description |
+|-------|--------|-----------|-------------|
+| 1 Filter | `data/interpreted/{paper_id}_skipped.json` (if rejected) | `references/01_filter.md` | Relevance check + tag matching |
+| 2 Interpret | `data/interpreted/{paper_id}.md` + `.json` | `references/02_interpret.md` | PDF extraction + interpretation |
 
-All configuration (keywords for filtering, tag definitions, LLM settings,
-system prompts) comes from the shared `config.yaml` at the project root.
+State rules per paper:
+- No log entry for this paper: start Phase 1.
+- Last log is `Phase 1 - REJECTED`: paper is done (skipped).
+- Last log is `Phase 1 - COMPLETED`: start Phase 2.
+- Last log is `Phase 2 - COMPLETED`: paper is done (interpreted).
+- Last log is `Phase N - FAILED`: diagnose and retry.
 
-## Workflow (Path A: Claude Code Direct)
+## Logging
 
-### Read Configuration
+Log meaningful actions in `data/interpreted/execution_log.md` with:
 
-Locate and read the shared `config.yaml`. The skill directory is
-`skills/bio-paper-interpreter/`; the config file lives at `config.yaml`
-in the parent of `skills/`.
-
-### Prepare Output Directories
-
-```bash
-mkdir -p data/interpreted
+```
+Phase N - STATUS: {paper_id} — message
 ```
 
-### For Each Candidate Paper
+Use these status values:
 
-For each paper to interpret (identified by the agent or user):
+| Status | Use |
+|--------|-----|
+| `START` | A phase began for a paper. |
+| `COMPLETED` | A phase completed and its required output exists. |
+| `REJECTED` | Phase 1 determined the paper is not relevant. |
+| `FAILED` | A phase or operation failed. |
+| `INFO` | Important context that affects future work. |
 
-#### Step A1: Filter by Relevance
-
-```bash
-cat data/metadata/{paper_doi}.json | python3 scripts/filter_relevance.py \
-  --config config.yaml
-```
-
-Skip the paper if `relevance.passed` is `false`. Record skip reason in
-`data/interpreted/{doi}_skipped.json`.
-
-#### Step A2: Match Topic Tags
-
-```bash
-cat data/metadata/{paper_doi}.json | python3 scripts/match_tags.py \
-  --config config.yaml
-```
-
-#### Step A3: Extract PDF Text (if PDF available)
-
-```bash
-bash scripts/extract_pdf_text.sh data/pdf/{paper_doi}.pdf \
-  --max-chars 15000
-```
-
-If extracted text > 1000 chars, use full-text mode. Otherwise, abstract-only.
-
-#### Step A4: Read System Prompt
-
-Read the appropriate system prompt from `config.yaml`:
-- Full-text: `system_prompts.full_text`
-- Abstract-only: `system_prompts.abstract_only`
-
-#### Step A5: Interpret Directly
-
-Claude Code interprets the paper using the system prompt + paper content.
-Follow the structure and writing style defined in the system prompt.
-Output a complete Chinese technical article in Markdown.
-
-#### Step A6: Save Output
-
-**Primary output** — a human-readable Markdown article:
-
-```bash
-cat > data/interpreted/{paper_doi}.md << 'EOF'
-# 【论文解读】中文标题
-...
-EOF
-```
-
-**Secondary output** — structured JSON with metadata, tags, and full content:
-
-```bash
-cat > data/interpreted/{paper_doi}.json << 'EOF'
-{
-  "paper_id": "...",
-  "doi": "...",
-  "title": "<extracted Chinese title>",
-  "content": "<full markdown content>",
-  "tags": [<matched tag ids>],
-  "mode": "full_text | abstract_only",
-  "interpreted_at": "<ISO timestamp>"
-}
-EOF
-```
-
-Markdown files can be opened directly in any editor, rendered to HTML,
-or published to a blog/platform. JSON provides structured access for
-programmatic consumption.
-
----
-
-## Workflow (Path B: External LLM Pipeline)
-
-### Read Configuration
-
-Locate and read the shared `config.yaml`. The skill directory is
-`skills/bio-paper-interpreter/`; the config file lives at `config.yaml`
-in the parent of `skills/`.
-
-### Prepare Output Directories
-
-```bash
-mkdir -p data/interpreted
-```
-
-### For Each Candidate Paper
-
-For each paper to interpret (identified by the agent or user):
-
-#### Step 1: Filter by Relevance
-
-```bash
-cat data/metadata/{paper_doi}.json | python3 scripts/filter_relevance.py \
-  --config config.yaml
-```
-
-The script adds a `relevance` field to the JSON. Skip the paper if
-`relevance.passed` is `false`. Record the skip reason in
-`data/interpreted/{doi}_skipped.json`.
-
-#### Step 2: Extract PDF Text (if PDF available)
-
-```bash
-bash scripts/extract_pdf_text.sh data/pdf/{paper_doi}.pdf \
-  --max-chars 15000
-```
-
-If a PDF exists and the extracted text is > 1000 characters, use full-text
-mode. Otherwise, fall back to abstract-only mode.
-
-#### Step 3: Match Topic Tags
-
-```bash
-cat data/metadata/{paper_doi}.json | python3 scripts/match_tags.py \
-  --config config.yaml
-```
-
-The script adds a `matched_tags` field. If only base tags (2 tags) match,
-consider skipping the paper (insufficient topic specificity).
-
-#### Step 4: Build LLM Prompts
-
-```bash
-cat data/metadata/{paper_doi}.json | python3 scripts/build_prompt.py \
-  --config config.yaml \
-  --mode full_text \
-  --pdf-text-file /tmp/extracted_text.txt
-```
-
-Replace `--mode full_text` with `--mode abstract_only` as appropriate.
-The script outputs a JSON object with `system_prompt` and `user_prompt` fields.
-
-#### Step 5: Call LLM API
-
-Use the prompts from Step 4 to call the configured LLM API. The LLM
-configuration (endpoint, model, temperature, max_tokens) is in `config.yaml`
-under the `llm` key. Read `llm.api_key_env` to find which environment
-variable holds the API key.
-
-Example curl call:
-
-```bash
-curl -s "$LLM_BASE_URL/chat/completions" \
-  -H "Authorization: Bearer $LLM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "<from config>",
-    "temperature": <from config>,
-    "max_tokens": <from config>,
-    "messages": [
-      {"role": "system", "content": "<system_prompt from build_prompt.py>"},
-      {"role": "user", "content": "<user_prompt from build_prompt.py>"}
-    ]
-  }'
-```
-
-#### Step 6: Save Interpretation
-
-Save the full interpretation result as JSON:
-
-```bash
-cat > data/interpreted/{paper_doi}.json << 'EOF'
-{
-  "paper_id": "...",
-  "title": "<extracted Chinese title>",
-  "content": "<full markdown content from LLM>",
-  "tags": [<matched tag ids>],
-  "mode": "full_text | abstract_only",
-  "interpreted_at": "<ISO timestamp>"
-}
-EOF
-```
+Log phase starts/completions, rejections, and failures. Do not log pure
+reads, directory creation, or simple checks unless the result changes
+how the paper should be handled.
 
 ## Helper Scripts
 
@@ -258,25 +92,29 @@ Resolve scripts from this skill's `scripts/` directory.
 
 | Script | Purpose |
 |--------|---------|
-| `extract_pdf_text.sh` | Extract plain text from PDF via pdftotext |
 | `filter_relevance.py` | Apply bioinformatics relevance keyword filter |
 | `match_tags.py` | Regex-based tag assignment from config definitions |
-| `build_prompt.py` | Template LLM system+user prompts from paper + config |
+| `extract_pdf_text.sh` | Extract plain text from PDF via pdftotext |
+| `build_prompt.py` | Template LLM system+user prompts (Path B only) |
 
 ## Output
 
-- `data/interpreted/{doi}.md` — human-readable Markdown article (primary)
-- `data/interpreted/{doi}.json` — structured metadata + full content (secondary)
-- `data/interpreted/{doi}_skipped.json` — skip records for non-relevant papers
+- `data/interpreted/{paper_id}.md` — structured Markdown report (primary)
+- `data/interpreted/{paper_id}.json` — metadata + full content (secondary)
+- `data/interpreted/{paper_id}_skipped.json` — skip record for non-relevant papers
+- `data/interpreted/execution_log.md` — phase state log
 
 ## Rules
 
-- Do not schedule periodic interpretation; this skill runs on demand.
-- Always filter relevance before interpreting; skip non-bioinformatics papers
-  and record the reason.
-- Truncate PDF text to `download.pdf_text_max_chars` (default 15000 chars).
-- If extracted PDF text is < 1000 characters, fall back to abstract-only mode.
+- Run phases sequentially per paper; never skip Phase 1.
+- Always filter relevance before interpreting; record skip reasons.
+- Phase 2 must check the article landing page and supplementary material tab
+  for preprints (medRxiv/bioRxiv); do not infer supplement absence from PDF
+  text alone.
+- Load prompts and keywords from `config.yaml`; never hardcode them.
+- Never modify `config.yaml`; it is shared across all skills.
 - Distinguish full-text vs abstract-only in output metadata (`mode` field).
-- Always load prompts and keywords from `config.yaml`; never hardcode them.
-- Never modify `config.yaml`; it is the shared configuration read by all skills.
-- Make LLM calls with timeouts matching `llm.timeout_seconds` from config.
+- Path A (Claude Code) requires no API key; Path B requires `LLM_API_KEY`.
+- PDF text truncated to `download.pdf_text_max_chars` (default 100000 chars).
+- If extracted PDF text < 1000 chars, fall back to abstract-only mode.
+- All interpretations saved under `data/interpreted/`.

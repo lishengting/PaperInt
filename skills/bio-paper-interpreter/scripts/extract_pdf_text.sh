@@ -3,7 +3,7 @@
 # Outputs normalized plain text on stdout, truncated to max_chars.
 set -euo pipefail
 
-MAX_CHARS=15000
+MAX_CHARS=100000
 PDF_FILE=""
 
 usage() {
@@ -11,10 +11,10 @@ usage() {
 Usage: extract_pdf_text.sh <pdf_file> [--max-chars N]
 
 Extract plain text from a PDF using pdftotext. Outputs normalized text
-on stdout, truncated to --max-chars (default 15000).
+on stdout, truncated to --max-chars (default 100000).
 
 Options:
-  --max-chars N   Maximum characters to output (default 15000)
+  --max-chars N   Maximum characters to output (default 100000)
 EOF
     exit 1
 }
