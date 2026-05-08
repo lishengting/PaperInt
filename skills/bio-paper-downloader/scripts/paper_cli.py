@@ -38,13 +38,13 @@ def _ssl_context():
     """Return an SSL context compatible with older OpenSSL servers.
 
     Some preprint APIs (arXiv, bioRxiv, medRxiv) run older OpenSSL that
-    doesn't support TLS 1.3. We set minimum_version to TLS 1.2 and skip
-    verification for these public APIs.
+    can't handle TLS 1.3 ClientHello. We cap at TLS 1.2 to avoid handshake
+    EOF errors.
     """
     ctx = ssl._create_unverified_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     return ctx
 
 # ---------------------------------------------------------------------------
