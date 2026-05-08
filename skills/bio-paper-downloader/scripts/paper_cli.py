@@ -576,6 +576,41 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
             if pmc_id:
                 pdf_data = _download_pmc_pdf(pmc_id, config)
 
+    # Fallback: try alternative sources in priority order
+    if not pdf_data and paper.get('_alt_sources'):
+        alts = sorted(paper['_alt_sources'],
+                      key=lambda a: SOURCE_PRIORITY.get(a.get('source'), 99))
+        # Also try _primary_alt if we swapped sources during dedup
+        if paper.get('_primary_alt'):
+            alts.insert(0, paper['_primary_alt'])
+        for alt in alts:
+            alt_src = alt.get('source', '')
+            print(f"  Fallback: trying {alt_src}...", file=sys.stderr)
+            if alt_src == 'arxiv' or alt.get('arxiv_id'):
+                aid = alt.get('arxiv_id') or paper.get('arxiv_id')
+                if aid:
+                    pdf_data = download_arxiv(aid, config)
+            elif alt_src in ('biorxiv', 'medrxiv'):
+                adoi = alt.get('doi') or paper.get('doi')
+                if adoi:
+                    pdf_data = download_preprint(adoi, alt_src, config, use_browser=use_browser)
+            elif alt_src == 'scholar':
+                if alt.get('pdf_url') and use_browser:
+                    pdf_data = _download_direct_pdf(alt['pdf_url'], config)
+                if not pdf_data and alt.get('doi') and use_browser:
+                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config)
+            elif alt_src == 'pubmed':
+                if use_browser and alt.get('doi'):
+                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config)
+                if not pdf_data and alt.get('pmid'):
+                    pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
+                    if pmc_id:
+                        pdf_data = _download_pmc_pdf(pmc_id, config)
+            if pdf_data:
+                print(f"  Fallback OK from {alt_src}", file=sys.stderr)
+                break
+            time.sleep(2)
+
     if pdf_data:
         with open(os.path.join(pdf_dir, f"{safe}.pdf"), 'wb') as f:
             f.write(pdf_data)
@@ -668,7 +703,7 @@ def detect_url(url, config):
 # Commands
 # ---------------------------------------------------------------------------
 
-SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar']
+SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'all']
 
 
 def scholar_search(keywords, config, max_results=10):
@@ -833,6 +868,159 @@ def scholar_search_title(title, config, max_results=5):
 
 
 # ---------------------------------------------------------------------------
+# All-sources search
+# ---------------------------------------------------------------------------
+
+SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
+
+
+def _paper_score(paper, kw_lower):
+    """Score a paper by keyword match: title ×3, abstract ×1."""
+    title = (paper.get('title', '') or '').lower()
+    abstract = (paper.get('abstract', '') or '').lower()
+    score = 0
+    for kw in kw_lower:
+        if kw in title:
+            score += 3
+        if kw in abstract:
+            score += 1
+    return score
+
+
+def _titles_similar(t1, t2, threshold=0.7):
+    """Check if two titles are likely the same paper using Jaccard on word sets."""
+    import re as _re
+    w1 = set(_re.sub(r'[^a-z0-9]', ' ', t1.lower()).split())
+    w2 = set(_re.sub(r'[^a-z0-9]', ' ', t2.lower()).split())
+    if not w1 or not w2:
+        return False
+    return len(w1 & w2) / len(w1 | w2) >= threshold
+
+
+def _merge_dedup(papers, source_priority=None):
+    """Deduplicate a list of papers from multiple sources.
+
+    Two papers are the same if they share a DOI, arxiv_id, or have title
+    overlap >= 70%. When merging, the paper from the higher-priority source
+    is kept and the other is stored in _alt_sources.
+    """
+    if source_priority is None:
+        source_priority = SOURCE_PRIORITY
+    merged = []
+    for p in papers:
+        merged_into = None
+        for existing in merged:
+            # Same DOI
+            if p.get('doi') and existing.get('doi') and p['doi'].lower() == existing['doi'].lower():
+                merged_into = existing
+                break
+            # Same arxiv_id
+            if p.get('arxiv_id') and existing.get('arxiv_id') and p['arxiv_id'] == existing['arxiv_id']:
+                merged_into = existing
+                break
+            # Title similarity
+            if _titles_similar(p.get('title', ''), existing.get('title', '')):
+                merged_into = existing
+                break
+
+        if merged_into:
+            alt = {
+                'source': p.get('source'),
+                'doi': p.get('doi'),
+                'arxiv_id': p.get('arxiv_id'),
+                'pmid': p.get('pmid'),
+                'pdf_url': p.get('pdf_url', ''),
+                'abs_url': p.get('abs_url', ''),
+            }
+            merged_into.setdefault('_alt_sources', []).append(alt)
+            # If the new paper is from a higher-priority source, swap
+            p_prio = source_priority.get(p.get('source'), 99)
+            e_prio = source_priority.get(merged_into.get('source'), 99)
+            if p_prio < e_prio:
+                merged_into['_primary_alt'] = {
+                    'source': merged_into.get('source'),
+                    'doi': merged_into.get('doi'),
+                    'arxiv_id': merged_into.get('arxiv_id'),
+                    'pmid': merged_into.get('pmid'),
+                    'pdf_url': merged_into.get('pdf_url', ''),
+                    'abs_url': merged_into.get('abs_url', ''),
+                }
+                merged_into['source'] = p.get('source')
+                merged_into['doi'] = p.get('doi') or merged_into.get('doi')
+                merged_into['arxiv_id'] = p.get('arxiv_id') or merged_into.get('arxiv_id')
+                merged_into['pmid'] = p.get('pmid') or merged_into.get('pmid')
+                merged_into['pdf_url'] = p.get('pdf_url') or merged_into.get('pdf_url')
+                merged_into['abs_url'] = p.get('abs_url') or merged_into.get('abs_url')
+        else:
+            merged.append(p)
+    return merged
+
+
+def search_all(keywords, config, max_results=10, use_browser=False):
+    """Search all sources, merge by keyword relevance, deduplicate."""
+    all_papers = []
+
+    # arXiv
+    try:
+        papers = arxiv_search(keywords, config, max_results=max_results * 3)
+        all_papers.extend(papers)
+        print(f"  arxiv: {len(papers)} results")
+    except Exception as e:
+        print(f"  arxiv: error - {e}", file=sys.stderr)
+
+    # bioRxiv
+    try:
+        papers, _ = preprint_search(keywords, config, 'biorxiv', max_results=max_results * 3)
+        all_papers.extend(papers)
+        print(f"  biorxiv: {len(papers)} results")
+    except Exception as e:
+        print(f"  biorxiv: error - {e}", file=sys.stderr)
+
+    # medRxiv
+    try:
+        papers, _ = preprint_search(keywords, config, 'medrxiv', max_results=max_results * 3)
+        all_papers.extend(papers)
+        print(f"  medrxiv: {len(papers)} results")
+    except Exception as e:
+        print(f"  medrxiv: error - {e}", file=sys.stderr)
+
+    # PubMed
+    try:
+        papers, total = pubmed_search(keywords, config, max_results=max_results * 3)
+        all_papers.extend(papers)
+        print(f"  pubmed: {len(papers)} results (total: {total})")
+    except Exception as e:
+        print(f"  pubmed: error - {e}", file=sys.stderr)
+
+    # Google Scholar
+    if use_browser:
+        try:
+            papers, _ = scholar_search(keywords, config, max_results=max_results)
+            all_papers.extend(papers)
+            print(f"  scholar: {len(papers)} results")
+        except Exception as e:
+            print(f"  scholar: error - {e}", file=sys.stderr)
+
+    if not all_papers:
+        return []
+
+    # Score and deduplicate
+    kw_lower = [k.lower() for k in keywords]
+    for p in all_papers:
+        p['_score'] = _paper_score(p, kw_lower)
+
+    merged = _merge_dedup(all_papers)
+    merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
+
+    # Clean up temp score
+    for p in merged:
+        p.pop('_score', None)
+
+    print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
+    return merged[:max_results]
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
@@ -860,6 +1048,11 @@ def cmd_search(args, config):
             print(" --browser is required for Google Scholar searches", file=sys.stderr)
             return 1
         papers, scanned = scholar_search(keywords, config, max_results=num)
+    elif source == 'all':
+        if not args.browser:
+            print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
+            return 1
+        papers = search_all(keywords, config, max_results=num, use_browser=True)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -888,6 +1081,20 @@ def cmd_find(args, config):
             print(" --browser is required for Google Scholar searches", file=sys.stderr)
             return 1
         papers, scanned = scholar_search_title(args.title, config, 5)
+    elif source == 'all':
+        if not args.browser:
+            print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
+            return 1
+        keywords = [w.strip() for w in args.title.split() if len(w) > 2]
+        papers = search_all(keywords, config, max_results=10, use_browser=True)
+        # Re-score against original title for ordering
+        tw = set(args.title.lower().split())
+        for p in papers:
+            pw = set(p['title'].lower().split())
+            p['_score'] = len(tw & pw) / max(len(tw), 1)
+        papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
+        for p in papers:
+            p.pop('_score', None)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
