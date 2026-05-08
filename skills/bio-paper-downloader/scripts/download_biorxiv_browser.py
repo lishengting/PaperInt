@@ -6,9 +6,13 @@ Bypasses Cloudflare by launching a real (headed) Chrome instance with a
 persistent user-data directory, then connecting to it via CDP. Cloudflare's
 JavaScript challenge runs in the real browser and passes normally.
 
+Also handles generic PDF URLs by letting Chrome display the PDF, then
+clicking the PDF viewer's built-in download button to save it.
+
 Usage:
     python3 download_biorxiv_browser.py "10.1101/2025.01.01.123456" -o ./papers
     python3 download_biorxiv_browser.py "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
+    python3 download_biorxiv_browser.py "https://example.com/paper.pdf" -o ./papers
 
 Requirements: google-chrome (or chromium), pip install playwright
 """
@@ -135,15 +139,167 @@ async def _wait_cloudflare(page, timeout=60):
             if 'moment' not in title.lower():
                 return True
         except Exception:
-            # Page may have redirected/navigated — check URL
             if 'cloudflare' not in page.url.lower():
                 return True
     return False
 
 
+async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
+    """Download a PDF that Chrome displays with its built-in viewer.
+
+    Navigates to the PDF URL, lets Chrome render it, then clicks the
+    viewer's download button to trigger a download we can capture.
+
+    Also tries JS fetch from the page context as a fallback for sites
+    without anti-bot protection.
+    """
+    result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
+
+    print(f"  [browser] Navigating to PDF...", file=sys.stderr)
+    await page.goto(url_or_doi, wait_until='domcontentloaded',
+                    timeout=timeout * 1000)
+    await asyncio.sleep(3)
+
+    final_url = page.url
+    ct = await page.evaluate('() => document.contentType')
+    print(f"  [browser] Content-Type: {ct}", file=sys.stderr)
+
+    # Method 1: Click the PDF viewer's built-in download button.
+    # Chrome's PDF viewer (chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/)
+    # has a download button we can trigger.
+    try:
+        print(f"  [browser] Trying viewer download button...", file=sys.stderr)
+        async with page.expect_download(timeout=min(timeout, 30) * 1000) as dl_info:
+            # The download button is #download in the PDF viewer toolbar.
+            # It may be in shadow DOM; try multiple approaches.
+            clicked = await page.evaluate('''() => {
+                // Try direct ID first
+                let btn = document.querySelector('#download');
+                if (btn) { btn.click(); return true; }
+                // Try shadow DOM in pdf-viewer element
+                const viewer = document.querySelector('pdf-viewer');
+                if (viewer && viewer.shadowRoot) {
+                    btn = viewer.shadowRoot.querySelector('#download');
+                    if (btn) { btn.click(); return true; }
+                }
+                // Try the embed element
+                const embed = document.querySelector('embed');
+                if (embed) {
+                    // The embed might have its own download mechanism
+                    embed.click();
+                    return true;
+                }
+                return false;
+            }''')
+            if not clicked:
+                print(f"  [browser] Download button not found", file=sys.stderr)
+                raise Exception("Download button not found")
+
+        download = await dl_info.value
+        tmp_path = await download.path()
+        if tmp_path and os.path.exists(tmp_path):
+            pdf_bytes = open(tmp_path, 'rb').read()
+            if pdf_bytes.startswith(b'%PDF') or len(pdf_bytes) >= 10000:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                result['success'] = True
+                result['file_path'] = str(output_path)
+                result['file_size'] = len(pdf_bytes)
+                result['message'] = f'OK: {len(pdf_bytes)} bytes'
+            else:
+                result['message'] = 'Downloaded file is not a valid PDF'
+                result['file_size'] = len(pdf_bytes)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            return result
+    except Exception as e:
+        msg = str(e)
+        if 'Timeout' in msg:
+            print(f"  [browser] Download button timed out", file=sys.stderr)
+        elif 'not found' in msg:
+            print(f"  [browser] Download button not available", file=sys.stderr)
+        else:
+            print(f"  [browser] Download button approach failed: {e}", file=sys.stderr)
+
+    # Method 2: JS fetch from page context.
+    # This works for sites without anti-bot (e.g., university pages).
+    try:
+        print(f"  [browser] Trying JS fetch from page context...", file=sys.stderr)
+        js_result = await page.evaluate("""
+            async () => {
+                const r = await fetch(window.location.href,
+                    {credentials: 'include'});
+                if (!r.ok) return {error: 'HTTP ' + r.status};
+                const blob = await r.blob();
+                return new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onloadend = () =>
+                        resolve({data: reader.result.split(',')[1],
+                                 size: blob.size});
+                    reader.onerror = () =>
+                        resolve({error: 'FileReader failed'});
+                    reader.readAsDataURL(blob);
+                });
+            }
+        """)
+        if isinstance(js_result, dict) and 'error' in js_result:
+            print(f"  [browser] JS fetch failed: {js_result['error']}",
+                  file=sys.stderr)
+        else:
+            pdf_bytes = base64.b64decode(js_result['data'])
+            if pdf_bytes.startswith(b'%PDF') or len(pdf_bytes) >= 10000:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                result['success'] = True
+                result['file_path'] = str(output_path)
+                result['file_size'] = len(pdf_bytes)
+                result['message'] = f'OK: {len(pdf_bytes)} bytes'
+                return result
+            print(f"  [browser] JS fetch got non-PDF data ({len(pdf_bytes)} bytes)",
+                  file=sys.stderr)
+    except Exception as e:
+        print(f"  [browser] JS fetch error: {e}", file=sys.stderr)
+
+    # Method 3: Save page via CDP (Page.printToPDF — generates from view,
+    # not ideal but may work as a last resort for text-based content).
+    try:
+        print(f"  [browser] Trying CDP Page.printToPDF...", file=sys.stderr)
+        cdp = await page.context.new_cdp_session(page)
+        pr = await cdp.send('Page.printToPDF', {
+            'printBackground': True,
+            'preferCSSPageSize': True,
+        })
+        pdf_bytes = base64.b64decode(pr['data'])
+        if len(pdf_bytes) >= 10000:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'wb') as f:
+                f.write(pdf_bytes)
+            result['success'] = True
+            result['file_path'] = str(output_path)
+            result['file_size'] = len(pdf_bytes)
+            result['message'] = f'OK (printToPDF): {len(pdf_bytes)} bytes'
+            return result
+    except Exception as e:
+        print(f"  [browser] Page.printToPDF error: {e}", file=sys.stderr)
+
+    result['message'] = 'Unable to capture PDF data from browser'
+    return result
+
+
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60):
     """
-    Download a PDF from bioRxiv/medRxiv via a real Chrome browser.
+    Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
+
+    When given a bioRxiv/medRxiv DOI or URL: passes Cloudflare on the homepage,
+    then loads the article and PDF pages through the same browser session.
+
+    When given any other URL (generic PDF, publisher link, etc.): navigates
+    directly to the URL, lets Chrome display the PDF, then clicks the viewer's
+    download button or uses JS fetch to capture it.
 
     Returns dict: {success, file_path, file_size, message}
     """
@@ -152,10 +308,53 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
     doi, server = extract_doi(url_or_doi)
-    if not doi:
-        result['message'] = f'Could not extract DOI from: {url_or_doi}'
-        return result
 
+    # --- Generic URL path (not a biorxiv/medrxiv DOI) ---
+    if doi is None:
+        parsed = urlparse(url_or_doi)
+        if not parsed.scheme:
+            result['message'] = f'Not a valid URL or DOI: {url_or_doi}'
+            return result
+
+        safe_name = url_or_doi.split('/')[-1].split('?')[0] or 'download'
+        if not safe_name.endswith('.pdf'):
+            safe_name += '.pdf'
+        output_path = Path(output_dir) / safe_name
+
+        print(f"  [browser] Generic URL: {url_or_doi}", file=sys.stderr)
+        chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome())
+
+        try:
+            chrome.start()
+
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
+                ctx = browser.contexts[0]
+
+                # Set download path so captures go to output dir
+                about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                cdp_tmp = await ctx.new_cdp_session(about_page)
+                await cdp_tmp.send('Page.setDownloadBehavior', {
+                    'behavior': 'allow',
+                    'downloadPath': str(output_path.parent.absolute()),
+                    'eventsEnabled': True,
+                })
+                await cdp_tmp.detach()
+
+                page = await ctx.new_page()
+                return await _download_generic_pdf(page, url_or_doi,
+                                                   output_path, timeout)
+
+        except ImportError:
+            result['message'] = 'Playwright not installed'
+            return result
+        except Exception as e:
+            result['message'] = f'Browser download error: {e}'
+            return result
+        finally:
+            chrome.stop()
+
+    # --- bioRxiv / medRxiv path ---
     article_url = f"https://www.{server}.org/content/{doi}"
     pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
     safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -180,7 +379,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             page = await ctx.new_page()
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
-            if not await _wait_cloudflare(page, 30):
+            if not await _wait_cloudflare(page, 120):
                 result['message'] = 'Cloudflare challenge did not resolve'
                 return result
             print(f"  [browser] Cloudflare passed", file=sys.stderr)
@@ -191,39 +390,71 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                             timeout=timeout * 1000)
             await asyncio.sleep(3)
 
-            # Step 3 — load PDF page
+            # Step 3 — load PDF page (may display inline or trigger download)
             print(f"  [browser] Loading PDF page...", file=sys.stderr)
+
+            # Set download capture path in case Chrome downloads instead of displaying
+            about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            cdp_tmp = await ctx.new_cdp_session(about_page)
+            await cdp_tmp.send('Page.setDownloadBehavior', {
+                'behavior': 'allow',
+                'downloadPath': str(output_path.parent.absolute()),
+                'eventsEnabled': True,
+            })
+            await cdp_tmp.detach()
+
             pdf_page = await ctx.new_page()
-            await pdf_page.goto(pdf_url, wait_until='domcontentloaded',
-                                timeout=timeout * 1000)
-            await asyncio.sleep(3)
 
-            ct = await pdf_page.evaluate('() => document.contentType')
-            if ct != 'application/pdf':
-                result['message'] = f'Expected PDF but got Content-Type: {ct}'
-                return result
+            # Try download capture first (in case server sends attachment)
+            pdf_bytes = None
+            try:
+                async with pdf_page.expect_download(timeout=min(timeout, 30) * 1000) as dl:
+                    await pdf_page.goto(pdf_url, wait_until='commit',
+                                        timeout=timeout * 1000)
+                download = await dl.value
+                tmp_path = await download.path()
+                if tmp_path and os.path.exists(tmp_path):
+                    pdf_bytes = open(tmp_path, 'rb').read()
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+            except Exception:
+                # Page displayed inline (or other failure), navigate normally
+                try:
+                    await pdf_page.goto(pdf_url, wait_until='domcontentloaded',
+                                        timeout=timeout * 1000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
 
-            # Step 4 — fetch PDF bytes via in-page JS
-            print(f"  [browser] Fetching PDF data...", file=sys.stderr)
-            js_result = await pdf_page.evaluate("""
-                async () => {
-                    const r = await fetch(window.location.href, {credentials: 'include'});
-                    if (!r.ok) return {error: 'HTTP ' + r.status};
-                    const blob = await r.blob();
-                    return new Promise(resolve => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
-                        reader.onerror = () => resolve({error: 'FileReader failed'});
-                        reader.readAsDataURL(blob);
-                    });
-                }
-            """)
+            if not pdf_bytes:
+                ct = await pdf_page.evaluate('() => document.contentType')
+                if ct != 'application/pdf':
+                    result['message'] = f'Expected PDF but got Content-Type: {ct}'
+                    return result
 
-            if isinstance(js_result, dict) and 'error' in js_result:
-                result['message'] = f"JS fetch failed: {js_result['error']}"
-                return result
+                # Step 4 — fetch PDF bytes via in-page JS (for inline display)
+                print(f"  [browser] Fetching PDF data via JS...", file=sys.stderr)
+                js_result = await pdf_page.evaluate("""
+                    async () => {
+                        const r = await fetch(window.location.href, {credentials: 'include'});
+                        if (!r.ok) return {error: 'HTTP ' + r.status};
+                        const blob = await r.blob();
+                        return new Promise(resolve => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
+                            reader.onerror = () => resolve({error: 'FileReader failed'});
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                """)
 
-            pdf_bytes = base64.b64decode(js_result['data'])
+                if isinstance(js_result, dict) and 'error' in js_result:
+                    result['message'] = f"JS fetch failed: {js_result['error']}"
+                    return result
+
+                pdf_bytes = base64.b64decode(js_result['data'])
 
             if len(pdf_bytes) < 10000:
                 result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
@@ -257,7 +488,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
 def main():
     p = argparse.ArgumentParser(
         description='Download bioRxiv / medRxiv PDF via real Chrome browser')
-    p.add_argument('url_or_doi', help='bioRxiv/medRxiv URL or DOI')
+    p.add_argument('url_or_doi', help='bioRxiv/medRxiv URL or DOI, or any PDF URL')
     p.add_argument('-o', '--output-dir', default='.',
                    help='Output directory for PDF (default: .)')
     p.add_argument('--chrome-bin', default=None,

@@ -1,6 +1,6 @@
 ---
 name: bio-paper-downloader
-description: Search and download bioinformatics papers from arXiv, bioRxiv, medRxiv, and PubMed. Supports keyword search, title search, URL download, and list-only mode via a single unified CLI.
+description: Search and download bioinformatics papers from arXiv, bioRxiv, medRxiv, PubMed, and Google Scholar. Supports keyword search, title search, URL download, and list-only mode via a single unified CLI.
 compatibility: Requires Python 3 and google-chrome. Direct PDF downloads use stdlib only. Browser-based downloads (bioRxiv/medRxiv/PubMed) need Playwright (pip install playwright). On headless servers use xvfb-run.
 metadata:
   skit:
@@ -35,7 +35,7 @@ All functionality via a single CLI:
 python3 scripts/paper_cli.py {search|find|get} [options]
 ```
 
-Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed`
+Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar`
 
 Global options: `--config CONFIG` (default `config.yaml`).
 All commands support `-l` / `--list` to preview without downloading.
@@ -53,13 +53,16 @@ python3 scripts/paper_cli.py search -k "CRISPR,gene editing" -s pubmed -n 5 -l
 
 # Search medRxiv for COVID papers, download 2
 python3 scripts/paper_cli.py search -k "vaccine,immunity" -s medrxiv -n 2
+
+# Search Google Scholar for deep learning + single-cell papers
+python3 scripts/paper_cli.py search -k "deep learning,single-cell" -s scholar -n 3 --browser
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-k, --keywords` | config | Comma-separated keywords |
-| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed` |
+| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar` |
 | `-n, --num` | config (1) | Number of papers |
 | `-f, --filter` | off | Config keyword relevance filter |
 | `-l, --list` | off | List only, no download |
@@ -91,6 +94,7 @@ URLs are auto-detected by domain pattern. Generic PDF URLs also work.
 | `biorxiv` | bioRxiv API | Browser | Biology preprints; Cloudflare requires headed Chrome |
 | `medrxiv` | medRxiv API | Browser | Medical/clinical preprints; Cloudflare requires headed Chrome |
 | `pubmed` | NCBI E-utilities | Browser via DOI | Follows DOI to publisher page, finds PDF link |
+| `scholar` | Google Scholar (HTML scrape) | Browser | Broad search across all sources; requires `--browser` |
 
 ### Browser-Based PDF Download
 

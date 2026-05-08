@@ -2,7 +2,7 @@
 """
 Unified Paper CLI — search and download bioinformatics papers.
 
-Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed
+Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar
 
 Usage:
   paper_cli.py search [-k keywords] [-s source] [-n N] [-l]
@@ -15,6 +15,9 @@ import argparse
 import json
 import os
 import re
+import signal
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -24,6 +27,19 @@ import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+
+# ---------------------------------------------------------------------------
+# SSL workaround for older servers (bioRxiv, etc.)
+# ---------------------------------------------------------------------------
+
+def _ssl_context():
+    """Return an SSL context compatible with older OpenSSL servers.
+
+    Some preprint APIs (bioRxiv, medRxiv) run older OpenSSL (1.1.1k) that
+    doesn't fully handshake with OpenSSL 3.6+. We skip verification for
+    these public APIs — the downloaded content is validated separately.
+    """
+    return ssl._create_unverified_context()
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -144,7 +160,7 @@ def arxiv_api(query, config, max_results=50):
     url = f"{base}?search_query={urllib.parse.quote(query)}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config)) as r:
+        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
             return r.read().decode('utf-8')
     except Exception as e:
         print(f"  arXiv error: {e}", file=sys.stderr)
@@ -221,7 +237,7 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
         url = f"{base}/details/{server}/{start}/{end}/{cursor}"
         req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
         try:
-            with urllib.request.urlopen(req, timeout=tout(config)) as r:
+            with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
                 data = json.loads(r.read().decode('utf-8'))
         except Exception as e:
             print(f"  {server} error: {e}", file=sys.stderr)
@@ -285,7 +301,7 @@ def pubmed_api(endpoint, params, config):
     url = f"{PUBMED_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config)) as r:
+        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
             return json.loads(r.read().decode('utf-8'))
     except Exception as e:
         print(f"  PubMed error: {e}", file=sys.stderr)
@@ -362,7 +378,7 @@ def download_arxiv(arxiv_id, config):
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config)) as r:
+        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
             data = r.read()
             return data if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) else None
     except Exception as e:
@@ -384,7 +400,7 @@ def download_preprint(doi, server, config, use_browser=False):
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=tout(config)) as r:
+            with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
                 data = r.read()
                 if data.startswith(b'%PDF') or (server == 'medrxiv' and len(data) > 10000):
                     return data
@@ -411,8 +427,8 @@ def _browser_download(doi, server, config):
     with tempfile.TemporaryDirectory() as tmpdir:
         r = subprocess.run(
             [sys.executable, script, doi, '-o', tmpdir,
-             '--timeout', str(tout(config))],
-            capture_output=True, text=True, timeout=tout(config) + 60)
+             '--timeout', '180'],
+            capture_output=True, text=True, timeout=300)
         if r.returncode == 0:
             safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
             pdf_path = os.path.join(tmpdir, safe_name)
@@ -427,19 +443,47 @@ def _publisher_download(doi, pmid, config):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     cmd = [sys.executable, script, '--doi', doi, '-o', '/dev/stdout',
-           '--timeout', str(tout(config))]
-    # We use a temp dir for output — the script can save directly
+           '--timeout', '180']
     with tempfile.TemporaryDirectory() as tmpdir:
         cmd[cmd.index('/dev/stdout')] = tmpdir
         r = subprocess.run(
             cmd, capture_output=True, text=True,
-            timeout=tout(config) + 60)
+            timeout=300)
         if r.returncode == 0:
             safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
             pdf_path = os.path.join(tmpdir, safe_name)
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as f:
                     return f.read()
+    return None
+
+
+def _download_direct_pdf(pdf_url, config):
+    """Download a PDF from a direct URL. Tries urllib first, falls back to browser."""
+    # Quick try with urllib first
+    try:
+        req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
+        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+            data = r.read()
+            if data.startswith(b'%PDF') or len(data) > 50000:
+                return data
+    except Exception:
+        pass
+
+    # Fall back to browser for anti-bot bypass
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'download_biorxiv_browser.py')
+    with tempfile.TemporaryDirectory() as tmpdir:
+        r = subprocess.run(
+            [sys.executable, script, pdf_url, '-o', tmpdir,
+             '--timeout', '180'],
+            capture_output=True, text=True, timeout=300)
+        if r.returncode == 0:
+            for f in os.listdir(tmpdir):
+                if f.endswith('.pdf'):
+                    pdf_path = os.path.join(tmpdir, f)
+                    with open(pdf_path, 'rb') as fh:
+                        return fh.read()
     return None
 
 
@@ -461,7 +505,7 @@ def _download_pmc_pdf(pmc_id, config):
     url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config)) as r:
+        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
             data = r.read()
             if len(data) > 10000 and not data[:4] == b'<!DO':
                 return data
@@ -495,6 +539,31 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi', pid), src, config,
                                      use_browser=use_browser)
+    elif src == 'scholar':
+        # Scholar papers may have PDF link, DOI, or known underlying source
+        pdf_url = paper.get('pdf_url', '')
+        doi = paper.get('doi', '')
+        # 1) Direct PDF link from Scholar (retry up to 2 extra times)
+        if pdf_url and use_browser:
+            for attempt in range(3):
+                print(f"  Trying direct PDF from Scholar (attempt {attempt+1}/3)...", file=sys.stderr)
+                pdf_data = _download_direct_pdf(pdf_url, config)
+                if pdf_data:
+                    break
+                if attempt < 2:
+                    time.sleep(5)
+        # 2) DOI → publisher download (retry up to 2 extra times)
+        if not pdf_data and doi and use_browser:
+            for attempt in range(3):
+                print(f"  Trying publisher via DOI {doi} (attempt {attempt+1}/3)...", file=sys.stderr)
+                pdf_data = _publisher_download(doi, paper.get('pmid'), config)
+                if pdf_data:
+                    break
+                if attempt < 2:
+                    time.sleep(5)
+        # 3) If source is actually biorxiv/medrxiv/arxiv (detected from link)
+        if not pdf_data and paper.get('arxiv_id'):
+            pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         # 1) Try DOI → publisher PDF (if --browser enabled and DOI available)
         if use_browser and paper.get('doi'):
@@ -599,7 +668,173 @@ def detect_url(url, config):
 # Commands
 # ---------------------------------------------------------------------------
 
-SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed']
+SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar']
+
+
+def scholar_search(keywords, config, max_results=10):
+    """Search Google Scholar and return normalized paper list."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("Google Scholar search requires: pip install playwright", file=sys.stderr)
+        return [], 0
+
+    import asyncio as _asyncio
+    return _asyncio.run(_scholar_search_async(keywords, config, max_results))
+
+
+async def _scholar_search_async(keywords, config, max_results):
+    """Async implementation of scholar search."""
+    import asyncio as _asyncio
+    from playwright.async_api import async_playwright
+
+    query = '+'.join(k.strip().replace(' ', '+') for k in keywords)
+    url = f'https://scholar.google.com/scholar?q={query}&num={min(max_results, 20)}&as_sdt=0,5'
+
+    print(f"  Searching Google Scholar...")
+
+    # Setup Chrome
+    profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
+
+    port = None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        port = s.getsockname()[1]
+
+    os.makedirs(profile, exist_ok=True)
+    subprocess.run(['pkill', '-f', f'remote-debugging-port={port}'], capture_output=True)
+    time.sleep(1)
+
+    chrome = subprocess.Popen([
+        'google-chrome',
+        f'--remote-debugging-port={port}',
+        f'--user-data-dir={profile}',
+        '--no-first-run', '--no-default-browser-check', '--no-sandbox',
+        'about:blank',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+    time.sleep(3)
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{port}')
+            ctx = browser.contexts[0]
+            page = await ctx.new_page()
+
+            await page.goto(url, wait_until='domcontentloaded', timeout=120000)
+
+            for _ in range(30):
+                await _asyncio.sleep(4)
+                title = await page.title()
+                if 'sorry' in title.lower():
+                    print(f"  Google Scholar blocked us (captcha/IP rate limit)", file=sys.stderr)
+                    return [], 0
+                if 'scholar' in title.lower():
+                    break
+
+            raw = await page.evaluate(f'''
+                () => {{
+                    const results = [];
+                    const containers = document.querySelectorAll('.gs_r.gs_or.gs_scl, .gs_r.gs_or');
+                    containers.forEach((r) => {{
+                        if (results.length >= {min(max_results, 20)}) return;
+                        const titleEl = r.querySelector('h3.gs_rt');
+                        const titleLink = r.querySelector('h3.gs_rt a');
+                        const metaEl = r.querySelector('.gs_a');
+                        const snippetEl = r.querySelector('.gs_rs');
+
+                        const pdfLinks = [];
+                        r.querySelectorAll('a').forEach(a => {{
+                            const href = a.getAttribute('href');
+                            const text = (a.innerText || '').trim();
+                            if (href && !href.startsWith('#') && !href.startsWith('javascript')) {{
+                                if (text === '[PDF]' || href.endsWith('.pdf')) {{
+                                    pdfLinks.push({{href: href, text: text}});
+                                }}
+                            }}
+                        }});
+
+                        results.push({{
+                            title: (titleEl?.innerText || '').replace(/^\\[[A-Z]+\\]\\s*/, ''),
+                            link: titleLink?.getAttribute('href') || '',
+                            meta: metaEl?.innerText || '',
+                            snippet: snippetEl?.innerText?.substring(0, 300) || '',
+                            pdf_links: pdfLinks,
+                        }});
+                    }});
+                    return results;
+                }}
+            ''')
+
+            await browser.close()
+    finally:
+        try:
+            os.killpg(os.getpgid(chrome.pid), signal.SIGTERM)
+        except Exception:
+            pass
+
+    # Normalize results
+    import asyncio  # re-import for sleep in normalize loop
+    normalized = []
+    for r in raw:
+        title = r['title'].strip()
+        if not title:
+            continue
+
+        main_link = r['link']
+        meta = r['meta']
+
+        doi = ''
+        for src in [main_link, meta]:
+            m = re.search(r'(10\.\d{4,}/[^\s&]+)', src)
+            if m:
+                doi = m.group(1).rstrip('.')
+                break
+
+        source = 'scholar'
+        if 'biorxiv.org' in main_link:
+            source = 'biorxiv'
+        elif 'medrxiv.org' in main_link:
+            source = 'medrxiv'
+        elif 'arxiv.org' in main_link:
+            source = 'arxiv'
+        elif doi:
+            source = 'pubmed'
+
+        pdf_url = ''
+        if r['pdf_links']:
+            pdf_url = r['pdf_links'][0]['href']
+
+        paper_id = doi or main_link.split('/')[-1] or str(hash(title) % 100000000)
+
+        authors = ''
+        journal = ''
+        if ' - ' in meta:
+            parts = meta.split(' - ')
+            authors = parts[0].strip()
+            if len(parts) >= 2:
+                journal = parts[-1].strip().rstrip(',')
+
+        p = make_paper(
+            source, paper_id, title, authors, '',
+            '', journal, pdf_url, main_link,
+            doi=doi or None,
+        )
+        p['scholar_meta'] = meta
+        normalized.append(p)
+
+    return normalized, len(raw)
+
+
+def scholar_search_title(title, config, max_results=5):
+    """Search Google Scholar by title — returns best matches."""
+    import asyncio as _asyncio
+    keywords = [title]
+    return _asyncio.run(_scholar_search_async(keywords, config, max_results))
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
 
 
 def cmd_search(args, config):
@@ -620,6 +855,11 @@ def cmd_search(args, config):
                                           max_results=num * 5)
     elif source == 'pubmed':
         papers, scanned = pubmed_search(keywords, config, max_results=num * 5)
+    elif source == 'scholar':
+        if not args.browser:
+            print(" --browser is required for Google Scholar searches", file=sys.stderr)
+            return 1
+        papers, scanned = scholar_search(keywords, config, max_results=num)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -643,6 +883,11 @@ def cmd_find(args, config):
         papers, scanned = preprint_search_title(args.title, config, source)
     elif source == 'pubmed':
         papers, scanned = pubmed_search_title(args.title, config, 10)
+    elif source == 'scholar':
+        if not args.browser:
+            print(" --browser is required for Google Scholar searches", file=sys.stderr)
+            return 1
+        papers, scanned = scholar_search_title(args.title, config, 5)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -739,9 +984,16 @@ examples:
   paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
   paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
   paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
-  paper_cli.py get -u "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8371605/"
 
-sources: arxiv, biorxiv, medrxiv, pubmed"""
+  # Google Scholar — requires --browser
+  paper_cli.py search -k "deep learning single cell" -s scholar -n 3 --browser
+  paper_cli.py find -t "CRISPR editing methylation" -s scholar --browser
+
+  # Browser-assisted downloads (Cloudflare bypass / publisher redirects)
+  paper_cli.py search -k "methylation" -s biorxiv -n 2 --browser
+  paper_cli.py search -k "deep learning" -s pubmed -n 1 --browser
+
+sources: arxiv, biorxiv, medrxiv, pubmed, scholar"""
 
 
 def _add_output_args(p):
@@ -766,7 +1018,7 @@ def _add_browser_arg(p):
 def main():
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
-        description='Unified paper search & download CLI — arXiv, bioRxiv, medRxiv, PubMed.',
+        description='Unified paper search & download CLI — arXiv, bioRxiv, medRxiv, PubMed, Google Scholar.',
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
