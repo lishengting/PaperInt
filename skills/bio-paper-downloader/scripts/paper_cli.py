@@ -337,29 +337,49 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
             () => {{
                 const results = [];
                 const items = document.querySelectorAll('.highwire-article-citation, .search-result, article.search-result, li.search-result');
-                items.forEach((el) => {{
-                    if (results.length >= {max_results}) return;
-                    const titleEl = el.querySelector('.highwire-cite-title, .title, h4 a, .highwire-cite-title a');
-                    const title = titleEl?.innerText?.trim() || '';
-                    const link = titleEl?.getAttribute('href') || '';
-                    const authorsEl = el.querySelector('.highwire-citation-authors, .authors, .contributors');
-                    const authors = authorsEl?.innerText?.trim() || '';
-                    const snippetEl = el.querySelector('.highwire-cite-snippet, .snippet, .abstract');
-                    const snippet = snippetEl?.innerText?.trim().substring(0, 500) || '';
-                    const doiEl = el.querySelector('.highwire-cite-metadata-doi, .doi');
-                    const doiText = doiEl?.innerText?.trim() || '';
-                    const dateEl = el.querySelector('.highwire-cite-metadata-pub-date, .pub-date, .date');
-                    const dateText = dateEl?.innerText?.trim() || '';
-
-                    results.push({{
-                        title: title,
-                        link: link,
-                        authors: authors,
-                        snippet: snippet,
-                        doiText: doiText,
-                        date: dateText,
+                if (items.length === 0) {{
+                    // Fallback: try any link to /content/10.
+                    const links = document.querySelectorAll('a[href*="/content/10."]');
+                    links.forEach((a) => {{
+                        if (results.length >= {max_results}) return;
+                        const href = a.getAttribute('href');
+                        const title = a.innerText.trim();
+                        if (title && href) {{
+                            results.push({{
+                                title: title,
+                                link: href,
+                                authors: '',
+                                snippet: '',
+                                doiText: href,
+                                date: '',
+                            }});
+                        }}
                     }});
-                }});
+                }} else {{
+                    items.forEach((el) => {{
+                        if (results.length >= {max_results}) return;
+                        const titleEl = el.querySelector('.highwire-cite-title, .title, h4 a, .highwire-cite-title a, a[href*="/content/10."]');
+                        const title = titleEl?.innerText?.trim() || '';
+                        const link = titleEl?.getAttribute('href') || '';
+                        const authorsEl = el.querySelector('.highwire-citation-authors, .authors, .contributors');
+                        const authors = authorsEl?.innerText?.trim() || '';
+                        const snippetEl = el.querySelector('.highwire-cite-snippet, .snippet, .abstract');
+                        const snippet = snippetEl?.innerText?.trim().substring(0, 500) || '';
+                        const doiEl = el.querySelector('.highwire-cite-metadata-doi, .doi');
+                        const doiText = doiEl?.innerText?.trim() || link;
+                        const dateEl = el.querySelector('.highwire-cite-metadata-pub-date, .pub-date, .date');
+                        const dateText = dateEl?.innerText?.trim() || '';
+
+                        results.push({{
+                            title: title,
+                            link: link,
+                            authors: authors,
+                            snippet: snippet,
+                            doiText: doiText,
+                            date: dateText,
+                        }});
+                    }});
+                }}
                 return results;
             }}
         ''')
@@ -565,6 +585,8 @@ def download_arxiv(arxiv_id, config):
 
 def download_preprint(doi, server, config, use_browser=False):
     """Download PDF from biorxiv or medrxiv. Falls back to Playwright browser if enabled."""
+    if not doi:
+        return None
     headers = {
         'User-Agent': ua(config),
         'Accept': 'application/pdf,*/*;q=0.9',
@@ -714,7 +736,7 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
     if src == 'arxiv':
         pdf_data = download_arxiv(paper.get('arxiv_id', pid), config)
     elif src in ('biorxiv', 'medrxiv'):
-        pdf_data = download_preprint(paper.get('doi', pid), src, config,
+        pdf_data = download_preprint(paper.get('doi') or pid, src, config,
                                      use_browser=use_browser)
     elif src == 'scholar':
         # Scholar papers may have PDF link, DOI, or known underlying source
@@ -768,9 +790,8 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
                 if aid:
                     pdf_data = download_arxiv(aid, config)
             elif alt_src in ('biorxiv', 'medrxiv'):
-                adoi = alt.get('doi') or paper.get('doi')
-                if adoi:
-                    pdf_data = download_preprint(adoi, alt_src, config, use_browser=use_browser)
+                adoi = alt.get('doi') or paper.get('doi') or pid
+                pdf_data = download_preprint(adoi, alt_src, config, use_browser=use_browser)
             elif alt_src == 'scholar':
                 if alt.get('pdf_url') and use_browser:
                     pdf_data = _download_direct_pdf(alt['pdf_url'], config)
