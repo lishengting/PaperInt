@@ -475,6 +475,19 @@ def _get_or_start_chrome():
     time.sleep(3)
     return port
 
+_shared_chrome_port = None
+
+def _kill_shared_chrome():
+    """Kill the shared Chrome browser if running."""
+    global _shared_chrome_port
+    if _shared_chrome_port:
+        try:
+            subprocess.run(['pkill', '-f', f'remote-debugging-port={_shared_chrome_port}'],
+                         capture_output=True)
+        except Exception:
+            pass
+        _shared_chrome_port = None
+
 
 # ---------------------------------------------------------------------------
 # PubMed (NCBI E-utilities)
@@ -620,7 +633,16 @@ def download_preprint(doi, server, config, use_browser=False):
 
 
 def _browser_download(doi, server, config):
-    """Call the Playwright-based downloader as a subprocess."""
+    """Download biorxiv/medRxiv PDF via CDP (reuses shared Chrome if available)."""
+    if not doi:
+        return None
+
+    # Reuse shared Chrome if available
+    if _shared_chrome_port:
+        import asyncio as _asyncio
+        return _asyncio.run(_browser_download_cdp(doi, server, config, _shared_chrome_port))
+
+    # Fallback: call download_biorxiv_browser.py subprocess
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -634,6 +656,57 @@ def _browser_download(doi, server, config):
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as f:
                     return f.read()
+    return None
+
+
+async def _browser_download_cdp(doi, server, config, chrome_port):
+    """Download biorxiv/medRxiv PDF by connecting to existing headed Chrome via CDP."""
+    import asyncio as _asyncio
+    from playwright.async_api import async_playwright
+
+    pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
+    article_url = f"https://www.{server}.org/content/{doi}"
+
+    print(f"  Browser: connecting to Chrome on port {chrome_port}...", file=sys.stderr)
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
+        ctx = browser.contexts[0]
+
+        # First ensure Cloudflare is passed
+        page = await ctx.new_page()
+        homepage = f'https://www.{server}.org/'
+        await page.goto(homepage, wait_until='domcontentloaded', timeout=60000)
+        await _asyncio.sleep(3)
+
+        # Go to article page
+        await page.goto(article_url, wait_until='domcontentloaded', timeout=60000)
+        await _asyncio.sleep(3)
+
+        # Go to PDF page and fetch via JS
+        pdf_page = await ctx.new_page()
+        await pdf_page.goto(pdf_url, wait_until='domcontentloaded', timeout=60000)
+        await _asyncio.sleep(3)
+
+        js_result = await pdf_page.evaluate("""
+            async () => {
+                const r = await fetch(window.location.href, {credentials: 'include'});
+                if (!r.ok) return {error: 'HTTP ' + r.status};
+                const blob = await r.blob();
+                return new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
+                    reader.onerror = () => resolve({error: 'FileReader failed'});
+                    reader.readAsDataURL(blob);
+                });
+            }
+        """)
+
+        await pdf_page.close()
+        await page.close()
+
+    if isinstance(js_result, dict) and 'data' in js_result:
+        import base64
+        return base64.b64decode(js_result['data'])
     return None
 
 
@@ -1142,10 +1215,11 @@ def _merge_dedup(papers, source_priority=None):
     return merged
 
 
-def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date'):
+def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date', chrome_port=None):
     """Search all sources, merge, deduplicate, and sort.
 
     sort_by: 'date' (newest first, for keyword search) or 'relevance' (best match, for title search).
+    chrome_port: shared Chrome CDP port to reuse (avoids launching new Chrome).
     """
     all_papers = []
 
@@ -1184,7 +1258,7 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
     # Google Scholar
     if use_browser:
         try:
-            papers, _ = scholar_search(keywords, config, max_results=max_results)
+            papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
             all_papers.extend(papers)
             print(f"  scholar: {len(papers)} results")
         except Exception as e:
@@ -1244,7 +1318,10 @@ def cmd_search(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        papers = search_all(keywords, config, max_results=num, use_browser=True, sort_by='date')
+        global _shared_chrome_port
+        _shared_chrome_port = _get_or_start_chrome()
+        papers = search_all(keywords, config, max_results=num, use_browser=True,
+                           sort_by='date', chrome_port=_shared_chrome_port)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -1253,7 +1330,9 @@ def cmd_search(args, config):
         print(f"Scanned {scanned}, found {len(papers)}")
     papers = papers[:num]
 
-    return _show_or_download(papers, args, config)
+    result = _show_or_download(papers, args, config)
+    _kill_shared_chrome()
+    return result
 
 
 def cmd_find(args, config):
@@ -1278,62 +1357,57 @@ def cmd_find(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        # Start one Chrome instance shared by all browser-based searches
-        chrome_port = _get_or_start_chrome()
-        # Search each source with the complete title, merge by relevance
-        all_papers = []
+        global _shared_chrome_port
+        _shared_chrome_port = _get_or_start_chrome()
         try:
-            papers = arxiv_search_title(args.title, config, 10)
-            all_papers.extend(papers)
-            print(f"  arxiv: {len(papers)} results")
-        except Exception as e:
-            print(f"  arxiv: error - {e}", file=sys.stderr)
-        try:
-            papers, _ = preprint_search_title(args.title, config, 'biorxiv', use_browser=True)
-            all_papers.extend(papers)
-            print(f"  biorxiv: {len(papers)} results")
-        except Exception as e:
-            print(f"  biorxiv: error - {e}", file=sys.stderr)
-        try:
-            papers, _ = preprint_search_title(args.title, config, 'medrxiv', use_browser=True)
-            all_papers.extend(papers)
-            print(f"  medrxiv: {len(papers)} results")
-        except Exception as e:
-            print(f"  medrxiv: error - {e}", file=sys.stderr)
-        try:
-            papers, _ = pubmed_search_title(args.title, config, 10)
-            all_papers.extend(papers)
-            print(f"  pubmed: {len(papers)} results")
-        except Exception as e:
-            print(f"  pubmed: error - {e}", file=sys.stderr)
-        try:
-            papers, _ = scholar_search_title(args.title, config, 10, chrome_port=chrome_port)
-            all_papers.extend(papers)
-            print(f"  scholar: {len(papers)} results")
-        except Exception as e:
-            print(f"  scholar: error - {e}", file=sys.stderr)
-        # Clean up shared Chrome
-        try:
-            subprocess.run(['pkill', '-f', f'remote-debugging-port={chrome_port}'], capture_output=True)
-        except Exception:
-            pass
+            # Search each source with the complete title, merge by relevance
+            all_papers = []
+            try:
+                papers = arxiv_search_title(args.title, config, 10)
+                all_papers.extend(papers)
+                print(f"  arxiv: {len(papers)} results")
+            except Exception as e:
+                print(f"  arxiv: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = preprint_search_title(args.title, config, 'biorxiv', use_browser=True)
+                all_papers.extend(papers)
+                print(f"  biorxiv: {len(papers)} results")
+            except Exception as e:
+                print(f"  biorxiv: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = preprint_search_title(args.title, config, 'medrxiv', use_browser=True)
+                all_papers.extend(papers)
+                print(f"  medrxiv: {len(papers)} results")
+            except Exception as e:
+                print(f"  medrxiv: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = pubmed_search_title(args.title, config, 10)
+                all_papers.extend(papers)
+                print(f"  pubmed: {len(papers)} results")
+            except Exception as e:
+                print(f"  pubmed: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
+                all_papers.extend(papers)
+                print(f"  scholar: {len(papers)} results")
+            except Exception as e:
+                print(f"  scholar: error - {e}", file=sys.stderr)
 
-        if all_papers:
-            merged = _merge_dedup(all_papers)
-            tw = set(args.title.lower().split())
-            for p in merged:
-                pw = set(p['title'].lower().split())
-                p['_score'] = len(tw & pw) / max(len(tw), 1)
-            merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
-            for p in merged:
-                p.pop('_score', None)
-            print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
-            papers = merged
-        else:
-            papers = []
-    else:
-        print(f"Unknown source: {source}", file=sys.stderr)
-        return 1
+            if all_papers:
+                merged = _merge_dedup(all_papers)
+                tw = set(args.title.lower().split())
+                for p in merged:
+                    pw = set(p['title'].lower().split())
+                    p['_score'] = len(tw & pw) / max(len(tw), 1)
+                merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
+                for p in merged:
+                    p.pop('_score', None)
+                print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
+                papers = merged
+            else:
+                papers = []
+        finally:
+            pass  # Chrome cleanup is at end of function
 
     if scanned:
         print(f"Scanned {scanned}, found {len(papers)}")
@@ -1342,7 +1416,9 @@ def cmd_find(args, config):
         print("No matching papers found.")
         return 1
 
-    return _show_or_download(papers, args, config, single_best=True)
+    result = _show_or_download(papers, args, config, single_best=True)
+    _kill_shared_chrome()
+    return result
 
 
 def cmd_get(args, config):
