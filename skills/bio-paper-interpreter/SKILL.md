@@ -117,20 +117,36 @@ Claude Code interprets the paper using the system prompt + paper content.
 Follow the structure and writing style defined in the system prompt.
 Output a complete Chinese technical article in Markdown.
 
-#### Step A6: Save Interpretation
+#### Step A6: Save Output
 
-Save the interpretation as `data/interpreted/{paper_doi}.json`:
+**Primary output** — a human-readable Markdown article:
 
-```json
+```bash
+cat > data/interpreted/{paper_doi}.md << 'EOF'
+# 【论文解读】中文标题
+...
+EOF
+```
+
+**Secondary output** — structured JSON with metadata, tags, and full content:
+
+```bash
+cat > data/interpreted/{paper_doi}.json << 'EOF'
 {
   "paper_id": "...",
+  "doi": "...",
   "title": "<extracted Chinese title>",
   "content": "<full markdown content>",
   "tags": [<matched tag ids>],
   "mode": "full_text | abstract_only",
   "interpreted_at": "<ISO timestamp>"
 }
+EOF
 ```
+
+Markdown files can be opened directly in any editor, rendered to HTML,
+or published to a blog/platform. JSON provides structured access for
+programmatic consumption.
 
 ---
 
@@ -249,7 +265,8 @@ Resolve scripts from this skill's `scripts/` directory.
 
 ## Output
 
-- `data/interpreted/{doi}.json` — interpretation results (title, content, tags, mode)
+- `data/interpreted/{doi}.md` — human-readable Markdown article (primary)
+- `data/interpreted/{doi}.json` — structured metadata + full content (secondary)
 - `data/interpreted/{doi}_skipped.json` — skip records for non-relevant papers
 
 ## Rules
