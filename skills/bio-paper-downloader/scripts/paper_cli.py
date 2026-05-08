@@ -28,6 +28,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
+os.environ.setdefault('NODE_NO_WARNINGS', '1')
+
 # ---------------------------------------------------------------------------
 # SSL workaround for older servers (bioRxiv, etc.)
 # ---------------------------------------------------------------------------
