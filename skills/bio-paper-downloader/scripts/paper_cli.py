@@ -233,7 +233,7 @@ def arxiv_search(keywords, config, max_results=50):
 
 def arxiv_search_title(title, config, max_results=10):
     """Search arXiv by title — score by word overlap, sort by relevance."""
-    keywords = [w.lower() for w in title.split() if len(w) > 2]
+    keywords = [w.lower() for w in title.split()]
     xml_data = arxiv_api(' AND '.join(f'all:"{kw}"' for kw in keywords), config, max_results * 3)
     papers = arxiv_parse(xml_data) if xml_data else []
     tw = set(title.lower().split())
@@ -302,7 +302,7 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
 
 
 def preprint_search_title(title, config, server='biorxiv'):
-    keywords = [w.lower() for w in title.split() if len(w) > 2]
+    keywords = [w.lower() for w in title.split()]
     papers, scanned = preprint_search(keywords, config, server, max_results=500, max_scan=500)
 
     tw = set(title.lower().split())
@@ -395,7 +395,7 @@ def pubmed_search(keywords, config, max_results=50):
 
 def pubmed_search_title(title, config, max_results=10):
     """Search PubMed by title — score by word overlap, sort by relevance."""
-    keywords = [w.lower() for w in title.split() if len(w) > 2]
+    keywords = [w.lower() for w in title.split()]
     papers, total = pubmed_search(keywords, config, max_results * 3)
     tw = set(title.lower().split())
     for p in papers:
@@ -1128,7 +1128,7 @@ def cmd_find(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        keywords = [w.strip() for w in args.title.split() if len(w) > 2]
+        keywords = [w.strip() for w in args.title.split()]
         papers = search_all(keywords, config, max_results=10, use_browser=True, sort_by='relevance')
         # Re-score against original title for final ordering
         tw = set(args.title.lower().split())
