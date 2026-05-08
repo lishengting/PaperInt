@@ -338,13 +338,16 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
                 const results = [];
                 const items = document.querySelectorAll('.highwire-article-citation, .search-result, article.search-result, li.search-result');
                 if (items.length === 0) {{
-                    // Fallback: try any link to /content/10.
-                    const links = document.querySelectorAll('a[href*="/content/10."]');
-                    links.forEach((a) => {{
+                    // Fallback: scan page for links containing /content/10.XXXX/
+                    const allLinks = document.querySelectorAll('a[href*="/content/10."]');
+                    const seen = new Set();
+                    allLinks.forEach((a) => {{
                         if (results.length >= {max_results}) return;
                         const href = a.getAttribute('href');
                         const title = a.innerText.trim();
-                        if (title && href) {{
+                        // Only collect links whose text looks like a paper title (not nav links)
+                        if (title && href && title.length > 20 && !seen.has(href)) {{
+                            seen.add(href);
                             results.push({{
                                 title: title,
                                 link: href,
@@ -391,7 +394,7 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
         if not r['title']:
             continue
 
-        # Extract DOI from various fields
+        # Extract DOI — must match 10.XXXX/... pattern
         doi = ''
         for src in [r['link'], r['doiText']]:
             m = re.search(r'(10\.\d{{4,}}/[^\s&]+)', src)
@@ -399,7 +402,11 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
                 doi = m.group(1).rstrip('.')
                 break
 
-        paper_id = doi or r['link'].split('/')[-1] or str(hash(r['title']) % 100000000)
+        # Skip results without a valid DOI (false positives from search page)
+        if not doi:
+            continue
+
+        paper_id = doi
 
         # Build full abs_url from relative link
         abs_url = r['link']
@@ -409,8 +416,8 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
         papers.append(make_paper(
             server, paper_id, r['title'], r['authors'],
             r['snippet'], r['date'], '',
-            f"https://www.{server}.org/content/{doi}.full.pdf" if doi else '',
-            abs_url, doi=doi or None,
+            f"https://www.{server}.org/content/{doi}.full.pdf",
+            abs_url, doi=doi,
         ))
 
     return papers
