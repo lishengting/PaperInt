@@ -157,6 +157,19 @@ def make_paper(source, paper_id, title, authors, abstract, date, category,
     return p
 
 
+def _urlopen_with_retry(req, config, attempts=3, backoff=2):
+    """urlopen with retry for transient SSL/network errors."""
+    last_err = None
+    for i in range(attempts):
+        try:
+            return urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context())
+        except Exception as e:
+            last_err = e
+            if i < attempts - 1:
+                time.sleep(backoff * (i + 1))
+    raise last_err
+
+
 # ---------------------------------------------------------------------------
 # arXiv
 # ---------------------------------------------------------------------------
@@ -166,7 +179,7 @@ def arxiv_api(query, config, max_results=50):
     url = f"{base}?search_query={urllib.parse.quote(query)}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+        with _urlopen_with_retry(req, config) as r:
             return r.read().decode('utf-8')
     except Exception as e:
         print(f"  arXiv error: {e}", file=sys.stderr)
@@ -243,7 +256,7 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
         url = f"{base}/details/{server}/{start}/{end}/{cursor}"
         req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
         try:
-            with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+            with _urlopen_with_retry(req, config, attempts=3) as r:
                 data = json.loads(r.read().decode('utf-8'))
         except Exception as e:
             print(f"  {server} error: {e}", file=sys.stderr)
@@ -307,7 +320,7 @@ def pubmed_api(endpoint, params, config):
     url = f"{PUBMED_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+        with _urlopen_with_retry(req, config, attempts=3) as r:
             return json.loads(r.read().decode('utf-8'))
     except Exception as e:
         print(f"  PubMed error: {e}", file=sys.stderr)
@@ -384,7 +397,7 @@ def download_arxiv(arxiv_id, config):
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
             return data if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) else None
     except Exception as e:
@@ -406,7 +419,7 @@ def download_preprint(doi, server, config, use_browser=False):
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+            with _urlopen_with_retry(req, config, attempts=2) as r:
                 data = r.read()
                 if data.startswith(b'%PDF') or (server == 'medrxiv' and len(data) > 10000):
                     return data
@@ -469,7 +482,7 @@ def _download_direct_pdf(pdf_url, config):
     # Quick try with urllib first
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
-        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
             if data.startswith(b'%PDF') or len(data) > 50000:
                 return data
@@ -511,7 +524,7 @@ def _download_pmc_pdf(pmc_id, config):
     url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context()) as r:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
             if len(data) > 10000 and not data[:4] == b'<!DO':
                 return data
