@@ -232,8 +232,18 @@ def arxiv_search(keywords, config, max_results=50):
 
 
 def arxiv_search_title(title, config, max_results=10):
-    xml_data = arxiv_api(f'ti:"{title}"', config, max_results)
-    return arxiv_parse(xml_data) if xml_data else []
+    """Search arXiv by title — score by word overlap, sort by relevance."""
+    keywords = [w.lower() for w in title.split() if len(w) > 2]
+    xml_data = arxiv_api(' AND '.join(f'all:"{kw}"' for kw in keywords), config, max_results * 3)
+    papers = arxiv_parse(xml_data) if xml_data else []
+    tw = set(title.lower().split())
+    for p in papers:
+        pw = set(p['title'].lower().split())
+        p['_score'] = len(tw & pw) / max(len(tw), 1)
+    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
+    for p in papers:
+        p.pop('_score', None)
+    return papers[:max_results]
 
 
 # ---------------------------------------------------------------------------
@@ -384,9 +394,17 @@ def pubmed_search(keywords, config, max_results=50):
 
 
 def pubmed_search_title(title, config, max_results=10):
-    """Search PubMed by title."""
-    papers, total = pubmed_search([f'{title}[Title]'], config, max_results)
-    return papers, total
+    """Search PubMed by title — score by word overlap, sort by relevance."""
+    keywords = [w.lower() for w in title.split() if len(w) > 2]
+    papers, total = pubmed_search(keywords, config, max_results * 3)
+    tw = set(title.lower().split())
+    for p in papers:
+        pw = set(p['title'].lower().split())
+        p['_score'] = len(tw & pw) / max(len(tw), 1)
+    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
+    for p in papers:
+        p.pop('_score', None)
+    return papers[:max_results], total
 
 
 # ---------------------------------------------------------------------------
@@ -975,8 +993,11 @@ def _merge_dedup(papers, source_priority=None):
     return merged
 
 
-def search_all(keywords, config, max_results=10, use_browser=False):
-    """Search all sources, merge by keyword relevance, deduplicate."""
+def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date'):
+    """Search all sources, merge, deduplicate, and sort.
+
+    sort_by: 'date' (newest first, for keyword search) or 'relevance' (best match, for title search).
+    """
     all_papers = []
 
     # arXiv
@@ -1023,17 +1044,20 @@ def search_all(keywords, config, max_results=10, use_browser=False):
     if not all_papers:
         return []
 
-    # Score and deduplicate
-    kw_lower = [k.lower() for k in keywords]
-    for p in all_papers:
-        p['_score'] = _paper_score(p, kw_lower)
-
     merged = _merge_dedup(all_papers)
-    merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
 
-    # Clean up temp score
-    for p in merged:
-        p.pop('_score', None)
+    if sort_by == 'date':
+        def _date_key(p):
+            d = p.get('date', '')
+            return d if d else '0000-00-00'
+        merged.sort(key=_date_key, reverse=True)
+    else:
+        kw_lower = [k.lower() for k in keywords]
+        for p in merged:
+            p['_score'] = _paper_score(p, kw_lower)
+        merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
+        for p in merged:
+            p.pop('_score', None)
 
     print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
     return merged[:max_results]
@@ -1071,7 +1095,7 @@ def cmd_search(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        papers = search_all(keywords, config, max_results=num, use_browser=True)
+        papers = search_all(keywords, config, max_results=num, use_browser=True, sort_by='date')
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -1105,8 +1129,8 @@ def cmd_find(args, config):
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
         keywords = [w.strip() for w in args.title.split() if len(w) > 2]
-        papers = search_all(keywords, config, max_results=10, use_browser=True)
-        # Re-score against original title for ordering
+        papers = search_all(keywords, config, max_results=10, use_browser=True, sort_by='relevance')
+        # Re-score against original title for final ordering
         tw = set(args.title.lower().split())
         for p in papers:
             pw = set(p['title'].lower().split())
