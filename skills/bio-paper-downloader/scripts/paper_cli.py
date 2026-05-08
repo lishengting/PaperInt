@@ -322,8 +322,14 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
         ctx = browser.contexts[0]
-        page = await ctx.new_page()
 
+        # First visit homepage to pass Cloudflare challenge
+        page = await ctx.new_page()
+        homepage = f'https://www.{server}.org/'
+        await page.goto(homepage, wait_until='domcontentloaded', timeout=60000)
+        await _asyncio.sleep(3)
+
+        # Then navigate to search page
         await page.goto(url, wait_until='domcontentloaded', timeout=120000)
 
         for _ in range(30):
@@ -387,6 +393,8 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
         await page.close()
 
     papers = []
+    seen_dois = set()
+    seen_titles = set()
     for r in raw:
         if not r['title']:
             continue
@@ -394,10 +402,21 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
         # Extract DOI from various fields
         doi = ''
         for src in [r['link'], r['doiText']]:
-            m = re.search(r'(10\.\d{{4,}}/[^\s&]+)', src)
+            m = re.search(r'(10\.\d{4,}/[^\s&]+)', src)
             if m:
                 doi = m.group(1).rstrip('.')
                 break
+
+        # Dedup by DOI first, then by normalized title
+        if doi and doi in seen_dois:
+            continue
+        norm_title = ' '.join(r['title'].lower().split())
+        if norm_title in seen_titles:
+            continue
+
+        if doi:
+            seen_dois.add(doi)
+        seen_titles.add(norm_title)
 
         paper_id = doi or r['link'].split('/')[-1] or str(hash(r['title']) % 100000000)
 
