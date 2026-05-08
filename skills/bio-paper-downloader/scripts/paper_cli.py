@@ -35,11 +35,15 @@ from datetime import datetime, timedelta
 def _ssl_context():
     """Return an SSL context compatible with older OpenSSL servers.
 
-    Some preprint APIs (bioRxiv, medRxiv) run older OpenSSL (1.1.1k) that
-    doesn't fully handshake with OpenSSL 3.6+. We skip verification for
-    these public APIs — the downloaded content is validated separately.
+    Some preprint APIs (arXiv, bioRxiv, medRxiv) run older OpenSSL that
+    doesn't support TLS 1.3. We set minimum_version to TLS 1.2 and skip
+    verification for these public APIs.
     """
-    return ssl._create_unverified_context()
+    ctx = ssl._create_unverified_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
 
 # ---------------------------------------------------------------------------
 # Config helpers
