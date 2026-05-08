@@ -26,9 +26,29 @@ metadata into Chinese-language technical summaries. Do not use it for
 scheduled/cron-based periodic interpretation, Flarum publishing, or generic
 translation tasks.
 
+## Two Interpretation Paths
+
+### Path A: Claude Code Direct (default when using Claude Code)
+
+Claude Code reads the paper metadata and PDF directly, then interprets it
+using the system prompts from `config.yaml` — no external LLM API needed.
+
+1. Read paper metadata from `data/metadata/{doi}.json`
+2. Extract PDF text via `pdftotext` (use `extract_pdf_text.sh`)
+3. Run `filter_relevance.py` and `match_tags.py` to validate and tag
+4. Read the system prompt from `config.yaml` (`system_prompts.full_text` or
+   `system_prompts.abstract_only`)
+5. Interpret the paper directly and save to `data/interpreted/{doi}.json`
+
+### Path B: External LLM Pipeline (for batch/cron/automation)
+
+Uses the configured LLM API endpoint to interpret papers programmatically.
+Follows the 6-step pipeline described below. Requires the LLM API to be
+running and `LLM_API_KEY` set.
+
 ## Core Concepts
 
-The interpreter has two modes:
+The interpreter has two content modes:
 
 - **Full-text mode**: Extracts text from a PDF via `pdftotext`, feeds the
   truncated content to an LLM with the full-text system prompt from config.
@@ -41,7 +61,80 @@ Tag matching assigns topic categories based on configured regex patterns.
 All configuration (keywords for filtering, tag definitions, LLM settings,
 system prompts) comes from the shared `config.yaml` at the project root.
 
-## Workflow
+## Workflow (Path A: Claude Code Direct)
+
+### Read Configuration
+
+Locate and read the shared `config.yaml`. The skill directory is
+`skills/bio-paper-interpreter/`; the config file lives at `config.yaml`
+in the parent of `skills/`.
+
+### Prepare Output Directories
+
+```bash
+mkdir -p data/interpreted
+```
+
+### For Each Candidate Paper
+
+For each paper to interpret (identified by the agent or user):
+
+#### Step A1: Filter by Relevance
+
+```bash
+cat data/metadata/{paper_doi}.json | python3 scripts/filter_relevance.py \
+  --config config.yaml
+```
+
+Skip the paper if `relevance.passed` is `false`. Record skip reason in
+`data/interpreted/{doi}_skipped.json`.
+
+#### Step A2: Match Topic Tags
+
+```bash
+cat data/metadata/{paper_doi}.json | python3 scripts/match_tags.py \
+  --config config.yaml
+```
+
+#### Step A3: Extract PDF Text (if PDF available)
+
+```bash
+bash scripts/extract_pdf_text.sh data/pdf/{paper_doi}.pdf \
+  --max-chars 15000
+```
+
+If extracted text > 1000 chars, use full-text mode. Otherwise, abstract-only.
+
+#### Step A4: Read System Prompt
+
+Read the appropriate system prompt from `config.yaml`:
+- Full-text: `system_prompts.full_text`
+- Abstract-only: `system_prompts.abstract_only`
+
+#### Step A5: Interpret Directly
+
+Claude Code interprets the paper using the system prompt + paper content.
+Follow the structure and writing style defined in the system prompt.
+Output a complete Chinese technical article in Markdown.
+
+#### Step A6: Save Interpretation
+
+Save the interpretation as `data/interpreted/{paper_doi}.json`:
+
+```json
+{
+  "paper_id": "...",
+  "title": "<extracted Chinese title>",
+  "content": "<full markdown content>",
+  "tags": [<matched tag ids>],
+  "mode": "full_text | abstract_only",
+  "interpreted_at": "<ISO timestamp>"
+}
+```
+
+---
+
+## Workflow (Path B: External LLM Pipeline)
 
 ### Read Configuration
 
