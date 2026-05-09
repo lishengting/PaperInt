@@ -42,21 +42,23 @@ LLM service running. Suitable for batch processing and automation.
 
 ## Core Protocol
 
-The filesystem is the state machine. `data/interpreted/execution_log.md` is
+The filesystem is the state machine. `data/execution_log.md` is
 the state log. Recover by reading files, not by relying on chat memory.
 
-1. Ensure `data/interpreted/` exists.
-2. Read `execution_log.md` to find the current phase for each paper.
-3. Load the reference file for the current phase.
-4. Read all completed prior phase outputs required by the current phase.
+1. Ensure `data/` exists.
+2. Find the paper directory: `find data -name "{paper_id}.metadata.json" -exec dirname {} \;`
+   Set `PAPER_DIR` to the result.
+3. Read `execution_log.md` to find the current phase for each paper.
+4. Load the reference file for the current phase.
+5. Read all completed prior phase outputs required by the current phase.
 
 ## Phase Map
 
 | Phase | Output | Reference | Description |
 |-------|--------|-----------|-------------|
-| 1 Filter | `data/interpreted/{paper_id}_skipped.json` (if rejected) | `references/01_filter.md` | Relevance check + tag matching |
-| 2 Interpret | `data/interpreted/{paper_id}.md` + `.json` | `references/02_interpret.md` | PDF extraction + interpretation |
-| 3 Convert | `data/interpreted/{paper_id}.html` | `references/03_convert.md` | Markdown → standalone HTML |
+| 1 Filter | `{paper_dir}/{paper_id}.skipped.json` (if rejected) | `references/01_filter.md` | Relevance check + tag matching |
+| 2 Interpret | `{paper_dir}/{paper_id}.interpret.md` + `.json` | `references/02_interpret.md` | PDF extraction + interpretation |
+| 3 Convert | `{paper_dir}/{paper_id}.interpret.html` | `references/03_convert.md` | Markdown → standalone HTML |
 
 State rules per paper:
 - No log entry for this paper: start Phase 1.
@@ -102,11 +104,13 @@ Resolve scripts from this skill's `scripts/` directory.
 
 ## Output
 
-- `data/interpreted/{paper_id}.md` — structured Markdown report (Phase 2)
-- `data/interpreted/{paper_id}.html` — standalone styled HTML (Phase 3)
-- `data/interpreted/{paper_id}.json` — metadata + full content (Phase 2)
-- `data/interpreted/{paper_id}_skipped.json` — skip record for non-relevant papers
-- `data/interpreted/execution_log.md` — phase state log
+- `{paper_dir}/{paper_id}.interpret.md` — structured Markdown report (Phase 2)
+- `{paper_dir}/{paper_id}.interpret.html` — standalone styled HTML (Phase 3)
+- `{paper_dir}/{paper_id}.interpret.json` — metadata + full content (Phase 2)
+- `{paper_dir}/{paper_id}.skipped.json` — skip record for non-relevant papers
+- `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)
+- `{paper_dir}/{paper_id}.pdf` — downloaded paper PDF
+- `data/execution_log.md` — phase state log
 
 ## Rules
 
@@ -123,4 +127,4 @@ Resolve scripts from this skill's `scripts/` directory.
 - If extracted PDF text < 1000 chars, fall back to abstract-only mode.
 - Phase 3 runs `md_to_html.py` to produce a standalone HTML with embedded CSS;
   the HTML supports light/dark mode and requires no external resources.
-- All interpretations saved under `data/interpreted/`.
+- All interpretations saved under the paper's directory in `data/`.

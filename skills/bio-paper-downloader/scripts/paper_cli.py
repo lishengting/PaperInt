@@ -120,6 +120,14 @@ def sanitize(name):
     return re.sub(r'[/\\:*?"<>|]', '_', str(name))[:200]
 
 
+def title_to_dirname(title):
+    """Convert a paper title to a safe directory name."""
+    if not title:
+        return 'unknown'
+    safe = re.sub(r'[/\\:*?"<>|\s]+', '_', str(title)).strip('_')
+    return safe[:256]
+
+
 # ---------------------------------------------------------------------------
 # State file
 # ---------------------------------------------------------------------------
@@ -805,7 +813,7 @@ def _download_pmc_pdf(pmc_id, config):
     return None
 
 
-def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=False):
+def download_paper(paper, config, data_dir, state, use_browser=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
@@ -814,12 +822,21 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
         print(f"  [skip] already downloaded")
         return None
 
-    safe = sanitize(pid)
-    os.makedirs(pdf_dir, exist_ok=True)
-    os.makedirs(metadata_dir, exist_ok=True)
+    safe_pid = sanitize(pid)
+
+    # Per-paper directory named from title
+    dirname = title_to_dirname(paper.get('title', ''))
+    paper_dir = os.path.join(data_dir, dirname)
+    # Collision check: if dir exists but belongs to a different paper, append paper_id
+    if os.path.isdir(paper_dir):
+        meta_file = os.path.join(paper_dir, f"{safe_pid}.metadata.json")
+        if not os.path.exists(meta_file):
+            dirname = f"{dirname}_{safe_pid}"[:256]
+            paper_dir = os.path.join(data_dir, dirname)
+    os.makedirs(paper_dir, exist_ok=True)
 
     # Save metadata
-    with open(os.path.join(metadata_dir, f"{safe}.json"), 'w', encoding='utf-8') as f:
+    with open(os.path.join(paper_dir, f"{safe_pid}.metadata.json"), 'w', encoding='utf-8') as f:
         json.dump(paper, f, ensure_ascii=False, indent=2)
 
     print(f"  Downloading: {paper.get('title', '?')[:80]}...")
@@ -902,7 +919,7 @@ def download_paper(paper, config, pdf_dir, metadata_dir, state, use_browser=Fals
             time.sleep(2)
 
     if pdf_data:
-        with open(os.path.join(pdf_dir, f"{safe}.pdf"), 'wb') as f:
+        with open(os.path.join(paper_dir, f"{safe_pid}.pdf"), 'wb') as f:
             f.write(pdf_data)
         state.setdefault('downloaded', []).append(pid)
         print(f"  OK: {len(pdf_data)} bytes")
@@ -1455,7 +1472,7 @@ def cmd_get(args, config):
         return 0
 
     state = load_state(args.state_file)
-    ok = download_paper(paper, config, args.pdf_dir, args.metadata_dir, state,
+    ok = download_paper(paper, config, args.data_dir, state,
                         use_browser=args.browser)
     save_state(args.state_file, state)
     if ok is True:
@@ -1486,7 +1503,7 @@ def _show_or_download(papers, args, config, single_best=False):
     for i, p in enumerate(papers, 1):
         if not single_best:
             print(f"[{i}/{len(papers)}] {p['paper_id']}")
-        result = download_paper(p, config, args.pdf_dir, args.metadata_dir, state,
+        result = download_paper(p, config, args.data_dir, state,
                                 use_browser=args.browser)
         if result is True:
             ok += 1
@@ -1536,10 +1553,8 @@ sources: arxiv, biorxiv, medrxiv, pubmed, scholar"""
 
 def _add_output_args(p):
     """Add shared output-directory options to a sub-parser."""
-    p.add_argument('--pdf-dir', default='data/pdf',
-                   help='Directory for downloaded PDFs (default: data/pdf)')
-    p.add_argument('--metadata-dir', default='data/metadata',
-                   help='Directory for paper metadata JSON (default: data/metadata)')
+    p.add_argument('--data-dir', default='data',
+                   help='Directory for paper data (default: data)')
     p.add_argument('--state-file', default='data/downloaded.json',
                    help='Download-tracking state file (default: data/downloaded.json)')
 

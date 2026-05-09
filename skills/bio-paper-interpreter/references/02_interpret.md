@@ -2,19 +2,24 @@
 
 ## Goal
 从论文 PDF 或元数据中提取信息，生成结构化中文解读报告，输出到
-`data/interpreted/{paper_id}.md`（主输出）和 `.json`（结构化元数据）。
+`{paper_dir}/{paper_id}.interpret.md`（主输出）和 `.interpret.json`（结构化元数据）。
 
 ## Input
 - Phase 1 输出的 paper JSON（含 `relevance`、`matched_tags`）
-- PDF 文件 `data/pdf/{paper_id}.pdf`（如果存在）
+- PDF 文件 `{paper_dir}/{paper_id}.pdf`（如果存在）
 - `config.yaml`（system prompts、LLM 配置、pdf_text_max_chars）
+
+找到 paper 目录：
+```bash
+PAPER_DIR=$(find data -name "{paper_id}.metadata.json" -exec dirname {} \;)
+```
 
 ## Workflow
 
 ### Step 1: Extract PDF Text
 
 ```bash
-bash scripts/extract_pdf_text.sh data/pdf/{paper_id}.pdf \
+bash scripts/extract_pdf_text.sh $PAPER_DIR/{paper_id}.pdf \
   --max-chars 100000 > /tmp/{paper_id}_text.txt
 ```
 
@@ -63,7 +68,7 @@ Claude 直接解读论文，**严格按照下方 Output 模板**生成结构化�
 
 ```bash
 # Build prompts
-cat data/metadata/{paper_id}.json | \
+cat $PAPER_DIR/{paper_id}.metadata.json | \
   python3 scripts/build_prompt.py \
   --config config.yaml \
   --mode full_text \
@@ -97,7 +102,7 @@ print(json.dumps({
 **主输出** — 结构化 Markdown 报告（按照下方模板）:
 
 ```bash
-cat > data/interpreted/{paper_id}.md << 'EOF'
+cat > $PAPER_DIR/{paper_id}.interpret.md << 'EOF'
 ...（下方 Output 模板内容）
 EOF
 ```
@@ -105,7 +110,7 @@ EOF
 **副输出** — JSON 元数据:
 
 ```bash
-cat > data/interpreted/{paper_id}.json << 'EOF'
+cat > $PAPER_DIR/{paper_id}.interpret.json << 'EOF'
 {
   "paper_id": "...",
   "doi": "...",
@@ -119,7 +124,7 @@ cat > data/interpreted/{paper_id}.json << 'EOF'
 EOF
 ```
 
-## Output: data/interpreted/{paper_id}.md
+## Output: {paper_dir}/{paper_id}.interpret.md
 
 ```markdown
 # Paper: [论文英文标题]
@@ -215,11 +220,11 @@ Phase 2 完成前确认：
 - [ ] 模式已确定（full_text / abstract_only）
 - [ ] 论文页面和补充材料 tab 已检查（对预印本）
 - [ ] 所有 Output 模板中的 section 已填写
-- [ ] `.md` 文件已保存到 `data/interpreted/{paper_id}.md`
-- [ ] `.json` 文件已保存到 `data/interpreted/{paper_id}.json`
+- [ ] `.interpret.md` 文件已保存到 `{paper_dir}/{paper_id}.interpret.md`
+- [ ] `.interpret.json` 文件已保存到 `{paper_dir}/{paper_id}.interpret.json`
 - [ ] 日志已写入 `execution_log.md`
 
 ## Completion
-- 输出 `data/interpreted/{paper_id}.md` + `.json`
+- 输出 `{paper_dir}/{paper_id}.interpret.md` + `.interpret.json`
 - 日志：`Phase 2 - COMPLETED: {paper_id} — {mode}, {n} tags`
 - Git commit（如未被 gitignore）

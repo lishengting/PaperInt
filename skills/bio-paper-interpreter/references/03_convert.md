@@ -5,23 +5,28 @@
 可直接在浏览器中打开阅读或发布到网页平台。
 
 ## Input
-- Phase 2 输出的 `data/interpreted/{paper_id}.md`
+- Phase 2 输出的 `{paper_dir}/{paper_id}.interpret.md`
+
+找到 paper 目录：
+```bash
+PAPER_DIR=$(find data -name "{paper_id}.metadata.json" -exec dirname {} \;)
+```
 
 ## Workflow
 
 ### Step 1: Verify Input
 
-确认 Phase 2 的 `.md` 文件存在：
+确认 Phase 2 的 `.interpret.md` 文件存在：
 ```bash
-ls data/interpreted/{paper_id}.md
+ls $PAPER_DIR/{paper_id}.interpret.md
 ```
 
 ### Step 2: Convert to HTML
 
 ```bash
 python3 scripts/md_to_html.py \
-  --input data/interpreted/{paper_id}.md \
-  --output data/interpreted/{paper_id}.html
+  --input $PAPER_DIR/{paper_id}.interpret.md \
+  --output $PAPER_DIR/{paper_id}.interpret.html
 ```
 
 脚本使用 Python `markdown` 库（版本 ≥ 3.0，系统已安装），启用以下扩展：
@@ -37,7 +42,7 @@ python3 scripts/md_to_html.py \
 
 ```bash
 # 检查文件大小（应显著大于原 .md 文件）
-wc -c data/interpreted/{paper_id}.html
+wc -c $PAPER_DIR/{paper_id}.interpret.html
 ```
 
 ## Output
@@ -60,11 +65,10 @@ wc -c data/interpreted/{paper_id}.html
 
 ## Completion Check
 
-- [ ] `.html` 文件已生成
+- [ ] `.interpret.html` 文件已生成
 - [ ] 文件大小合理（> 10KB）
 - [ ] 日志已写入 `execution_log.md`
 
 ## Completion
-- 输出 `data/interpreted/{paper_id}.html`
+- 输出 `{paper_dir}/{paper_id}.interpret.html`
 - 日志：`Phase 3 - COMPLETED: {paper_id} — HTML generated`
-- Git commit（如未被 gitignore）

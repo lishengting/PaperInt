@@ -127,12 +127,12 @@ All commands use `--state-file` (default `data/downloaded.json`) to avoid
 re-downloading papers. State is a JSON dict with a `downloaded` array of
 paper IDs.
 
-Override with `--pdf-dir` and `--metadata-dir` to change output locations.
+Override with `--data-dir` to change the output directory (default `data`).
 
 ## Output
 
-- `data/pdf/*.pdf` — downloaded paper PDFs
-- `data/metadata/*.json` — paper metadata (one JSON per paper)
+- `data/{title_dir}/{paper_id}.pdf` — downloaded paper PDF
+- `data/{title_dir}/{paper_id}.metadata.json` — paper metadata
 - `data/downloaded.json` — state file tracking all downloaded IDs
 
 ## Configuration

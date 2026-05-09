@@ -5,15 +5,21 @@
 不通过的论文记录跳过原因，不做解读。
 
 ## Input
-- 论文元数据 JSON（来自 `data/metadata/{paper_id}.json`）
+
+- 论文元数据 JSON（位于 paper 目录下的 `{paper_id}.metadata.json`）
 - `config.yaml`（关键词列表、标签定义）
+
+找到 paper 目录：
+```bash
+PAPER_DIR=$(find data -name "{paper_id}.metadata.json" -exec dirname {} \;)
+```
 
 ## Workflow
 
 ### Step 1: Read Paper Metadata
 
 ```bash
-cat data/metadata/{paper_id}.json
+cat $PAPER_DIR/{paper_id}.metadata.json
 ```
 
 确认 JSON 包含 `title`、`abstract`、`doi` 等字段。
@@ -21,7 +27,7 @@ cat data/metadata/{paper_id}.json
 ### Step 2: Run Relevance Filter
 
 ```bash
-cat data/metadata/{paper_id}.json | \
+cat $PAPER_DIR/{paper_id}.metadata.json | \
   python3 scripts/filter_relevance.py --config config.yaml
 ```
 
@@ -39,8 +45,7 @@ cat data/metadata/{paper_id}.json | \
 - **`false`** → 保存跳过记录，STOP：
 
 ```bash
-mkdir -p data/interpreted
-cat > data/interpreted/{paper_id}_skipped.json << 'EOF'
+cat > $PAPER_DIR/{paper_id}.skipped.json << 'EOF'
 {
   "paper_id": "...",
   "title": "...",
@@ -59,7 +64,7 @@ EOF
 ### Step 4: Match Topic Tags
 
 ```bash
-cat data/metadata/{paper_id}.json | \
+cat $PAPER_DIR/{paper_id}.metadata.json | \
   python3 scripts/match_tags.py --config config.yaml
 ```
 
@@ -91,7 +96,7 @@ Phase 1 - INFO: {paper_id} only base tags — consider skipping
 - `matched_tags` — 标签结果（tag_ids, matched_labels）
 
 不通过筛选：
-- `data/interpreted/{paper_id}_skipped.json`
+- `{paper_dir}/{paper_id}.skipped.json`
 
 ## Rules
 
