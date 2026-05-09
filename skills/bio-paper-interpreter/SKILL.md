@@ -56,12 +56,14 @@ the state log. Recover by reading files, not by relying on chat memory.
 |-------|--------|-----------|-------------|
 | 1 Filter | `data/interpreted/{paper_id}_skipped.json` (if rejected) | `references/01_filter.md` | Relevance check + tag matching |
 | 2 Interpret | `data/interpreted/{paper_id}.md` + `.json` | `references/02_interpret.md` | PDF extraction + interpretation |
+| 3 Convert | `data/interpreted/{paper_id}.html` | `references/03_convert.md` | Markdown → standalone HTML |
 
 State rules per paper:
 - No log entry for this paper: start Phase 1.
 - Last log is `Phase 1 - REJECTED`: paper is done (skipped).
 - Last log is `Phase 1 - COMPLETED`: start Phase 2.
-- Last log is `Phase 2 - COMPLETED`: paper is done (interpreted).
+- Last log is `Phase 2 - COMPLETED`: start Phase 3.
+- Last log is `Phase 3 - COMPLETED`: paper is done (interpreted + rendered).
 - Last log is `Phase N - FAILED`: diagnose and retry.
 
 ## Logging
@@ -96,11 +98,13 @@ Resolve scripts from this skill's `scripts/` directory.
 | `match_tags.py` | Regex-based tag assignment from config definitions |
 | `extract_pdf_text.sh` | Extract plain text from PDF via pdftotext |
 | `build_prompt.py` | Template LLM system+user prompts (Path B only) |
+| `md_to_html.py` | Convert Markdown report to styled standalone HTML |
 
 ## Output
 
-- `data/interpreted/{paper_id}.md` — structured Markdown report (primary)
-- `data/interpreted/{paper_id}.json` — metadata + full content (secondary)
+- `data/interpreted/{paper_id}.md` — structured Markdown report (Phase 2)
+- `data/interpreted/{paper_id}.html` — standalone styled HTML (Phase 3)
+- `data/interpreted/{paper_id}.json` — metadata + full content (Phase 2)
 - `data/interpreted/{paper_id}_skipped.json` — skip record for non-relevant papers
 - `data/interpreted/execution_log.md` — phase state log
 
@@ -117,4 +121,6 @@ Resolve scripts from this skill's `scripts/` directory.
 - Path A (Claude Code) requires no API key; Path B requires `LLM_API_KEY`.
 - PDF text truncated to `download.pdf_text_max_chars` (default 100000 chars).
 - If extracted PDF text < 1000 chars, fall back to abstract-only mode.
+- Phase 3 runs `md_to_html.py` to produce a standalone HTML with embedded CSS;
+  the HTML supports light/dark mode and requires no external resources.
 - All interpretations saved under `data/interpreted/`.
