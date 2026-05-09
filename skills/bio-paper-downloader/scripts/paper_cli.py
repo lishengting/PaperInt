@@ -124,7 +124,8 @@ def title_to_dirname(title):
     """Convert a paper title to a safe directory name."""
     if not title:
         return 'unknown'
-    safe = re.sub(r'[/\\:*?"<>|\s]+', '_', str(title)).strip('_')
+    safe = re.sub(r'[()]+', '-', str(title))
+    safe = re.sub(r'[/\\:*?"<>|\s;]+', '_', safe).strip('_')
     return safe[:256]
 
 
