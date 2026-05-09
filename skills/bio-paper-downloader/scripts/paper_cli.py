@@ -538,6 +538,37 @@ def pubmed_api(endpoint, params, config):
         return None
 
 
+def pubmed_fetch_abstracts(pmids, config):
+    """Fetch abstracts for PMIDs via efetch. Returns {pmid: abstract} dict."""
+    if not pmids:
+        return {}
+    url = f"{PUBMED_BASE}/efetch.fcgi"
+    params = urllib.parse.urlencode({
+        'db': 'pubmed', 'id': ','.join(pmids),
+        'rettype': 'abstract', 'retmode': 'xml',
+        'tool': 'PaperInt',
+        'email': cfg(config, 'download.user_agent', ''),
+    })
+    req = urllib.request.Request(f"{url}?{params}", headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=3) as r:
+            xml_text = r.read().decode('utf-8')
+    except Exception as e:
+        print(f"  PubMed efetch error: {e}", file=sys.stderr)
+        return {}
+
+    abstracts = {}
+    for m in re.finditer(
+        r'<PubmedArticle>.*?<PMID[^>]*>(\d+)</PMID>.*?<Abstract>(.*?)</Abstract>',
+        xml_text, re.DOTALL
+    ):
+        pmid = m.group(1)
+        abs_text = re.sub(r'<[^>]+>', ' ', m.group(2)).strip()
+        abs_text = re.sub(r'\s+', ' ', abs_text)
+        abstracts[pmid] = abs_text
+    return abstracts
+
+
 def pubmed_search(keywords, config, max_results=50):
     """Search PubMed by keywords, return paper list."""
     query = ' AND '.join(f'{kw}[All Fields]' for kw in keywords)
@@ -563,6 +594,8 @@ def pubmed_search(keywords, config, max_results=50):
         return [], total
 
     papers = []
+    # Fetch abstracts separately (esummary doesn't include them)
+    abstracts_map = pubmed_fetch_abstracts(idlist, config)
     for pmid in idlist:
         info = sm.get('result', {}).get(pmid, {})
         if not info:
@@ -570,7 +603,7 @@ def pubmed_search(keywords, config, max_results=50):
         title = info.get('title', '')
         authors = ', '.join(
             a.get('name', '') for a in info.get('authors', [])[:5])
-        abstract = ''  # esummary doesn't include abstract; use efetch for full text
+        abstract = abstracts_map.get(pmid, '')
 
         # Check for PMC free full text
         pmc_id = None
@@ -838,6 +871,8 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
     # Save metadata
     with open(os.path.join(paper_dir, f"{safe_pid}.metadata.json"), 'w', encoding='utf-8') as f:
         json.dump(paper, f, ensure_ascii=False, indent=2)
+    # Record deterministic path for interpreter
+    state.setdefault('paper_dirs', {})[pid] = dirname
 
     print(f"  Downloading: {paper.get('title', '?')[:80]}...")
 
@@ -922,6 +957,7 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
         with open(os.path.join(paper_dir, f"{safe_pid}.pdf"), 'wb') as f:
             f.write(pdf_data)
         state.setdefault('downloaded', []).append(pid)
+        state.setdefault('paper_dirs', {})[pid] = dirname
         print(f"  OK: {len(pdf_data)} bytes")
         return True
     else:

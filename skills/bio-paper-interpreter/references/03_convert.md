@@ -9,7 +9,7 @@
 
 找到 paper 目录：
 ```bash
-PAPER_DIR=$(find data -name "{paper_id}.metadata.json" -exec dirname {} \;)
+PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"
 ```
 
 ## Workflow

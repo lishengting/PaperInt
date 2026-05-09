@@ -46,8 +46,8 @@ The filesystem is the state machine. `data/execution_log.md` is
 the state log. Recover by reading files, not by relying on chat memory.
 
 1. Ensure `data/` exists.
-2. Find the paper directory: `find data -name "{paper_id}.metadata.json" -exec dirname {} \;`
-   Set `PAPER_DIR` to the result.
+2. Find the paper directory from `data/downloaded.json` → `paper_dirs[paper_id]`:
+   `PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"`
 3. Read `execution_log.md` to find the current phase for each paper.
 4. Load the reference file for the current phase.
 5. Read all completed prior phase outputs required by the current phase.
