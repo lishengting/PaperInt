@@ -48,6 +48,25 @@ def generate(record: PaperRecord) -> str:
     lines.append(_v(record.data_availability))
     lines.append("")
 
+    # Open Access Status (from Europe PMC)
+    oa = identity.raw.get("pmc_oa")
+    if oa:
+        lines.append("## Open Access Status\n")
+        lines.append("| Field | Value |")
+        lines.append("|-------|-------|")
+        lines.append(f"| **Open Access** | {'Yes' if oa.get('is_open_access') else 'No'} |")
+        lines.append(f"| **PDF Available** | {'Yes' if oa.get('has_pdf') else 'No'} |")
+        oa_status = oa.get("oa_status") or ""
+        if oa_status:
+            lines.append(f"| **OA Status** | {oa_status} |")
+        license_text = oa.get("license") or ""
+        if license_text:
+            lines.append(f"| **License** | {license_text} |")
+        oa_url = oa.get("oa_url") or ""
+        if oa_url:
+            lines.append(f"| **OA URL** | {oa_url} |")
+        lines.append("")
+
     # Dataset Accessions
     lines.append("## Dataset Accessions\n")
     if record.datasets:

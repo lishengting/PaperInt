@@ -876,14 +876,14 @@ def _make_paper_info_identifier(paper: dict) -> str:
     return paper.get('paper_id', '')
 
 
-def _generate_info_md(paper, paper_dir, safe_pid) -> bool:
+def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
     """Generate comprehensive paper info markdown via paper_info (best-effort).
 
-    Returns True on success, False on failure. Never raises.
+    Returns the PMC open-access info dict on success, None on failure. Never raises.
     """
     if not _PI_AVAILABLE:
         print(f"  [info] paper_info not available, skipping info.md", file=sys.stderr)
-        return False
+        return None
 
     try:
         identifier = _make_paper_info_identifier(paper)
@@ -893,10 +893,10 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> bool:
         with open(info_path, 'w', encoding='utf-8') as f:
             f.write(md_content)
         print(f"  [info] info.md generated", file=sys.stderr)
-        return True
+        return record.identity.raw.get("pmc_oa")
     except Exception as e:
         print(f"  [info] info.md unavailable: {e}", file=sys.stderr)
-        return False
+        return None
 
 
 def download_paper(paper, config, data_dir, state, use_browser=False):
@@ -928,7 +928,7 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
     state.setdefault('paper_dirs', {})[pid] = dirname
 
     # Generate comprehensive info markdown (best-effort, never blocks download)
-    _generate_info_md(paper, paper_dir, safe_pid)
+    oa_info = _generate_info_md(paper, paper_dir, safe_pid)
 
     print(f"  Downloading: {paper.get('title', '?')[:80]}...")
 
@@ -967,13 +967,17 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
         # 1) Try DOI → publisher PDF (if --browser enabled and DOI available)
         if use_browser and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config)
-        # 2) Fall back to PMC
+        # 2) Fall back to PMC (only if Europe PMC confirms OA PDF is available)
         if not pdf_data:
-            pmc_id = paper.get('pmc_id')
-            if not pmc_id:
-                pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
-            if pmc_id:
-                pdf_data = _download_pmc_pdf(pmc_id, config)
+            pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
+            if pmc_has_pdf:
+                pmc_id = paper.get('pmc_id')
+                if not pmc_id:
+                    pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
+                if pmc_id:
+                    pdf_data = _download_pmc_pdf(pmc_id, config)
+            else:
+                print(f"  [info] not OA via PMC (has_pdf=False), skipping PMC download", file=sys.stderr)
 
     # Fallback: try alternative sources in priority order
     if not pdf_data and paper.get('_alt_sources'):
@@ -1000,7 +1004,7 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
             elif alt_src == 'pubmed':
                 if use_browser and alt.get('doi'):
                     pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config)
-                if not pdf_data and alt.get('pmid'):
+                if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:
                         pdf_data = _download_pmc_pdf(pmc_id, config)

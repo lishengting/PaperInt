@@ -163,6 +163,10 @@ def _merge_metadata(target: PaperMetadata, source: PaperMetadata) -> None:
     if "europepmc" in source.sources and source.data_availability:
         target.data_availability = source.data_availability
 
+    # Europe PMC open-access status is authoritative
+    if "europepmc" in source.sources and source.raw.get("pmc_oa"):
+        target.raw["pmc_oa"] = source.raw["pmc_oa"]
+
     target.full_text_links.extend(source.full_text_links)
     for source_name in source.sources:
         target.add_source(source_name)

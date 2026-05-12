@@ -59,8 +59,27 @@ def _europepmc_result_to_metadata(result: dict[str, Any], source: str) -> PaperM
     meta.data_availability = result.get("dataAvailability") or None
     for link in _europepmc_links(result):
         meta.full_text_links.append(link)
+    _store_pmc_oa(result, meta)
     meta.add_source(source)
     return meta
+
+
+def _store_pmc_oa(result: dict[str, Any], meta: PaperMetadata) -> None:
+    """Store Europe PMC open-access status in meta.raw."""
+    oa_info: dict[str, Any] = {}
+    is_oa = result.get("isOpenAccess")
+    if is_oa:
+        oa_info["is_open_access"] = is_oa == "Y"
+    has_pdf = result.get("hasPDF")
+    if has_pdf:
+        oa_info["has_pdf"] = has_pdf == "Y"
+    oa_detail = result.get("openAccessInfo") or result.get("openAccess")
+    if oa_detail:
+        oa_info["license"] = oa_detail.get("license")
+        oa_info["oa_status"] = oa_detail.get("status")
+        oa_info["oa_url"] = oa_detail.get("selfUrl") or oa_detail.get("url")
+    if oa_info:
+        meta.raw["pmc_oa"] = oa_info
 
 
 def _europepmc_result_to_search(result: dict[str, Any]) -> "SearchResult":
