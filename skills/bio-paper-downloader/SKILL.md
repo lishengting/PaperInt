@@ -133,6 +133,7 @@ Override with `--data-dir` to change the output directory (default `data`).
 
 - `data/{title_dir}/{paper_id}.pdf` — downloaded paper PDF
 - `data/{title_dir}/{paper_id}.metadata.json` — paper metadata
+- `data/{title_dir}/{paper_id}.info.md` — comprehensive paper dossier (identity, abstract, data availability, dataset accessions, code repos, supplementary materials, full text links)
 - `data/downloaded.json` — state file tracking all downloaded IDs
 
 ## Configuration

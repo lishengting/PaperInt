@@ -30,6 +30,14 @@ from datetime import datetime, timedelta
 
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from paper_info import resolver as _pi_resolver
+    from paper_info import info_md as _pi_info_md
+    _PI_AVAILABLE = True
+except ImportError:
+    _PI_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # SSL workaround for older servers (bioRxiv, etc.)
 # ---------------------------------------------------------------------------
@@ -847,6 +855,50 @@ def _download_pmc_pdf(pmc_id, config):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Paper info markdown generation (paper_info enrichment)
+# ---------------------------------------------------------------------------
+
+def _make_paper_info_identifier(paper: dict) -> str:
+    """Construct the best identifier string for paper_info resolution."""
+    doi = paper.get('doi')
+    if doi:
+        return doi
+    arxiv_id = paper.get('arxiv_id')
+    if arxiv_id:
+        return f"arxiv:{arxiv_id}"
+    pmid = paper.get('pmid')
+    if pmid:
+        return f"pmid:{pmid}"
+    title = paper.get('title', '')
+    if title:
+        return title
+    return paper.get('paper_id', '')
+
+
+def _generate_info_md(paper, paper_dir, safe_pid) -> bool:
+    """Generate comprehensive paper info markdown via paper_info (best-effort).
+
+    Returns True on success, False on failure. Never raises.
+    """
+    if not _PI_AVAILABLE:
+        print(f"  [info] paper_info not available, skipping info.md", file=sys.stderr)
+        return False
+
+    try:
+        identifier = _make_paper_info_identifier(paper)
+        record = _pi_resolver.get_paper(identifier, depth="full", timeout=8.0)
+        md_content = _pi_info_md.generate(record)
+        info_path = os.path.join(paper_dir, f"{safe_pid}.info.md")
+        with open(info_path, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+        print(f"  [info] info.md generated", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"  [info] info.md unavailable: {e}", file=sys.stderr)
+        return False
+
+
 def download_paper(paper, config, data_dir, state, use_browser=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
@@ -874,6 +926,9 @@ def download_paper(paper, config, data_dir, state, use_browser=False):
         json.dump(paper, f, ensure_ascii=False, indent=2)
     # Record deterministic path for interpreter
     state.setdefault('paper_dirs', {})[pid] = dirname
+
+    # Generate comprehensive info markdown (best-effort, never blocks download)
+    _generate_info_md(paper, paper_dir, safe_pid)
 
     print(f"  Downloading: {paper.get('title', '?')[:80]}...")
 
