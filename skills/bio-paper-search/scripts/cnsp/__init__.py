@@ -33,13 +33,6 @@ async def _scrape_journal_type(journal_type: str, config: dict,
         print(f"  CNSP {journal_type}: no journals selected")
         return []
 
-    # Semantically filter journals by keywords if no explicit journal list given
-    if keywords and not cnsp_journals_filter:
-        before = len(journals)
-        journals = filter_journals_by_keywords(journals, keywords)
-        if len(journals) < before:
-            print(f"  CNSP {journal_type}: {len(journals)}/{before} journals matched keywords")
-
     cnsp_cfg = config.get('cnsp', {})
     per_parser = cnsp_cfg.get(journal_type, {})
     use_browser = per_parser.get('use_browser', True)
