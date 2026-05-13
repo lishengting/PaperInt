@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 
-from .config_manager import get_enabled_journals, get_request_delay
+from .config_manager import filter_journals_by_keywords, get_enabled_journals, get_request_delay
 from .nature import NatureParser
 from .science import ScienceParser
 from .cell import CellParser
@@ -25,12 +25,20 @@ from .utils import filter_by_keywords, normalize_article, score_and_rank
 async def _scrape_journal_type(journal_type: str, config: dict,
                                 start_date: date, end_date: date,
                                 cnsp_journals_filter: list[str] | None,
+                                keywords: list[str] | None,
                                 chrome_port: int | None) -> list[dict]:
     """Scrape all enabled journals of one type. Returns normalized paper dicts."""
     journals = get_enabled_journals(config, journal_type, cnsp_journals_filter)
     if not journals:
         print(f"  CNSP {journal_type}: no journals selected")
         return []
+
+    # Semantically filter journals by keywords if no explicit journal list given
+    if keywords and not cnsp_journals_filter:
+        before = len(journals)
+        journals = filter_journals_by_keywords(journals, keywords)
+        if len(journals) < before:
+            print(f"  CNSP {journal_type}: {len(journals)}/{before} journals matched keywords")
 
     cnsp_cfg = config.get('cnsp', {})
     per_parser = cnsp_cfg.get(journal_type, {})
@@ -69,7 +77,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
             print(f"  Scraping {journal_type}: {jname} ({start_date} — {end_date})")
 
             try:
-                raw_articles = parser.scrape_journal(
+                raw_articles = await parser.scrape_journal(
                     jname, jlink, start_date, end_date, browser_context=ctx
                 )
                 for a in raw_articles:
@@ -134,7 +142,7 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
 
         try:
             articles = asyncio.run(_scrape_journal_type(
-                jtype, config, start, end, cnsp_journals, chrome_port
+                jtype, config, start, end, cnsp_journals, keywords, chrome_port
             ))
             all_articles.extend(articles)
             print(f"  CNSP {jtype}: {len(articles)} articles total")

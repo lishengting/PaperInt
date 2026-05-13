@@ -24,7 +24,7 @@ class CellParser(CNSP_Parser):
             'Origin': 'https://www.cell.com',
         })
 
-    def scrape_journal(self, journal_name: str, base_url: str,
+    async def scrape_journal(self, journal_name: str, base_url: str,
                        start_date: date, end_date: date,
                        browser_context=None) -> list[dict]:
         articles: list[dict] = []
@@ -39,13 +39,13 @@ class CellParser(CNSP_Parser):
         if not issues_url.endswith('/issues'):
             issues_url = urljoin(base_url, 'issues')
 
-        issue_links = self._get_issue_links(issues_url, base_url, start_date, end_date, browser_context)
+        issue_links = await self._get_issue_links(issues_url, base_url, start_date, end_date, browser_context)
         if not issue_links:
             return articles
 
         for i, issue_info in enumerate(issue_links):
             try:
-                issue_articles = self._scrape_issue(
+                issue_articles = await self._scrape_issue(
                     issue_info['url'], journal_name, start_date, end_date, browser_context
                 )
                 articles.extend(issue_articles)

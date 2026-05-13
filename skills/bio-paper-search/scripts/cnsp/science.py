@@ -33,7 +33,7 @@ class ScienceParser(CNSP_Parser):
             'Origin': 'https://www.science.org',
         })
 
-    def scrape_journal(self, journal_name: str, base_url: str,
+    async def scrape_journal(self, journal_name: str, base_url: str,
                        start_date: date, end_date: date,
                        browser_context=None) -> list[dict]:
         articles: list[dict] = []
@@ -50,12 +50,12 @@ class ScienceParser(CNSP_Parser):
         target_years = range(start_date.year, end_date.year + 1)
 
         for year in sorted(target_years):
-            year_volumes = self._get_year_volumes(archive_url, year, start_date, end_date, browser_context)
+            year_volumes = await self._get_year_volumes(archive_url, year, start_date, end_date, browser_context)
             if not year_volumes:
                 continue
 
             for vol_info in year_volumes:
-                vol_articles = self._scrape_volume_articles(
+                vol_articles = await self._scrape_volume_articles(
                     vol_info['url'], journal_name, start_date, end_date, browser_context
                 )
                 articles.extend(vol_articles)
@@ -141,7 +141,7 @@ class ScienceParser(CNSP_Parser):
                     if '/doi/' in article_url:
                         doi = article_url.split('/doi/')[-1].split('?')[0]
 
-                    article_data = self._fetch_article_detail(article_url, browser_context)
+                    article_data = await self._fetch_article_detail(article_url, browser_context)
                     pub_date = article_data.get('date') or end_date
 
                     if pub_date and not self._is_date_in_range(pub_date, start_date, end_date):

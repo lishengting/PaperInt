@@ -401,8 +401,11 @@ def preprint_search_title(title, config, server='biorxiv', use_browser=False):
     return papers, scanned
 
 
-def _get_or_start_chrome():
-    profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
+def _get_or_start_chrome(headless=False):
+    if headless:
+        profile = os.path.join(tempfile.gettempdir(), 'paper_cli_cnsp_chrome')
+    else:
+        profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
     os.makedirs(profile, exist_ok=True)
 
     r = subprocess.run(['pgrep', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
@@ -420,13 +423,17 @@ def _get_or_start_chrome():
     subprocess.run(['pkill', '-f', f'remote-debugging-port={port}'], capture_output=True)
     time.sleep(1)
 
-    subprocess.Popen([
+    cmd = [
         'google-chrome',
         f'--remote-debugging-port={port}',
         f'--user-data-dir={profile}',
         '--no-first-run', '--no-default-browser-check', '--no-sandbox',
-        'about:blank',
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+    ]
+    if headless:
+        cmd.append('--headless=new')
+    cmd.append('about:blank')
+
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
     time.sleep(3)
     return port
 
@@ -924,7 +931,7 @@ def cmd_search(args, config):
         if not args.browser:
             print(" --browser is required for CNSP source (needs Playwright CDP)", file=sys.stderr)
             return 1
-        _shared_chrome_port = _get_or_start_chrome()
+        _shared_chrome_port = _get_or_start_chrome(headless=True)
         from cnsp import cnsp_search
         start_date = _resolve_start_date(args, config)
         end_date = getattr(args, 'end_date', None) or datetime.now().strftime('%Y-%m-%d')

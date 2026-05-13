@@ -21,7 +21,7 @@ class NatureParser(CNSP_Parser):
     def __init__(self, use_browser: bool = False):
         super().__init__('nature', use_browser=False)
 
-    def scrape_journal(self, journal_name: str, base_url: str,
+    async def scrape_journal(self, journal_name: str, base_url: str,
                        start_date: date, end_date: date,
                        browser_context=None) -> list[dict]:
         """Scrape all research articles from a Nature journal in date range."""

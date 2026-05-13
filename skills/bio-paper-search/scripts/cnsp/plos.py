@@ -36,7 +36,7 @@ class PLOSParser(CNSP_Parser):
     def __init__(self, use_browser: bool = True):
         super().__init__('plos', use_browser=use_browser)
 
-    def scrape_journal(self, journal_name: str, base_url: str,
+    async def scrape_journal(self, journal_name: str, base_url: str,
                        start_date: date, end_date: date,
                        browser_context=None) -> list[dict]:
         articles: list[dict] = []
@@ -52,7 +52,7 @@ class PLOSParser(CNSP_Parser):
         page = 1
         while True:
             search_url = self._build_search_url(journal_code, journal_path, start_date, end_date, page)
-            page_articles = self._scrape_search_page(search_url, journal_name, browser_context)
+            page_articles = await self._scrape_search_page(search_url, journal_name, browser_context)
             if not page_articles:
                 break
             articles.extend(page_articles)
