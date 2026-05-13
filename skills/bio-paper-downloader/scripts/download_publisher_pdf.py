@@ -317,13 +317,21 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
 
-    # Fallback to headed
+    # Fallback to headed (3 attempts)
     print(f"  [publisher] falling back to headed Chrome...", file=sys.stderr)
-    result = await _do_download_via_publisher(doi_url, output_path,
-                                                chrome_bin, timeout,
-                                                headless=False)
-    if result['success']:
-        result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [publisher] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = await _do_download_via_publisher(doi_url, output_path,
+                                                    chrome_bin, timeout,
+                                                    headless=False)
+        if result['success']:
+            result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+            return result
+        print(f"  [publisher] headed failed: {result['message']}", file=sys.stderr)
     return result
 
 
