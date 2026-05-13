@@ -5,7 +5,8 @@ Bio Paper Downloader CLI — download papers from search results.
 Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  generic
 
 Usage:
-  paper_cli.py get -u URL    # download by URL
+  paper_cli.py get -u URL    # download by URL with metadata tracking
+  paper_cli.py pdf -u URL    # download PDF directly, like curl
   paper_cli.py               # auto-mode: download all 'searched' papers from DB
 """
 import argparse
@@ -577,6 +578,8 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                     pdf_data = _download_pmc_pdf(pmc_id, config)
             else:
                 print(f"  [info] not OA via PMC (has_pdf=False), skipping PMC download", file=sys.stderr)
+    elif src == 'generic':
+        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
@@ -698,6 +701,31 @@ def detect_url(url, config):
 # Commands
 # ---------------------------------------------------------------------------
 
+def cmd_pdf(args, config):
+    """Download a PDF directly from a URL — no database, no metadata, just the file."""
+    url = args.url
+    output = args.output
+
+    print(f"Downloading: {url}")
+
+    pdf_data = _download_direct_pdf(url, config)
+    if not pdf_data:
+        print("Failed to download PDF.", file=sys.stderr)
+        return 1
+
+    if not output:
+        # Derive filename from URL or Content-Disposition
+        name = url.split('/')[-1]
+        if not name or not name.lower().endswith('.pdf'):
+            name = 'download.pdf'
+        output = name
+
+    with open(output, 'wb') as f:
+        f.write(pdf_data)
+    print(f"Saved: {output} ({len(pdf_data)} bytes)")
+    return 0
+
+
 def cmd_get(args, config):
     """Download a paper by URL."""
     paper = detect_url(args.url, config)
@@ -773,6 +801,10 @@ examples:
   paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
   paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
 
+  # Download PDF directly (no database, like curl)
+  paper_cli.py pdf -u "https://example.com/paper.pdf"
+  paper_cli.py pdf -u "https://example.com/paper.pdf" -o my-paper.pdf
+
   # Auto-mode — download all searched papers from database
   paper_cli.py
 
@@ -801,12 +833,12 @@ def main():
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
-                           description='"get" by URL, or no command for auto-mode')
+                           description='"get" by URL, "pdf" for raw download, or no command for auto-mode')
 
     # ---- get ----
     gp = sub.add_parser(
         'get',
-        help='Download a paper directly from a URL',
+        help='Download a paper from a URL with metadata tracking',
         description='URL download: auto-detect the source from the URL pattern.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -814,6 +846,18 @@ def main():
                     help='Paper URL (arXiv, bioRxiv, medRxiv, PubMed, PMC, or direct PDF)')
     gp.add_argument('-l', '--list', action='store_true',
                     help='Parse and show paper info from the URL without downloading')
+
+    # ---- pdf ----
+    pp = sub.add_parser(
+        'pdf',
+        help='Download a PDF directly — no database, no metadata, like curl',
+        description='Raw PDF download: download from a URL and save to a file.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pp.add_argument('-u', '--url', required=True,
+                    help='PDF URL to download')
+    pp.add_argument('-o', '--output', default=None,
+                    help='Output file path (default: derived from URL)')
 
     args = p.parse_args()
     config = load_config(args.config)
@@ -823,6 +867,8 @@ def main():
 
     if args.cmd == 'get':
         return cmd_get(args, config)
+    elif args.cmd == 'pdf':
+        return cmd_pdf(args, config)
     elif args.cmd is None:
         # Auto-mode: download all searched papers
         return cmd_auto(config, args.data_dir, use_browser=args.browser)
