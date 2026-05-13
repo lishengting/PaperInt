@@ -31,7 +31,7 @@ papers, and `bio-paper-interpreter` to interpret them.
 python3 scripts/paper_cli.py {search|find} [options]
 ```
 
-Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar`
+Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar` | `cnsp`
 
 ## Command Reference
 
@@ -46,16 +46,25 @@ python3 scripts/paper_cli.py search -k "CRISPR,gene editing" -s pubmed -n 5
 
 # Search all sources
 python3 scripts/paper_cli.py search -k "deep learning,single-cell" -s all -n 5 --browser
+
+# Search CNSP journals (Cell/Nature/Science/PLOS)
+python3 scripts/paper_cli.py search -k "CRISPR" -s cnsp -n 3 --start-date 2026-05-01 --end-date 2026-05-13 --browser
+python3 scripts/paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental --browser
+python3 scripts/paper_cli.py search -k "methylation" -s cnsp -n 2 --browser --cnsp-journals "Nature" "Science"
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-k, --keywords` | config | Comma-separated keywords |
-| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `all` |
+| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `cnsp`, `all` |
 | `-n, --num` | config (1) | Number of papers |
 | `-l, --list` | off | Preview only (results always saved to DB) |
-| `--browser` | off | Use Chrome (required for Google Scholar) |
+| `--browser` | off | Use Chrome (required for Google Scholar and CNSP) |
+| `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Primarily for cnsp source. |
+| `--end-date` | today | Search until this date (YYYY-MM-DD) |
+| `--incremental` | off | Auto-compute start_date from last crawl (cnsp source only) |
+| `--cnsp-journals` | all enabled | Limit CNSP to specific journals (e.g., "Nature" "Science") |
 
 ### find — search by title
 
@@ -78,6 +87,7 @@ The downloader and interpreter skills read from this same database.
 | `medrxiv` | medRxiv API | Medical/clinical preprints |
 | `pubmed` | NCBI E-utilities | Published biomedical papers |
 | `scholar` | Google Scholar (HTML scrape) | Broad search across all sources; requires `--browser` |
+| `cnsp` | Cell/Nature/Science/PLOS journal scraping | Scrapes articles by date range, then filters by keywords client-side. Requires `--browser`. |
 
 ## Rules
 

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS papers (
 
 CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
 CREATE INDEX IF NOT EXISTS idx_papers_paper_id ON papers(paper_id);
+CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_papers_search_date ON papers(search_date);
 """
 
@@ -120,6 +121,98 @@ def insert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
                 count += 1
         except Exception as e:
             print(f"  DB insert error for {p.get('paper_id', '?')}: {e}", file=__import__('sys').stderr)
+    conn.commit()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Upsert by DOI (for CNSP and other DOI-based sources)
+# ---------------------------------------------------------------------------
+
+def upsert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
+    """Insert or update by DOI. Fills blank fields in existing records. Returns count affected."""
+    count = 0
+    now = _now()
+    for p in papers:
+        doi = (p.get('doi', '') or '').strip()
+        if not doi:
+            # Fall back to INSERT OR IGNORE by paper_id
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO papers
+                       (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
+                        source, source_url, pdf_url, status, search_date, metadata_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
+                    (
+                        p.get('paper_id', ''),
+                        p.get('title', ''),
+                        p.get('authors', ''),
+                        p.get('abstract', ''),
+                        doi,
+                        p.get('pmid', ''),
+                        p.get('arxiv_id', ''),
+                        p.get('source', ''),
+                        p.get('abs_url', ''),
+                        p.get('pdf_url', ''),
+                        now,
+                        json.dumps(p, ensure_ascii=False),
+                    ),
+                )
+                if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                    count += 1
+            except Exception as e:
+                print(f"  DB insert error for {p.get('paper_id', '?')}: {e}", file=__import__('sys').stderr)
+            continue
+
+        existing = conn.execute(
+            "SELECT id, paper_id, title, authors, abstract, pdf_url, source_url FROM papers WHERE doi = ?",
+            (doi,),
+        ).fetchone()
+
+        if existing:
+            updates = {}
+            for field in ['title', 'authors', 'abstract', 'pdf_url']:
+                existing_val = (existing[field] or '').strip()
+                new_val = (p.get(field, '') or '').strip()
+                if new_val and not existing_val:
+                    updates[field] = new_val
+            if p.get('abs_url', '').strip():
+                existing_source_url = (existing['source_url'] or '').strip()
+                if not existing_source_url:
+                    updates['source_url'] = p['abs_url']
+            if updates:
+                updates['updated_at'] = now
+                set_clause = ', '.join(f"{k} = ?" for k in updates)
+                values = list(updates.values()) + [doi]
+                conn.execute(
+                    f"UPDATE papers SET {set_clause} WHERE doi = ?", values,
+                )
+            count += 1
+        else:
+            try:
+                conn.execute(
+                    """INSERT INTO papers
+                       (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
+                        source, source_url, pdf_url, status, search_date, metadata_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
+                    (
+                        doi,
+                        p.get('title', ''),
+                        p.get('authors', ''),
+                        p.get('abstract', ''),
+                        doi,
+                        p.get('pmid', ''),
+                        p.get('arxiv_id', ''),
+                        p.get('source', ''),
+                        p.get('abs_url', ''),
+                        p.get('pdf_url', ''),
+                        now,
+                        json.dumps(p, ensure_ascii=False),
+                    ),
+                )
+                count += 1
+            except Exception as e:
+                print(f"  DB insert error for {doi}: {e}", file=__import__('sys').stderr)
     conn.commit()
     return count
 

@@ -28,6 +28,31 @@ apis:
   pubmed:
     base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
+# --- CNSP (Cell/Nature/Science/PLOS) Journal Scraping ---
+cnsp:
+  nature_journals: "skills/bio-paper-search/scripts/journals_config/nature_journals.json"
+  science_journals: "skills/bio-paper-search/scripts/journals_config/science_journals.json"
+  cell_journals: "skills/bio-paper-search/scripts/journals_config/cell_journals.json"
+  plos_journals: "skills/bio-paper-search/scripts/journals_config/plos_journals.json"
+  default_days_back: 7
+  incremental_days_back: 90
+  include_journals: []
+  nature:
+    enabled: true
+    request_delay_seconds: 1.5
+  science:
+    enabled: true
+    request_delay_seconds: 3
+    use_browser: true
+  cell:
+    enabled: true
+    request_delay_seconds: 2
+    use_browser: true
+  plos:
+    enabled: true
+    request_delay_seconds: 2
+    use_browser: true
+
 # --- Search Defaults ---
 search:
   default_source: "all"       # arxiv | biorxiv | pubmed | scholar | all

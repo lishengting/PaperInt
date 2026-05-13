@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
-from paper_db import get_conn, get_db_path, insert_search_results
+from paper_db import get_conn, get_db_path, insert_search_results, upsert_search_results
 
 # ---------------------------------------------------------------------------
 # SSL workaround for older servers (bioRxiv, etc.)
@@ -844,7 +844,7 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
 # Commands
 # ---------------------------------------------------------------------------
 
-SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'all']
+SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'cnsp', 'all']
 
 
 def _show_results(papers):
@@ -864,7 +864,33 @@ def _save_to_db(papers, config):
     return n
 
 
+def _save_to_db_upsert(papers, config):
+    """Save search results with upsert-by-DOI (for CNSP source)."""
+    conn = get_conn(config)
+    n = upsert_search_results(conn, papers)
+    print(f"Saved/updated: {n} paper(s) to database")
+    return n
+
+
+def _resolve_start_date(args, config):
+    """Resolve start date for date-range-aware sources (CNSP)."""
+    if getattr(args, 'incremental', False):
+        conn = get_conn(config)
+        row = conn.execute(
+            "SELECT MAX(search_date) FROM papers WHERE source IN ('nature','science','cell','plos')"
+        ).fetchone()
+        if row and row[0]:
+            return datetime.fromisoformat(row[0]).strftime('%Y-%m-%d')
+        days_back = config.get('cnsp', {}).get('incremental_days_back', 90)
+        return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    if getattr(args, 'start_date', None):
+        return args.start_date
+    days_back = config.get('cnsp', {}).get('default_days_back', 7)
+    return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+
 def cmd_search(args, config):
+    global _shared_chrome_port
     source = args.source or cfg(config, 'search.default_source', 'arxiv')
     num = args.num or cfg(config, 'search.default_num', 1)
     keywords = args.keywords or cfg(config, 'keywords.include', [])
@@ -891,10 +917,23 @@ def cmd_search(args, config):
         if not args.browser:
             print(" --browser is required for 'all' source (includes Google Scholar)", file=sys.stderr)
             return 1
-        global _shared_chrome_port
         _shared_chrome_port = _get_or_start_chrome()
         papers = search_all(keywords, config, max_results=num, use_browser=True,
                            sort_by='date', chrome_port=_shared_chrome_port)
+    elif source == 'cnsp':
+        if not args.browser:
+            print(" --browser is required for CNSP source (needs Playwright CDP)", file=sys.stderr)
+            return 1
+        _shared_chrome_port = _get_or_start_chrome()
+        from cnsp import cnsp_search
+        start_date = _resolve_start_date(args, config)
+        end_date = getattr(args, 'end_date', None) or datetime.now().strftime('%Y-%m-%d')
+        cnsp_journals = getattr(args, 'cnsp_journals', None) or None
+        print(f"Date range: {start_date} — {end_date}")
+        papers = cnsp_search(keywords, config, max_results=num * 3,
+                             start_date=start_date, end_date=end_date,
+                             cnsp_journals=cnsp_journals,
+                             chrome_port=_shared_chrome_port)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -908,7 +947,10 @@ def cmd_search(args, config):
         return 1
 
     _show_results(papers)
-    _save_to_db(papers, config)
+    if source == 'cnsp':
+        _save_to_db_upsert(papers, config)
+    else:
+        _save_to_db(papers, config)
     _kill_shared_chrome()
     return 0
 
@@ -1055,6 +1097,12 @@ def main():
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only (results are always saved to database)')
     _add_browser_arg(sp)
+    sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). Required for cnsp source.')
+    sp.add_argument('--end-date', help='Search until this date (YYYY-MM-DD). Default: today.')
+    sp.add_argument('--incremental', action='store_true',
+                    help='Auto-compute start_date from last crawl (cnsp source only).')
+    sp.add_argument('--cnsp-journals', nargs='+',
+                    help='Limit CNSP search to specific journals (e.g., "Nature" "Nature Biotechnology").')
 
     # ---- find ----
     fp = sub.add_parser(
