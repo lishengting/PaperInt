@@ -65,10 +65,10 @@ def log_phase(log_file, paper_id, phase, status, msg=''):
         f.write(line + '\n')
 
 
-def run_phase1(paper_dir, paper, config, log_file):
+def run_phase1(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
 
-    metadata_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.metadata.json')
+    metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
     metadata = {}
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -88,7 +88,7 @@ def run_phase1(paper_dir, paper, config, log_file):
             'include_matches': relevance.get('include_matches', []),
             'exclude_matches': relevance.get('exclude_matches', []),
         }
-        skip_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.skipped.json')
+        skip_path = os.path.join(paper_path, f'{paper_id}.skipped.json')
         with open(skip_path, 'w') as f:
             json.dump(skipped, f, ensure_ascii=False, indent=2)
         conn = get_conn(config)
@@ -107,12 +107,12 @@ def run_phase1(paper_dir, paper, config, log_file):
     return True
 
 
-def run_phase2(paper_dir, paper, config, log_file):
+def run_phase2(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
     title = paper.get('title', '')
 
     # Step 1: Extract PDF text
-    pdf_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.pdf')
+    pdf_path = os.path.join(paper_path, f'{paper_id}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', 'no PDF file — skipping per abstract-only rule')
         return False
@@ -139,7 +139,7 @@ def run_phase2(paper_dir, paper, config, log_file):
     print(f"  PDF text: {len(pdf_text)} chars, mode={mode}")
 
     # Step 2: Build prompt
-    metadata_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.metadata.json')
+    metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
     paper_data = dict(paper)
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -186,11 +186,11 @@ def run_phase2(paper_dir, paper, config, log_file):
         return False
 
     # Step 4: Save outputs
-    md_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.interpret.md')
+    md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
     with open(md_path, 'w') as f:
         f.write(content)
 
-    json_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.interpret.json')
+    json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
     tag_data = {}
     try:
         conn = get_conn(config)
@@ -219,15 +219,15 @@ def run_phase2(paper_dir, paper, config, log_file):
     return True
 
 
-def run_phase3(paper_dir, paper, config, log_file):
+def run_phase3(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
 
-    md_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.interpret.md')
+    md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
     if not os.path.exists(md_path):
         log_phase(log_file, paper_id, 3, 'FAILED', 'no .interpret.md file')
         return False
 
-    html_path = os.path.join(REPO_ROOT, paper_dir, f'{paper_id}.interpret.html')
+    html_path = os.path.join(paper_path, f'{paper_id}.interpret.html')
     script = os.path.join(SKILL_DIR, 'md_to_html.py')
 
     try:
@@ -254,6 +254,8 @@ def process_paper(paper, config, phases, log_file):
         print(f"  No dir_name for {paper_id}, skipping", file=sys.stderr)
         return
 
+    paper_path = os.path.join(REPO_ROOT, 'data', paper_dir)
+
     print(f"\n{'='*60}")
     print(f"Paper: {paper_id}")
     print(f"Title: {(paper.get('title', '') or '')[:80]}")
@@ -267,11 +269,11 @@ def process_paper(paper, config, phases, log_file):
         log_phase(log_file, paper_id, phase, 'START')
 
         if phase == 1:
-            ok = run_phase1(paper_dir, paper, config, log_file)
+            ok = run_phase1(paper_path, paper, config, log_file)
         elif phase == 2:
-            ok = run_phase2(paper_dir, paper, config, log_file)
+            ok = run_phase2(paper_path, paper, config, log_file)
         elif phase == 3:
-            ok = run_phase3(paper_dir, paper, config, log_file)
+            ok = run_phase3(paper_path, paper, config, log_file)
 
         if ok:
             print('OK')
