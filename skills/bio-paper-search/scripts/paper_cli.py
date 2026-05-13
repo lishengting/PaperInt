@@ -205,8 +205,12 @@ def arxiv_parse(xml_data):
     return papers
 
 
-def arxiv_search(keywords, config, max_results=50):
+def arxiv_search(keywords, config, max_results=50, start_date=None, end_date=None):
     q = ' AND '.join(f'all:"{kw}"' for kw in keywords)
+    if start_date:
+        s = start_date.replace('-', '') + '000000'
+        e = (end_date or datetime.now().strftime('%Y-%m-%d')).replace('-', '') + '235959'
+        q += f' AND submittedDate:[{s} TO {e}]'
     xml_data = arxiv_api(q, config, max_results)
     return arxiv_parse(xml_data) if xml_data else []
 
@@ -228,11 +232,16 @@ def arxiv_search_title(title, config, max_results=10):
 # bioRxiv / medRxiv (shared API)
 # ---------------------------------------------------------------------------
 
-def preprint_search(keywords, config, server='biorxiv', max_results=100, max_scan=500):
+def preprint_search(keywords, config, server='biorxiv', max_results=100, max_scan=500,
+                     start_date=None, end_date=None):
     base = cfg(config, f'apis.{server}.base_url', f'https://api.{server}.org')
-    date_range = cfg(config, 'search.date_range_days', 90)
-    end = datetime.now().strftime('%Y-%m-%d')
-    start = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
+    if start_date:
+        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start = start_date
+    else:
+        date_range = cfg(config, 'search.date_range_days', 90)
+        end = datetime.now().strftime('%Y-%m-%d')
+        start = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
 
     all_papers = []
     cursor = 0
@@ -501,12 +510,16 @@ def pubmed_fetch_abstracts(pmids, config):
     return abstracts
 
 
-def pubmed_search(keywords, config, max_results=50):
+def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=None):
     query = ' AND '.join(f'{kw}[All Fields]' for kw in keywords)
-    sr = pubmed_api('esearch.fcgi', {
+    params = {
         'db': 'pubmed', 'term': query, 'retmax': str(max_results),
         'sort': 'pub+date', 'datetype': 'pdat',
-    }, config)
+    }
+    if start_date:
+        params['mindate'] = start_date
+        params['maxdate'] = end_date or datetime.now().strftime('%Y-%m-%d')
+    sr = pubmed_api('esearch.fcgi', params, config)
     if not sr:
         return [], 0
 
@@ -786,32 +799,37 @@ def _merge_dedup(papers, source_priority=None):
     return merged
 
 
-def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date', chrome_port=None):
+def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date', chrome_port=None,
+               start_date=None, end_date=None):
     all_papers = []
 
     try:
-        papers = arxiv_search(keywords, config, max_results=max_results * 3)
+        papers = arxiv_search(keywords, config, max_results=max_results * 3,
+                             start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
         print(f"  arxiv: {len(papers)} results")
     except Exception as e:
         print(f"  arxiv: error - {e}", file=sys.stderr)
 
     try:
-        papers, _ = preprint_search(keywords, config, 'biorxiv', max_results=max_results * 3)
+        papers, _ = preprint_search(keywords, config, 'biorxiv', max_results=max_results * 3,
+                                     start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
         print(f"  biorxiv: {len(papers)} results")
     except Exception as e:
         print(f"  biorxiv: error - {e}", file=sys.stderr)
 
     try:
-        papers, _ = preprint_search(keywords, config, 'medrxiv', max_results=max_results * 3)
+        papers, _ = preprint_search(keywords, config, 'medrxiv', max_results=max_results * 3,
+                                     start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
         print(f"  medrxiv: {len(papers)} results")
     except Exception as e:
         print(f"  medrxiv: error - {e}", file=sys.stderr)
 
     try:
-        papers, total = pubmed_search(keywords, config, max_results=max_results * 3)
+        papers, total = pubmed_search(keywords, config, max_results=max_results * 3,
+                                       start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
         print(f"  pubmed: {len(papers)} results (total: {total})")
     except Exception as e:
@@ -879,21 +897,39 @@ def _save_to_db_upsert(papers, config):
     return n
 
 
-def _resolve_start_date(args, config):
-    """Resolve start date for date-range-aware sources (CNSP)."""
-    if getattr(args, 'incremental', False):
+def _resolve_start_date(args, config, source):
+    """Resolve start date for date-range-aware sources (--start-date or --incremental).
+
+    Returns (start_date, end_date) as YYYY-MM-DD strings, or (None, None) if no
+    date range is configured.
+    """
+    incremental = getattr(args, 'incremental', False)
+    explicit_start = getattr(args, 'start_date', None)
+    end_date = getattr(args, 'end_date', None) or datetime.now().strftime('%Y-%m-%d')
+
+    if incremental:
         conn = get_conn(config)
-        row = conn.execute(
-            "SELECT MAX(search_date) FROM papers WHERE source IN ('nature','science','cell','plos')"
-        ).fetchone()
+        if source == 'cnsp':
+            row = conn.execute(
+                "SELECT MAX(search_date) FROM papers WHERE source IN ('nature','science','cell','plos')"
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT MAX(search_date) FROM papers WHERE source = ?", (source,)
+            ).fetchone()
         if row and row[0]:
-            return datetime.fromisoformat(row[0]).strftime('%Y-%m-%d')
-        days_back = config.get('cnsp', {}).get('incremental_days_back', 90)
-        return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    if getattr(args, 'start_date', None):
-        return args.start_date
-    days_back = config.get('cnsp', {}).get('default_days_back', 7)
-    return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+            return datetime.fromisoformat(row[0]).strftime('%Y-%m-%d'), end_date
+        days_back = cfg(config, 'search.incremental_days_back', 90)
+        return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d'), end_date
+
+    if explicit_start:
+        return explicit_start, end_date
+
+    if source == 'cnsp':
+        days_back = cfg(config, 'cnsp.default_days_back', 7)
+        return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d'), end_date
+
+    return None, None
 
 
 def cmd_search(args, config):
@@ -913,14 +949,24 @@ def cmd_search(args, config):
     print(f"Source: {source}  |  Keywords: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
     print(f"Target: {'all (no limit)' if unlimited else f'{num} paper(s)'}\n")
 
+    # Resolve date range for sources that support it
+    start_date, end_date = None, None
+    if source in ('arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'cnsp', 'all'):
+        start_date, end_date = _resolve_start_date(args, config, source)
+        if start_date:
+            print(f"Date range: {start_date} — {end_date}")
+
     scanned = 0
     if source == 'arxiv':
-        papers = arxiv_search(keywords, config, max_results=max(num * 5, 20))
+        papers = arxiv_search(keywords, config, max_results=max(num * 5, 20),
+                             start_date=start_date, end_date=end_date)
     elif source in ('biorxiv', 'medrxiv'):
         papers, scanned = preprint_search(keywords, config, source,
-                                          max_results=num * 5)
+                                          max_results=num * 5,
+                                          start_date=start_date, end_date=end_date)
     elif source == 'pubmed':
-        papers, scanned = pubmed_search(keywords, config, max_results=num * 5)
+        papers, scanned = pubmed_search(keywords, config, max_results=num * 5,
+                                         start_date=start_date, end_date=end_date)
     elif source == 'scholar':
         if not args.browser:
             print(" --browser is required for Google Scholar searches", file=sys.stderr)
@@ -932,17 +978,15 @@ def cmd_search(args, config):
             return 1
         _shared_chrome_port = _get_or_start_chrome()
         papers = search_all(keywords, config, max_results=num, use_browser=True,
-                           sort_by='date', chrome_port=_shared_chrome_port)
+                           sort_by='date', chrome_port=_shared_chrome_port,
+                           start_date=start_date, end_date=end_date)
     elif source == 'cnsp':
         if not args.browser:
             print(" --browser is required for CNSP source (needs Playwright CDP)", file=sys.stderr)
             return 1
         _shared_chrome_port = _get_or_start_chrome(headless=True)
         from cnsp import cnsp_search
-        start_date = _resolve_start_date(args, config)
-        end_date = getattr(args, 'end_date', None) or datetime.now().strftime('%Y-%m-%d')
         cnsp_journals = getattr(args, 'cnsp_journals', None) or None
-        print(f"Date range: {start_date} — {end_date}")
         papers = cnsp_search(keywords, config, max_results=num * 3,
                              start_date=start_date, end_date=end_date,
                              cnsp_journals=cnsp_journals,
@@ -1120,10 +1164,11 @@ def main():
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only (results are always saved to database)')
     _add_browser_arg(sp)
-    sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). Required for cnsp source.')
+    sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). '
+                    'Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp.')
     sp.add_argument('--end-date', help='Search until this date (YYYY-MM-DD). Default: today.')
     sp.add_argument('--incremental', action='store_true',
-                    help='Auto-compute start_date from last crawl (cnsp source only).')
+                    help='Auto-compute start_date from last crawl date for this source.')
     sp.add_argument('--cnsp-journals', nargs='+',
                     help='Limit CNSP search to specific journals (e.g., "Nature" "Nature Biotechnology").')
 

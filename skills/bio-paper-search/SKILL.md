@@ -61,9 +61,9 @@ Options:
 | `-n, --num` | config (1) | Number of papers |
 | `-l, --list` | off | Preview only (results always saved to DB) |
 | `--browser` | off | Use Chrome (required for Google Scholar and CNSP) |
-| `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Primarily for cnsp source. |
+| `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp. |
 | `--end-date` | today | Search until this date (YYYY-MM-DD) |
-| `--incremental` | off | Auto-compute start_date from last crawl (cnsp source only) |
+| `--incremental` | off | Auto-compute start_date from last crawl for this source |
 | `--cnsp-journals` | all enabled | Limit CNSP to specific journals (e.g., "Nature" "Science") |
 
 ### find — search by title
