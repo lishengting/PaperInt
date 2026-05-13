@@ -598,12 +598,12 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
         if doi and src == 'nature' and not doi.startswith('10.'):
             doi = f'10.1038/{doi}'
 
+        # Step 1: try direct PDF URL (retry 3x, with browser fallback built into _download_direct_pdf)
         for attempt in range(3):
             if attempt > 0:
                 delay = 5 * attempt
-                print(f"  [cnsp] retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                print(f"  [cnsp] direct retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
                 time.sleep(delay)
-
             pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
             if pdf_data and _is_pdf(pdf_data):
                 break
@@ -611,14 +611,17 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
 
-            # Try browser-based download via DOI
-            if not pdf_data and use_browser and doi:
-                print(f"  [cnsp] trying browser download via DOI: {doi}", file=sys.stderr)
+        # Step 2: if direct failed, use publisher download via DOI (scans article page for real PDF link)
+        if not pdf_data and doi:
+            for attempt in range(3):
+                if attempt > 0:
+                    delay = 5 * attempt
+                    print(f"  [cnsp] publisher retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                    time.sleep(delay)
+                print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
                 pdf_data = _publisher_download(doi, paper.get('pmid'), config)
                 if pdf_data:
                     break
-            else:
-                break  # no browser, no point retrying direct download
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
