@@ -2,11 +2,11 @@
 """
 Bio Paper Search CLI — search bioinformatics papers across multiple sources.
 
-Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar
+Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  cnsp
 
 Usage:
-  paper_cli.py search [-k keywords] [-s source] [-n N] [-l]
-  paper_cli.py find   -t title    [-s source] [-l]
+  paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--browser] [--start-date DATE] [--end-date DATE]
+  paper_cli.py find   -t title    [-s source] [-l] [--browser]
 
 Results are saved to the shared SQLite database (data/papers.db).
 Use bio-paper-downloader to download found papers.
@@ -1065,12 +1065,15 @@ examples:
   # Google Scholar (requires --browser)
   paper_cli.py search -k "deep learning single cell" -s scholar -n 3 --browser
 
-sources: arxiv, biorxiv, medrxiv, pubmed, scholar"""
+  # CNSP journal scraping (requires --browser)
+  paper_cli.py search -k "CRISPR" -s cnsp -n 3 --browser
+
+sources: arxiv, biorxiv, medrxiv, pubmed, scholar, cnsp, all"""
 
 
 def _add_browser_arg(p):
     p.add_argument('--browser', action='store_true',
-                   help='Use Chrome browser for searches. Required for Google Scholar.')
+                   help='Use Chrome browser for searches. Required for Google Scholar and CNSP.')
 
 
 def main():
