@@ -818,7 +818,8 @@ examples:
 def main():
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
-        description='Bio Paper Downloader — download papers from search results or URLs.',
+        description='Bio Paper Downloader — download papers from search results or URLs.\n'
+                    'Run `paper_cli.py get -h` or `paper_cli.py pdf -h` for detailed options.',
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -1082,7 +1082,8 @@ def _add_browser_arg(p):
 def main():
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
-        description='Bio Paper Search — search bioinformatics papers across multiple sources.',
+        description='Bio Paper Search — search bioinformatics papers across multiple sources.\n'
+                    'Run `paper_cli.py search -h` or `paper_cli.py find -h` for detailed options.',
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
