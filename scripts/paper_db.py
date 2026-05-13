@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""
+Shared SQLite database module for the PaperInt skills pipeline.
+
+Used by: bio-paper-search, bio-paper-downloader, bio-paper-interpreter
+
+Schema: a single `papers` table tracking each paper through the pipeline:
+  searched -> downloaded (or download_failed) -> interpreted (or skipped)
+"""
+
+import json
+import os
+import sqlite3
+from datetime import datetime
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS papers (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id        TEXT NOT NULL UNIQUE,
+    title           TEXT,
+    authors         TEXT,
+    abstract        TEXT,
+    doi             TEXT,
+    pmid            TEXT,
+    arxiv_id        TEXT,
+    source          TEXT,
+    source_url      TEXT,
+    pdf_url         TEXT,
+    dir_name        TEXT,
+    status          TEXT NOT NULL DEFAULT 'searched',
+    search_date     TEXT,
+    download_date   TEXT,
+    interpret_date  TEXT,
+    metadata_json   TEXT,
+    oa_has_pdf      INTEGER DEFAULT 0,
+    error_message   TEXT,
+    relevance       TEXT,
+    matched_tags    TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
+CREATE INDEX IF NOT EXISTS idx_papers_paper_id ON papers(paper_id);
+CREATE INDEX IF NOT EXISTS idx_papers_search_date ON papers(search_date);
+"""
+
+# ---------------------------------------------------------------------------
+# Connection management
+# ---------------------------------------------------------------------------
+
+_conn = None
+_db_path = None
+
+
+def get_db_path(config: dict) -> str:
+    """Return the database path from config, defaulting to 'data/papers.db'."""
+    return config.get('db', {}).get('path', 'data/papers.db')
+
+
+def get_conn(config: dict) -> sqlite3.Connection:
+    """Open (or return cached) SQLite connection, ensuring schema exists."""
+    global _conn, _db_path
+    path = get_db_path(config)
+    if _conn is not None and _db_path == path:
+        return _conn
+    if _conn is not None:
+        _conn.close()
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    _conn = sqlite3.connect(path)
+    _conn.row_factory = sqlite3.Row
+    _conn.execute("PRAGMA journal_mode=WAL")
+    _conn.execute("PRAGMA foreign_keys=ON")
+    _conn.executescript(SCHEMA)
+    _conn.commit()
+    _db_path = path
+    return _conn
+
+
+def _now() -> str:
+    return datetime.now().isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Search skill operations
+# ---------------------------------------------------------------------------
+
+def insert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
+    """Insert search results with status='searched'. Skips duplicates. Returns count inserted."""
+    count = 0
+    now = _now()
+    for p in papers:
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO papers
+                   (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
+                    source, source_url, pdf_url, status, search_date, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
+                (
+                    p.get('paper_id', ''),
+                    p.get('title', ''),
+                    p.get('authors', ''),
+                    p.get('abstract', ''),
+                    p.get('doi', ''),
+                    p.get('pmid', ''),
+                    p.get('arxiv_id', ''),
+                    p.get('source', ''),
+                    p.get('abs_url', ''),
+                    p.get('pdf_url', ''),
+                    now,
+                    json.dumps(p, ensure_ascii=False),
+                ),
+            )
+            if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                count += 1
+        except Exception as e:
+            print(f"  DB insert error for {p.get('paper_id', '?')}: {e}", file=__import__('sys').stderr)
+    conn.commit()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Downloader skill operations
+# ---------------------------------------------------------------------------
+
+def get_papers_by_status(conn: sqlite3.Connection, status: str,
+                         limit: int = None) -> list[dict]:
+    """Return papers with the given status, ordered by search_date desc."""
+    sql = "SELECT * FROM papers WHERE status = ? ORDER BY search_date DESC"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    rows = conn.execute(sql, (status,)).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def is_downloaded(conn: sqlite3.Connection, paper_id: str) -> bool:
+    """Return True if the paper has status 'downloaded'."""
+    row = conn.execute(
+        "SELECT 1 FROM papers WHERE paper_id = ? AND status = 'downloaded'",
+        (paper_id,),
+    ).fetchone()
+    return row is not None
+
+
+def mark_downloaded(conn: sqlite3.Connection, paper_id: str, dir_name: str,
+                    metadata_updates: dict = None) -> None:
+    """Mark a paper as downloaded: set status, dir_name, download_date, merge metadata."""
+    now = _now()
+    if metadata_updates:
+        existing = conn.execute(
+            "SELECT metadata_json FROM papers WHERE paper_id = ?", (paper_id,)
+        ).fetchone()
+        if existing and existing[0]:
+            meta = json.loads(existing[0])
+            meta.update(metadata_updates)
+        else:
+            meta = metadata_updates
+        conn.execute(
+            "UPDATE papers SET status='downloaded', dir_name=?, download_date=?, metadata_json=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            (dir_name, now, json.dumps(meta, ensure_ascii=False), now, paper_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE papers SET status='downloaded', dir_name=?, download_date=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            (dir_name, now, now, paper_id),
+        )
+    conn.commit()
+
+
+def mark_download_failed(conn: sqlite3.Connection, paper_id: str, error: str) -> None:
+    """Mark a paper download as failed."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET status='download_failed', error_message=?, updated_at=? WHERE paper_id=?",
+        (error, now, paper_id),
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Interpreter skill operations
+# ---------------------------------------------------------------------------
+
+def mark_interpreted(conn: sqlite3.Connection, paper_id: str) -> None:
+    """Mark a paper as interpreted."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET status='interpreted', interpret_date=?, updated_at=? WHERE paper_id=?",
+        (now, now, paper_id),
+    )
+    conn.commit()
+
+
+def mark_skipped(conn: sqlite3.Connection, paper_id: str) -> None:
+    """Mark a paper as skipped (not bioinformatics-relevant)."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET status='skipped', updated_at=? WHERE paper_id=?",
+        (now, paper_id),
+    )
+    conn.commit()
+
+
+def update_relevance(conn: sqlite3.Connection, paper_id: str, data: dict) -> None:
+    """Store relevance filter results as JSON."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET relevance=?, updated_at=? WHERE paper_id=?",
+        (json.dumps(data, ensure_ascii=False), now, paper_id),
+    )
+    conn.commit()
+
+
+def update_tags(conn: sqlite3.Connection, paper_id: str, data: dict) -> None:
+    """Store matched tag results as JSON."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET matched_tags=?, updated_at=? WHERE paper_id=?",
+        (json.dumps(data, ensure_ascii=False), now, paper_id),
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# General queries
+# ---------------------------------------------------------------------------
+
+def get_paper_dir(conn: sqlite3.Connection, paper_id: str) -> str | None:
+    """Return dir_name for a paper, or None."""
+    row = conn.execute(
+        "SELECT dir_name FROM papers WHERE paper_id = ?", (paper_id,)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_paper(conn: sqlite3.Connection, paper_id: str) -> dict | None:
+    """Return full paper record with metadata_json parsed."""
+    row = conn.execute(
+        "SELECT * FROM papers WHERE paper_id = ?", (paper_id,)
+    ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_stats(conn: sqlite3.Connection) -> dict:
+    """Return counts by status."""
+    rows = conn.execute(
+        "SELECT status, COUNT(*) as cnt FROM papers GROUP BY status"
+    ).fetchall()
+    return {r['status']: r['cnt'] for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _row_to_dict(row: sqlite3.Row) -> dict:
+    """Convert a sqlite3.Row to a plain dict, parsing metadata_json."""
+    d = dict(row)
+    if d.get('metadata_json'):
+        try:
+            meta = json.loads(d['metadata_json'])
+            d.update(meta)
+        except json.JSONDecodeError:
+            pass
+    if d.get('relevance'):
+        try:
+            d['relevance'] = json.loads(d['relevance'])
+        except json.JSONDecodeError:
+            pass
+    if d.get('matched_tags'):
+        try:
+            d['matched_tags'] = json.loads(d['matched_tags'])
+        except json.JSONDecodeError:
+            pass
+    return d

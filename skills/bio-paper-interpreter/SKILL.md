@@ -42,15 +42,43 @@ LLM service running. Suitable for batch processing and automation.
 
 ## Core Protocol
 
-The filesystem is the state machine. `data/execution_log.md` is
+The filesystem is the state machine. The SQLite database (`data/papers.db`) is the
+shared source of truth for paper locations and status. `data/execution_log.md` is
 the state log. Recover by reading files, not by relying on chat memory.
 
 1. Ensure `data/` exists.
-2. Find the paper directory from `data/downloaded.json` → `paper_dirs[paper_id]`:
-   `PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"`
+2. Find the paper directory from the database using `scripts/paper_db.py`:
+   ```
+   PAPER_DIR="data/$(python3 -c "
+   import sys; sys.path.insert(0, 'scripts')
+   from paper_db import get_conn, get_db_path, get_paper_dir
+   import yaml
+   config = yaml.safe_load(open('config.yaml'))
+   conn = get_conn(config)
+   print(get_paper_dir(conn, '{paper_id}') or '')
+   ")"
+   ```
 3. Read `execution_log.md` to find the current phase for each paper.
 4. Load the reference file for the current phase.
 5. Read all completed prior phase outputs required by the current phase.
+
+### Auto-mode (no target)
+
+When invoked without a specific paper_id target, find all papers with status
+`downloaded` in the database and interpret them in sequence:
+
+```
+python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_db_path, get_papers_by_status
+import yaml
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+papers = get_papers_by_status(conn, 'downloaded')
+for p in papers:
+    print(p['paper_id'], p.get('dir_name', ''))
+"
+```
 
 ## Phase Map
 
@@ -111,6 +139,7 @@ Resolve scripts from this skill's `scripts/` directory.
 - `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)
 - `{paper_dir}/{paper_id}.pdf` — downloaded paper PDF
 - `data/execution_log.md` — phase state log
+- `data/papers.db` — shared database (paper status updated on phase completion)
 
 ## Rules
 
@@ -128,3 +157,5 @@ Resolve scripts from this skill's `scripts/` directory.
 - Phase 3 runs `md_to_html.py` to produce a standalone HTML with embedded CSS;
   the HTML supports light/dark mode and requires no external resources.
 - All interpretations saved under the paper's directory in `data/`.
+- After Phase 1 completion, update the database: `mark_skipped()` for rejected papers, `update_relevance()` and `update_tags()` for accepted ones.
+- After Phase 2 completion, call `mark_interpreted()` to update the database status.

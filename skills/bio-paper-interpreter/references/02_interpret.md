@@ -11,7 +11,14 @@
 
 找到 paper 目录：
 ```bash
-PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"
+PAPER_DIR="data/$(python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_db_path, get_paper_dir
+import yaml
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+print(get_paper_dir(conn, '{paper_id}') or '')
+")"
 ```
 
 ## Workflow
@@ -226,5 +233,6 @@ Phase 2 完成前确认：
 
 ## Completion
 - 输出 `{paper_dir}/{paper_id}.interpret.md` + `.interpret.json`
+- 更新数据库状态：`python3 -c "import sys; sys.path.insert(0, 'scripts'); from paper_db import get_conn, get_db_path, mark_interpreted; import yaml; c=yaml.safe_load(open('config.yaml')); mark_interpreted(get_conn(c), '{paper_id}')"`
 - 日志：`Phase 2 - COMPLETED: {paper_id} — {mode}, {n} tags`
 - Git commit（如未被 gitignore）

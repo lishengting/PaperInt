@@ -11,7 +11,14 @@
 
 找到 paper 目录：
 ```bash
-PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"
+PAPER_DIR="data/$(python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_db_path, get_paper_dir
+import yaml
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+print(get_paper_dir(conn, '{paper_id}') or '')
+")"
 ```
 
 ## Workflow
@@ -42,7 +49,7 @@ cat $PAPER_DIR/{paper_id}.metadata.json | \
 
 检查输出中的 `relevance.passed`：
 
-- **`false`** → 保存跳过记录，STOP：
+- **`false`** → 保存跳过记录并更新数据库，STOP：
 
 ```bash
 cat > $PAPER_DIR/{paper_id}.skipped.json << 'EOF'
@@ -55,6 +62,20 @@ cat > $PAPER_DIR/{paper_id}.skipped.json << 'EOF'
   "exclude_matches": [...]
 }
 EOF
+```
+
+然后更新数据库状态：
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_db_path, update_relevance, mark_skipped
+import yaml, json
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+relevance = json.loads(open('$PAPER_DIR/{paper_id}.metadata.json').read())
+# relevance data is in the filter_relevance.py output
+mark_skipped(conn, '{paper_id}')
+"
 ```
 
 日志：`Phase 1 - REJECTED: {paper_id} — {reason}`
@@ -83,9 +104,23 @@ Phase 1 - INFO: {paper_id} only base tags — consider skipping
 
 此时可选择跳过或继续。由 agent 或用户判断。
 
-### Step 6: Report
+### Step 6: Report and Update Database
 
 输出带 `relevance` 和 `matched_tags` 的完整 JSON 给下一阶段使用。
+
+更新数据库中的筛选结果：
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_db_path, update_relevance, update_tags
+import yaml, json
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+# Parse the relevance and tags from the filter/match output
+update_relevance(conn, '{paper_id}', <relevance_dict>)
+update_tags(conn, '{paper_id}', <tags_dict>)
+"
+```
 
 日志：`Phase 1 - COMPLETED: {paper_id} — {n} tags: {labels}`
 

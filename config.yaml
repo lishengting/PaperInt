@@ -265,3 +265,7 @@ system_prompts:
     - 你只看到了标题和摘要，没有看到全文
     - 在解读时合理推断，但不要过度解读
     - 明确标注"根据摘要推断"等说明
+
+# --- Database ---
+db:
+  path: "data/papers.db"
