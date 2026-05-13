@@ -404,6 +404,8 @@ def _publisher_download(doi, pmid, config):
         r = subprocess.run(
             cmd, capture_output=True, text=True,
             timeout=300)
+        if r.stderr:
+            print(r.stderr.rstrip(), file=sys.stderr)
         if r.returncode == 0:
             safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
             pdf_path = os.path.join(tmpdir, safe_name)
@@ -440,6 +442,8 @@ def _download_direct_pdf(pdf_url, config):
                 [sys.executable, script, pdf_url, '-o', tmpdir,
                  '--timeout', '180'],
                 capture_output=True, text=True, timeout=300)
+            if r.stderr:
+                print(r.stderr.rstrip(), file=sys.stderr)
             if r.returncode == 0:
                 for f in os.listdir(tmpdir):
                     if f.endswith('.pdf'):
