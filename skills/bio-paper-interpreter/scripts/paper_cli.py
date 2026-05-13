@@ -153,11 +153,15 @@ def run_phase2(paper_path, paper, config, log_file):
     temperature = cfg(config, 'llm.temperature', 0.3)
     max_tokens = cfg(config, 'llm.max_tokens', 4000)
     timeout = cfg(config, 'llm.timeout_seconds', 120)
-    api_key_env = cfg(config, 'llm.api_key_env', 'LLM_API_KEY')
-    api_key = os.environ.get(api_key_env, '')
-
+    api_key_cfg = cfg(config, 'llm.api_key_env', 'LLM_API_KEY')
+    # Support both env var name and direct key value in config
+    api_key = os.environ.get(api_key_cfg, '')
     if not api_key:
-        print(f"  Warning: {api_key_env} not set, trying without auth", file=sys.stderr)
+        # If not found as env var name, treat the config value itself as the key
+        if api_key_cfg and ' ' not in api_key_cfg and len(api_key_cfg) > 20:
+            api_key = api_key_cfg
+        else:
+            print(f"  Warning: LLM API key not found (checked env var ${api_key_cfg})", file=sys.stderr)
 
     body = json.dumps({
         'model': model,
