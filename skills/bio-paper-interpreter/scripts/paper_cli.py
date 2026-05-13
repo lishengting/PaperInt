@@ -285,10 +285,11 @@ def process_paper(paper, config, phases, log_file):
 def cmd_run(args, config):
     conn = get_conn(config)
 
-    if args.paper_id:
-        paper = get_paper(conn, args.paper_id)
+    paper_id = getattr(args, 'paper_id', None)
+    if paper_id:
+        paper = get_paper(conn, paper_id)
         if not paper:
-            print(f"Paper not found: {args.paper_id}", file=sys.stderr)
+            print(f"Paper not found: {paper_id}", file=sys.stderr)
             return 1
         if paper.get('status') != 'downloaded':
             print(f"Paper status is '{paper.get('status')}', expected 'downloaded'", file=sys.stderr)
@@ -296,14 +297,16 @@ def cmd_run(args, config):
         papers = [paper]
     else:
         papers = get_papers_by_status(conn, 'downloaded')
-        if args.limit:
-            papers = papers[:args.limit]
+        limit = getattr(args, 'limit', None)
+        if limit:
+            papers = papers[:limit]
 
     if not papers:
         print("No downloaded papers to interpret.")
         return 0
 
-    phases = set(args.phase.split(',')) if args.phase else {'1', '2', '3'}
+    phase_str = getattr(args, 'phase', None)
+    phases = set(phase_str.split(',')) if phase_str else {'1', '2', '3'}
     log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
 
     print(f"Papers to interpret: {len(papers)}")
