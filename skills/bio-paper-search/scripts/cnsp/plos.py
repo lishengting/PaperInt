@@ -113,7 +113,10 @@ class PLOSParser(CNSP_Parser):
                 })
 
             except Exception as e:
-                print(f"  PLOS article error: {e}", file=sys.stderr)
+                err = str(e)
+                if len(err) > 100:
+                    err = err[:100] + '...'
+                print(f"  PLOS article error: {err}", file=sys.stderr)
                 continue
 
         return articles
@@ -173,5 +176,8 @@ class PLOSParser(CNSP_Parser):
             return {'title': title, 'abstract': abstract, 'date': pub_date, 'authors': authors}
 
         except Exception as e:
-            print(f"  PLOS detail error: {e}", file=sys.stderr)
+            err = str(e)
+            if len(err) > 100:
+                err = err[:100] + '...'
+            print(f"  PLOS detail error: {err}", file=sys.stderr)
             return None

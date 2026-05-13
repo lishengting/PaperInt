@@ -157,7 +157,10 @@ class ScienceParser(CNSP_Parser):
                         'authors': article_data.get('authors', ''),
                     })
                 except Exception as e:
-                    print(f"  Science article error: {e}", file=sys.stderr)
+                    err = str(e)
+                    if len(err) > 100:
+                        err = err[:100] + '...'
+                    print(f"  Science article error: {err}", file=sys.stderr)
                     continue
 
         return articles

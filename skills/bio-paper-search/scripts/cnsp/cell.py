@@ -52,7 +52,10 @@ class CellParser(CNSP_Parser):
                 if i < len(issue_links) - 1:
                     time.sleep(2)
             except Exception as e:
-                print(f"  Cell issue error ({issue_info.get('title', '?')}): {e}", file=sys.stderr)
+                err = str(e)
+                if len(err) > 100:
+                    err = err[:100] + '...'
+                print(f"  Cell issue error ({issue_info.get('title', '?')}): {err}", file=sys.stderr)
                 continue
 
         return articles
@@ -174,7 +177,10 @@ class CellParser(CNSP_Parser):
                 })
 
             except Exception as e:
-                print(f"  Cell article error: {e}", file=sys.stderr)
+                err = str(e)
+                if len(err) > 100:
+                    err = err[:100] + '...'
+                print(f"  Cell article error: {err}", file=sys.stderr)
                 continue
 
         return articles

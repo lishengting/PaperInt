@@ -42,7 +42,10 @@ class NatureParser(CNSP_Parser):
                     resp.raise_for_status()
                     soup = BeautifulSoup(resp.text, 'html.parser')
                 except Exception as e:
-                    print(f"  Nature request error: {e}", file=sys.stderr)
+                    err = str(e)
+                    if len(err) > 100:
+                        err = err[:100] + '...'
+                    print(f"  Nature request error: {err}", file=sys.stderr)
                     break
 
                 cards = soup.find_all('article', class_='c-card')
@@ -88,7 +91,10 @@ class NatureParser(CNSP_Parser):
                         })
 
                     except Exception as e:
-                        print(f"  Nature card error: {e}", file=sys.stderr)
+                        err = str(e)
+                        if len(err) > 100:
+                            err = err[:100] + '...'
+                        print(f"  Nature card error: {err}", file=sys.stderr)
                         continue
 
                 # Pagination

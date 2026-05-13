@@ -79,8 +79,16 @@ async def _scrape_journal_type(journal_type: str, config: dict,
                         all_articles.append(normalized)
 
                 print(f"    {len(raw_articles)} articles found")
+            except ValueError as e:
+                err_msg = str(e)
+                if len(err_msg) > 80:
+                    err_msg = err_msg[:80] + '...'
+                print(f"    Connection corrupt ({jname}): {err_msg}", file=sys.stderr)
             except Exception as e:
-                print(f"    Error: {e}", file=sys.stderr)
+                err_msg = str(e)
+                if len(err_msg) > 80:
+                    err_msg = err_msg[:80] + '...'
+                print(f"    Error ({jname}): {err_msg}", file=sys.stderr)
 
             time.sleep(delay)
 
