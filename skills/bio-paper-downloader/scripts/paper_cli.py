@@ -580,6 +580,8 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 print(f"  [info] not OA via PMC (has_pdf=False), skipping PMC download", file=sys.stderr)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+    elif src in ('nature', 'science', 'cell', 'plos'):
+        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
