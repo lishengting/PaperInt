@@ -12,7 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
-from .base import CNSP_Parser
+from .base import CNSP_Parser, clean_error
 
 
 class NatureParser(CNSP_Parser):
@@ -42,10 +42,7 @@ class NatureParser(CNSP_Parser):
                     resp.raise_for_status()
                     soup = BeautifulSoup(resp.text, 'html.parser')
                 except Exception as e:
-                    err = str(e)
-                    if len(err) > 100:
-                        err = err[:100] + '...'
-                    print(f"  Nature request error: {err}", file=sys.stderr)
+                    print(f"  Nature request error: {clean_error(e)}", file=sys.stderr)
                     break
 
                 cards = soup.find_all('article', class_='c-card')
@@ -91,10 +88,7 @@ class NatureParser(CNSP_Parser):
                         })
 
                     except Exception as e:
-                        err = str(e)
-                        if len(err) > 100:
-                            err = err[:100] + '...'
-                        print(f"  Nature card error: {err}", file=sys.stderr)
+                        print(f"  Nature card error: {clean_error(e)}", file=sys.stderr)
                         continue
 
                 # Pagination

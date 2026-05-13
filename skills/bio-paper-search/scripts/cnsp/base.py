@@ -28,6 +28,15 @@ class PermissiveSSLAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 
+def clean_error(err: Exception, max_len: int = 120) -> str:
+    """Sanitize exception message — strip non-printable chars and truncate."""
+    msg = str(err)
+    msg = ''.join(c if c.isprintable() or c in '\t\n\r' else '?' for c in msg)
+    if len(msg) > max_len:
+        msg = msg[:max_len] + '...'
+    return msg
+
+
 class CNSP_Parser:
     """Base class for CNSP journal parsers. No Selenium, no DB, no AI agent."""
 

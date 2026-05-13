@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
-from .base import CNSP_Parser
+from .base import CNSP_Parser, clean_error
 
 
 class ScienceParser(CNSP_Parser):
@@ -157,10 +157,7 @@ class ScienceParser(CNSP_Parser):
                         'authors': article_data.get('authors', ''),
                     })
                 except Exception as e:
-                    err = str(e)
-                    if len(err) > 100:
-                        err = err[:100] + '...'
-                    print(f"  Science article error: {err}", file=sys.stderr)
+                    print(f"  Science article error: {clean_error(e)}", file=sys.stderr)
                     continue
 
         return articles

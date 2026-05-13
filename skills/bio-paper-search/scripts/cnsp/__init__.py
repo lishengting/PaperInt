@@ -15,6 +15,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from .config_manager import filter_journals_by_keywords, get_enabled_journals, get_request_delay
+from .base import clean_error
 from .nature import NatureParser
 from .science import ScienceParser
 from .cell import CellParser
@@ -80,15 +81,9 @@ async def _scrape_journal_type(journal_type: str, config: dict,
 
                 print(f"    {len(raw_articles)} articles found")
             except ValueError as e:
-                err_msg = str(e)
-                if len(err_msg) > 80:
-                    err_msg = err_msg[:80] + '...'
-                print(f"    Connection corrupt ({jname}): {err_msg}", file=sys.stderr)
+                print(f"    Connection corrupt ({jname}): {clean_error(e)}", file=sys.stderr)
             except Exception as e:
-                err_msg = str(e)
-                if len(err_msg) > 80:
-                    err_msg = err_msg[:80] + '...'
-                print(f"    Error ({jname}): {err_msg}", file=sys.stderr)
+                print(f"    Error ({jname}): {clean_error(e)}", file=sys.stderr)
 
             time.sleep(delay)
 

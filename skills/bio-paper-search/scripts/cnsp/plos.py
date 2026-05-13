@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
-from .base import CNSP_Parser
+from .base import CNSP_Parser, clean_error
 
 
 class PLOSParser(CNSP_Parser):
@@ -113,10 +113,7 @@ class PLOSParser(CNSP_Parser):
                 })
 
             except Exception as e:
-                err = str(e)
-                if len(err) > 100:
-                    err = err[:100] + '...'
-                print(f"  PLOS article error: {err}", file=sys.stderr)
+                print(f"  PLOS article error: {clean_error(e)}", file=sys.stderr)
                 continue
 
         return articles
@@ -176,8 +173,5 @@ class PLOSParser(CNSP_Parser):
             return {'title': title, 'abstract': abstract, 'date': pub_date, 'authors': authors}
 
         except Exception as e:
-            err = str(e)
-            if len(err) > 100:
-                err = err[:100] + '...'
-            print(f"  PLOS detail error: {err}", file=sys.stderr)
+            print(f"  PLOS detail error: {clean_error(e)}", file=sys.stderr)
             return None
