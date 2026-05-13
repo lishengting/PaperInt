@@ -547,6 +547,9 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
     oa_info = _generate_info_md(paper, paper_dir, safe_pid)
 
     print(f"  Downloading: {paper.get('title', '?')[:80]}...")
+    source_url = paper.get('source_url', '') or paper.get('abs_url', '')
+    if source_url:
+        print(f"  URL: {source_url}")
 
     pdf_data = None
     if src == 'arxiv':
