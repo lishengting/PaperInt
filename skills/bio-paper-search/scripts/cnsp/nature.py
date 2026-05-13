@@ -38,7 +38,7 @@ class NatureParser(CNSP_Parser):
 
             while page_url:
                 try:
-                    resp = requests.get(page_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
+                    resp = self.session.get(page_url, timeout=30)
                     resp.raise_for_status()
                     soup = BeautifulSoup(resp.text, 'html.parser')
                 except Exception as e:
@@ -120,7 +120,7 @@ class NatureParser(CNSP_Parser):
         """Fetch abstract and authors from a Nature article page."""
         for attempt in range(3):
             try:
-                resp = requests.get(url, timeout=30)
+                resp = self.session.get(url, timeout=30)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 break

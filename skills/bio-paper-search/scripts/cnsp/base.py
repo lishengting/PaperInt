@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import random
+import ssl
 import time
 from datetime import date, datetime
 
 import requests
+import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+# Suppress InsecureRequestWarning from verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class PermissiveSSLAdapter(HTTPAdapter):
+    """Adapter with permissive SSL context (no verify, TLS 1.2 max)."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+        kwargs['ssl_context'] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class CNSP_Parser:
@@ -47,7 +64,7 @@ class CNSP_Parser:
             status_forcelist=[403, 429, 500, 502, 503, 504],
             respect_retry_after_header=True,
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
+        adapter = PermissiveSSLAdapter(max_retries=retry_strategy)
         self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
 
