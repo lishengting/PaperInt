@@ -413,12 +413,17 @@ def _publisher_download(doi, pmid, config):
     return None
 
 
+def _is_pdf(data: bytes) -> bool:
+    """Check if bytes look like a PDF (not HTML)."""
+    return data[:5] == b'%PDF-'
+
+
 def _download_direct_pdf(pdf_url, config):
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
         with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
-            if data.startswith(b'%PDF') or len(data) > 50000:
+            if _is_pdf(data):
                 return data
     except Exception:
         pass
@@ -582,6 +587,20 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
     elif src in ('nature', 'science', 'cell', 'plos'):
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+        # Validate: Nature.com et al. return HTML login pages for direct PDF requests
+        if pdf_data and _is_pdf(pdf_data):
+            pass  # good PDF
+        elif pdf_data and not _is_pdf(pdf_data):
+            print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
+            pdf_data = None
+        # Try browser-based download via publisher page
+        if not pdf_data and use_browser:
+            doi = paper.get('doi', '')
+            if doi and src == 'nature' and not doi.startswith('10.'):
+                doi = f'10.1038/{doi}'
+            if doi:
+                print(f"  [cnsp] trying browser download via DOI: {doi}", file=sys.stderr)
+                pdf_data = _publisher_download(doi, paper.get('pmid'), config)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
