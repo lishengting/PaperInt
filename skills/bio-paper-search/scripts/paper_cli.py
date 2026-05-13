@@ -899,13 +899,19 @@ def _resolve_start_date(args, config):
 def cmd_search(args, config):
     global _shared_chrome_port
     source = args.source or cfg(config, 'search.default_source', 'arxiv')
-    num = args.num or cfg(config, 'search.default_num', 1)
     keywords = args.keywords or cfg(config, 'keywords.include', [])
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(',') if k.strip()]
 
+    has_date_range = bool(getattr(args, 'start_date', None) or getattr(args, 'incremental', False))
+    unlimited = args.num is None and has_date_range
+    if unlimited:
+        num = 999999
+    else:
+        num = args.num or cfg(config, 'search.default_num', 1)
+
     print(f"Source: {source}  |  Keywords: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
-    print(f"Target: {num} paper(s)\n")
+    print(f"Target: {'all (no limit)' if unlimited else f'{num} paper(s)'}\n")
 
     scanned = 0
     if source == 'arxiv':
@@ -1107,7 +1113,10 @@ def main():
     sp.add_argument('-s', '--source', choices=SOURCES,
                     help='Paper source to search (default: search.default_source from config)')
     sp.add_argument('-n', '--num', type=int,
-                    help='Max number of papers to return (default: search.default_num from config)')
+                    help='Max number of papers to return. '
+                         'When --start-date or --incremental is set and -n is omitted, '
+                         'returns all papers in range. '
+                         '(default: search.default_num from config)')
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only (results are always saved to database)')
     _add_browser_arg(sp)
