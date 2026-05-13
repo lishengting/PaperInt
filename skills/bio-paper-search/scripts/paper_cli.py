@@ -1067,6 +1067,9 @@ examples:
 
   # CNSP journal scraping (requires --browser)
   paper_cli.py search -k "CRISPR" -s cnsp -n 3 --browser
+  paper_cli.py search -k "CRISPR" -s cnsp -n 3 --start-date 2026-05-01 --end-date 2026-05-13 --browser
+  paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental --browser
+  paper_cli.py search -k "methylation" -s cnsp -n 2 --browser --cnsp-journals Nature Science
 
 sources: arxiv, biorxiv, medrxiv, pubmed, scholar, cnsp, all"""
 
