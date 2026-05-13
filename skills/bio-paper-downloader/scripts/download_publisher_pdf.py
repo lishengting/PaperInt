@@ -321,7 +321,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] falling back to headed Chrome...", file=sys.stderr)
     for attempt in range(3):
         if attempt > 0:
-            delay = 120
+            delay = 5 * attempt
             print(f"  [publisher] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
             time.sleep(delay)
 
