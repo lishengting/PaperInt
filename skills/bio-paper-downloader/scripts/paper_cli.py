@@ -419,6 +419,7 @@ def _is_pdf(data: bytes) -> bool:
 
 
 def _download_direct_pdf(pdf_url, config):
+    # Direct HTTP attempt
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
         with _urlopen_with_retry(req, config, attempts=2) as r:
@@ -428,19 +429,23 @@ def _download_direct_pdf(pdf_url, config):
     except Exception:
         pass
 
+    # Browser fallback with retry (Chrome launch can fail transiently)
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
-    with tempfile.TemporaryDirectory() as tmpdir:
-        r = subprocess.run(
-            [sys.executable, script, pdf_url, '-o', tmpdir,
-             '--timeout', '180'],
-            capture_output=True, text=True, timeout=300)
-        if r.returncode == 0:
-            for f in os.listdir(tmpdir):
-                if f.endswith('.pdf'):
-                    pdf_path = os.path.join(tmpdir, f)
-                    with open(pdf_path, 'rb') as fh:
-                        return fh.read()
+    for attempt in range(3):
+        if attempt > 0:
+            time.sleep(5 * attempt)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = subprocess.run(
+                [sys.executable, script, pdf_url, '-o', tmpdir,
+                 '--timeout', '180'],
+                capture_output=True, text=True, timeout=300)
+            if r.returncode == 0:
+                for f in os.listdir(tmpdir):
+                    if f.endswith('.pdf'):
+                        pdf_path = os.path.join(tmpdir, f)
+                        with open(pdf_path, 'rb') as fh:
+                            return fh.read()
     return None
 
 
@@ -586,21 +591,31 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
     elif src in ('nature', 'science', 'cell', 'plos'):
-        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
-        # Validate: Nature.com et al. return HTML login pages for direct PDF requests
-        if pdf_data and _is_pdf(pdf_data):
-            pass  # good PDF
-        elif pdf_data and not _is_pdf(pdf_data):
-            print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
-            pdf_data = None
-        # Try browser-based download via publisher page
-        if not pdf_data and use_browser:
-            doi = paper.get('doi', '')
-            if doi and src == 'nature' and not doi.startswith('10.'):
-                doi = f'10.1038/{doi}'
-            if doi:
+        doi = paper.get('doi', '')
+        if doi and src == 'nature' and not doi.startswith('10.'):
+            doi = f'10.1038/{doi}'
+
+        for attempt in range(3):
+            if attempt > 0:
+                delay = 5 * attempt
+                print(f"  [cnsp] retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                time.sleep(delay)
+
+            pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+            if pdf_data and _is_pdf(pdf_data):
+                break
+            if pdf_data and not _is_pdf(pdf_data):
+                print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
+                pdf_data = None
+
+            # Try browser-based download via DOI
+            if not pdf_data and use_browser and doi:
                 print(f"  [cnsp] trying browser download via DOI: {doi}", file=sys.stderr)
                 pdf_data = _publisher_download(doi, paper.get('pmid'), config)
+                if pdf_data:
+                    break
+            else:
+                break  # no browser, no point retrying direct download
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
