@@ -1130,6 +1130,8 @@ def _add_browser_arg(p):
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)
+
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
         description='Bio Paper Search — search bioinformatics papers across multiple sources.\n'

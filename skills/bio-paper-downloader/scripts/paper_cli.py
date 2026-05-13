@@ -816,6 +816,8 @@ examples:
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)
+
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
         description='Bio Paper Downloader — download papers from search results or URLs.\n'
