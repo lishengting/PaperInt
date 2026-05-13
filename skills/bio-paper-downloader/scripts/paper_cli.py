@@ -618,7 +618,7 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
         print(f"  OK: {len(pdf_data)} bytes")
         return True
     else:
-        mark_download_failed(conn, pid, "PDF unavailable")
+        mark_download_failed(conn, pid, "PDF unavailable", dirname)
         print(f"  UNAVAILABLE (metadata saved)")
         return False
 

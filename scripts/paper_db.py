@@ -172,13 +172,20 @@ def mark_downloaded(conn: sqlite3.Connection, paper_id: str, dir_name: str,
     conn.commit()
 
 
-def mark_download_failed(conn: sqlite3.Connection, paper_id: str, error: str) -> None:
+def mark_download_failed(conn: sqlite3.Connection, paper_id: str, error: str,
+                         dir_name: str = None) -> None:
     """Mark a paper download as failed."""
     now = _now()
-    conn.execute(
-        "UPDATE papers SET status='download_failed', error_message=?, updated_at=? WHERE paper_id=?",
-        (error, now, paper_id),
-    )
+    if dir_name:
+        conn.execute(
+            "UPDATE papers SET status='download_failed', error_message=?, dir_name=?, updated_at=? WHERE paper_id=?",
+            (error, dir_name, now, paper_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE papers SET status='download_failed', error_message=?, updated_at=? WHERE paper_id=?",
+            (error, now, paper_id),
+        )
     conn.commit()
 
 
