@@ -474,6 +474,36 @@ def _download_pmc_pdf(pmc_id, config):
     return None
 
 
+def _europepmc_lookup_oa_by_doi(doi, config):
+    """Query Europe PMC by DOI to get PMCID and has_pdf status.
+
+    Returns dict with 'pmcid' and 'has_pdf' keys, or None on failure.
+    """
+    base_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+    params = urllib.parse.urlencode({
+        "query": f'DOI:"{doi}"',
+        "format": "json",
+        "pageSize": 1,
+        "resultType": "core",
+    })
+    url = f"{base_url}?{params}"
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
+            data = json.loads(r.read().decode('utf-8'))
+            results = data.get("resultList", {}).get("result", [])
+            if results:
+                result = results[0]
+                return {
+                    "pmcid": result.get("pmcid"),
+                    "has_pdf": result.get("hasPDF") == "Y",
+                    "is_open_access": result.get("isOpenAccess") == "Y",
+                }
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Paper info markdown generation
 # ---------------------------------------------------------------------------
@@ -506,7 +536,10 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
         with open(info_path, 'w', encoding='utf-8') as f:
             f.write(md_content)
         print(f"  [info] info.md generated", file=sys.stderr)
-        return record.identity.raw.get("pmc_oa")
+        oa_info = record.identity.raw.get("pmc_oa")
+        if oa_info is not None and record.identity.pmcid:
+            oa_info["pmcid"] = record.identity.pmcid
+        return oa_info
     except Exception as e:
         print(f"  [info] info.md unavailable: {e}", file=sys.stderr)
         return None
@@ -598,18 +631,37 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
         if doi and src == 'nature' and not doi.startswith('10.'):
             doi = f'10.1038/{doi}'
 
+        # Step 0: try PMC Open Access download first (fast HTTP, no browser)
+        pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
+        if pmc_has_pdf:
+            pmcid = oa_info.get('pmcid')
+            if not pmcid and doi:
+                lookup = _europepmc_lookup_oa_by_doi(doi, config)
+                if lookup and lookup.get('pmcid'):
+                    pmcid = lookup['pmcid']
+            if pmcid:
+                print(f"  [cnsp] OA paper, downloading from PMC ({pmcid})...", file=sys.stderr)
+                pdf_data = _download_pmc_pdf(pmcid, config)
+                if pdf_data:
+                    print(f"  [cnsp] downloaded via OA (PMC)", file=sys.stderr)
+                else:
+                    print(f"  [cnsp] PMC OA download failed, falling back to pipeline", file=sys.stderr)
+            else:
+                print(f"  [cnsp] has_pdf=True but no PMCID, skipping PMC download", file=sys.stderr)
+
         # Step 1: try direct PDF URL (retry 3x, with browser fallback built into _download_direct_pdf)
-        for attempt in range(3):
-            if attempt > 0:
-                delay = 5 * attempt
-                print(f"  [cnsp] direct retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-                time.sleep(delay)
-            pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
-            if pdf_data and _is_pdf(pdf_data):
-                break
-            if pdf_data and not _is_pdf(pdf_data):
-                print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
-                pdf_data = None
+        if not pdf_data:
+            for attempt in range(3):
+                if attempt > 0:
+                    delay = 5 * attempt
+                    print(f"  [cnsp] direct retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                    time.sleep(delay)
+                pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+                if pdf_data and _is_pdf(pdf_data):
+                    break
+                if pdf_data and not _is_pdf(pdf_data):
+                    print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
+                    pdf_data = None
 
         # Step 2: if direct failed, use publisher download via DOI (scans article page for real PDF link)
         if not pdf_data and doi:
