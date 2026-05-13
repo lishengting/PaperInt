@@ -224,13 +224,13 @@ tags:
 
 # --- LLM Configuration ---
 llm:
-  api_base_url: "http://localhost:8080/v1"
-  api_key_env: "LLM_API_KEY"
-  model: "qwen3-235b-a22b"
+  api_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key_env: "sk-3d3ca66a82a448da83e51da041c4e159"
+  model: "deepseek-v4-pro"
   backup_model: "qwen3-235b-a22b"
   backup_base_url: "http://localhost:8080/v1"
   temperature: 0.3
-  max_tokens: 4000
+  max_tokens: 100000
   timeout_seconds: 120
 
 # --- Interpretation System Prompts ---

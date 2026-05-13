@@ -35,27 +35,33 @@ from urllib.parse import urljoin, urlparse
 class ChromeInstance:
     """Manage a Chrome browser process with CDP enabled."""
 
-    def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None):
+    def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
+                 headless=True):
         self.chrome_bin = chrome_bin
         self.profile_dir = profile_dir or os.path.join(
             tempfile.gettempdir(), 'paper_cli_publisher_chrome')
         self.port = port or _find_free_port()
         self.process = None
+        self.headless = headless
 
     def start(self):
         os.makedirs(self.profile_dir, exist_ok=True)
         subprocess.run(['pkill', '-f', f'remote-debugging-port={self.port}'],
                        capture_output=True)
         time.sleep(1)
-        self.process = subprocess.Popen([
+        args = [
             self.chrome_bin,
             f'--remote-debugging-port={self.port}',
             f'--user-data-dir={self.profile_dir}',
             '--no-first-run', '--no-default-browser-check',
             '--no-sandbox', '--disable-gpu',
-            'about:blank',
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-           preexec_fn=os.setsid)
+        ]
+        if self.headless:
+            args.insert(1, '--headless=new')
+        args.append('about:blank')
+        self.process = subprocess.Popen(
+            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
         time.sleep(2)
 
     @property
@@ -133,37 +139,16 @@ async def _wait_for_page(page, timeout=30):
     return False
 
 
-async def download_via_publisher(doi=None, pmid=None, output_dir='.',
-                                  chrome_bin=None, timeout=60):
-    """
-    Download a paper PDF via DOI → publisher page → PDF link.
-
-    Returns dict: {success, file_path, file_size, message}
-    """
+async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
+                                       headless):
+    """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
+    mode = 'headless' if headless else 'headed'
 
-    # Resolve PMID to DOI if needed
-    if pmid and not doi:
-        doi = doi_from_pmid(pmid)
-        if not doi:
-            result['message'] = f'Could not find DOI for PMID {pmid}'
-            return result
-
-    if not doi:
-        result['message'] = 'No DOI provided'
-        return result
-
-    doi_url = f'https://doi.org/{doi}'
-    safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
-    output_path = Path(output_dir) / safe_name
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"  [publisher] DOI: {doi}", file=sys.stderr)
-    print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
-
-    chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome())
+    chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
+                            headless=headless)
 
     try:
         chrome.start()
@@ -174,13 +159,13 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
             page = await ctx.new_page()
 
             # Step 1: follow DOI to publisher page
-            print(f"  [publisher] Following DOI...", file=sys.stderr)
+            print(f"  [publisher:{mode}] Following DOI...", file=sys.stderr)
             await page.goto(doi_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             if not await _wait_for_page(page, 30):
                 result['message'] = 'Anti-bot challenge did not resolve'
                 return result
-            print(f"  [publisher] Landed on: {page.url}", file=sys.stderr)
+            print(f"  [publisher:{mode}] Landed on: {page.url}", file=sys.stderr)
 
             # Step 2: find PDF links on the article page
             pdf_links = await page.evaluate('''() => {
@@ -208,9 +193,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                     seen.add(h)
                     unique.append(l)
 
-            print(f"  [publisher] PDF links found: {len(unique)}", file=sys.stderr)
+            print(f"  [publisher:{mode}] PDF links found: {len(unique)}", file=sys.stderr)
 
-            # Prioritize: links with "download pdf" text, then shortest href
             def _score(link):
                 s = 0
                 t = link['text']
@@ -221,13 +205,12 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                     s -= 50
                 if 'reporting summary' in t:
                     s -= 50
-                s -= len(h)  # shorter is better (main article PDF)
+                s -= len(h)
                 return s
 
             best = max(unique, key=_score)
             pdf_href = best['href']
 
-            # Resolve to absolute URL
             if pdf_href.startswith('/'):
                 parsed = urlparse(page.url)
                 pdf_url = f'{parsed.scheme}://{parsed.netloc}{pdf_href}'
@@ -236,10 +219,10 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
             else:
                 pdf_url = pdf_href
 
-            print(f"  [publisher] PDF URL: {pdf_url}", file=sys.stderr)
+            print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 
             # Step 3: navigate to PDF
-            print(f"  [publisher] Downloading PDF...", file=sys.stderr)
+            print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
             await page.goto(pdf_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             await asyncio.sleep(3)
@@ -281,17 +264,67 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
             result['success'] = True
             result['file_path'] = str(output_path)
             result['file_size'] = len(pdf_bytes)
-            result['message'] = f'OK: {len(pdf_bytes)} bytes'
+            result['message'] = f'OK ({mode}): {len(pdf_bytes)} bytes'
             return result
 
     except ImportError:
         result['message'] = 'Playwright not installed'
         return result
     except Exception as e:
-        result['message'] = f'Publisher download error: {e}'
+        result['message'] = f'Publisher download error ({mode}): {e}'
         return result
     finally:
         chrome.stop()
+
+
+async def download_via_publisher(doi=None, pmid=None, output_dir='.',
+                                  chrome_bin=None, timeout=60):
+    """
+    Download a paper PDF via DOI → publisher page → PDF link.
+
+    Tries headless Chrome first (3 attempts), then falls back to headed (1 attempt).
+
+    Returns dict: {success, file_path, file_size, message}
+    """
+    # Resolve PMID to DOI if needed
+    if pmid and not doi:
+        doi = doi_from_pmid(pmid)
+        if not doi:
+            return {'success': False, 'message': f'Could not find DOI for PMID {pmid}'}
+
+    if not doi:
+        return {'success': False, 'message': 'No DOI provided'}
+
+    doi_url = f'https://doi.org/{doi}'
+    safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+    output_path = Path(output_dir) / safe_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"  [publisher] DOI: {doi}", file=sys.stderr)
+    print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
+
+    # Try headless first (3 attempts)
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [publisher] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = await _do_download_via_publisher(doi_url, output_path,
+                                                    chrome_bin, timeout,
+                                                    headless=True)
+        if result['success']:
+            return result
+        print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
+
+    # Fallback to headed
+    print(f"  [publisher] falling back to headed Chrome...", file=sys.stderr)
+    result = await _do_download_via_publisher(doi_url, output_path,
+                                                chrome_bin, timeout,
+                                                headless=False)
+    if result['success']:
+        result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+    return result
 
 
 # ---------------------------------------------------------------------------

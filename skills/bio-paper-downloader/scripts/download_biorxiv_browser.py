@@ -79,12 +79,14 @@ def extract_doi(url_or_doi):
 class ChromeInstance:
     """Manage a Chrome browser process with CDP enabled."""
 
-    def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None):
+    def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
+                 headless=True):
         self.chrome_bin = chrome_bin
         self.profile_dir = profile_dir or os.path.join(
             tempfile.gettempdir(), 'paper_cli_chrome_profile')
         self.port = port or _find_free_port()
         self.process = None
+        self.headless = headless
 
     def start(self):
         os.makedirs(self.profile_dir, exist_ok=True)
@@ -94,7 +96,7 @@ class ChromeInstance:
                        capture_output=True)
         time.sleep(1)
 
-        self.process = subprocess.Popen([
+        args = [
             self.chrome_bin,
             f'--remote-debugging-port={self.port}',
             f'--user-data-dir={self.profile_dir}',
@@ -102,9 +104,14 @@ class ChromeInstance:
             '--no-default-browser-check',
             '--no-sandbox',
             '--disable-gpu',
-            'about:blank',
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-           preexec_fn=os.setsid)
+        ]
+        if self.headless:
+            args.insert(1, '--headless=new')
+        args.append('about:blank')
+
+        self.process = subprocess.Popen(
+            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
 
         time.sleep(2)
         print(f"  [browser] Chrome PID {self.process.pid} on port {self.port}",
@@ -290,22 +297,15 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     return result
 
 
-async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60):
+async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
+                                     headless):
     """
-    Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
-
-    When given a bioRxiv/medRxiv DOI or URL: passes Cloudflare on the homepage,
-    then loads the article and PDF pages through the same browser session.
-
-    When given any other URL (generic PDF, publisher link, etc.): navigates
-    directly to the URL, lets Chrome display the PDF, then clicks the viewer's
-    download button or uses JS fetch to capture it.
-
-    Returns dict: {success, file_path, file_size, message}
+    Core download logic. Returns dict result.
     """
     from playwright.async_api import async_playwright
 
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
+    mode = 'headless' if headless else 'headed'
 
     doi, server = extract_doi(url_or_doi)
 
@@ -321,8 +321,9 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             safe_name += '.pdf'
         output_path = Path(output_dir) / safe_name
 
-        print(f"  [browser] Generic URL: {url_or_doi}", file=sys.stderr)
-        chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome())
+        print(f"  [browser:{mode}] Generic URL: {url_or_doi}", file=sys.stderr)
+        chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
+                                headless=headless)
 
         try:
             chrome.start()
@@ -349,7 +350,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             result['message'] = 'Playwright not installed'
             return result
         except Exception as e:
-            result['message'] = f'Browser download error: {e}'
+            result['message'] = f'Browser download error ({mode}): {e}'
             return result
         finally:
             chrome.stop()
@@ -361,37 +362,38 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
     output_path = Path(output_dir) / safe_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"  [browser] DOI: {doi}  server: {server}", file=sys.stderr)
-    print(f"  [browser] PDF URL: {pdf_url}", file=sys.stderr)
+    print(f"  [browser:{mode}] DOI: {doi}  server: {server}", file=sys.stderr)
+    print(f"  [browser:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 
-    chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome())
+    chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
+                            headless=headless)
 
     try:
         chrome.start()
 
         async with async_playwright() as p:
-            print(f"  [browser] Connecting to {chrome.cdp_url}", file=sys.stderr)
+            print(f"  [browser:{mode}] Connecting to {chrome.cdp_url}", file=sys.stderr)
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
 
             # Step 1 — navigate to homepage, pass Cloudflare challenge
-            print(f"  [browser] Passing Cloudflare...", file=sys.stderr)
+            print(f"  [browser:{mode}] Passing Cloudflare...", file=sys.stderr)
             page = await ctx.new_page()
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             if not await _wait_cloudflare(page, 120):
                 result['message'] = 'Cloudflare challenge did not resolve'
                 return result
-            print(f"  [browser] Cloudflare passed", file=sys.stderr)
+            print(f"  [browser:{mode}] Cloudflare passed", file=sys.stderr)
 
             # Step 2 — load article page
-            print(f"  [browser] Loading article page...", file=sys.stderr)
+            print(f"  [browser:{mode}] Loading article page...", file=sys.stderr)
             await page.goto(article_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             await asyncio.sleep(3)
 
             # Step 3 — load PDF page (may display inline or trigger download)
-            print(f"  [browser] Loading PDF page...", file=sys.stderr)
+            print(f"  [browser:{mode}] Loading PDF page...", file=sys.stderr)
 
             # Set download capture path in case Chrome downloads instead of displaying
             about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -435,7 +437,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                     return result
 
                 # Step 4 — fetch PDF bytes via in-page JS (for inline display)
-                print(f"  [browser] Fetching PDF data via JS...", file=sys.stderr)
+                print(f"  [browser:{mode}] Fetching PDF data via JS...", file=sys.stderr)
                 js_result = await pdf_page.evaluate("""
                     async () => {
                         const r = await fetch(window.location.href, {credentials: 'include'});
@@ -467,7 +469,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             result['success'] = True
             result['file_path'] = str(output_path)
             result['file_size'] = len(pdf_bytes)
-            result['message'] = f'OK: {len(pdf_bytes)} bytes'
+            result['message'] = f'OK ({mode}): {len(pdf_bytes)} bytes'
             return result
 
     except ImportError:
@@ -475,10 +477,42 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             'Playwright not installed. Run: pip install playwright && playwright install chromium')
         return result
     except Exception as e:
-        result['message'] = f'Browser download error: {e}'
+        result['message'] = f'Browser download error ({mode}): {e}'
         return result
     finally:
         chrome.stop()
+
+
+async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60):
+    """
+    Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
+
+    Tries headless Chrome first (3 attempts), then falls back to headed (1 attempt).
+
+    Returns dict: {success, file_path, file_size, message}
+    """
+    # Try headless first (3 attempts)
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [browser] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                chrome_bin, timeout,
+                                                headless=True)
+        if result['success']:
+            return result
+        print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
+
+    # Fallback to headed
+    print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
+    result = await _do_download_via_browser(url_or_doi, output_dir,
+                                            chrome_bin, timeout,
+                                            headless=False)
+    if result['success']:
+        result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+    return result
 
 
 # ---------------------------------------------------------------------------
