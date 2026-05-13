@@ -753,10 +753,13 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, use_browser=False):
+def cmd_auto(config, data_dir, use_browser=False, limit=None):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     papers = get_papers_by_status(conn, 'searched')
+
+    if limit:
+        papers = papers[:limit]
 
     if not papers:
         stats = get_stats(conn)
@@ -833,6 +836,8 @@ def main():
                    help='Directory for paper data (default: data)')
     p.add_argument('--browser', action='store_true',
                    help='Use Chrome browser for PDF downloads (bioRxiv/medRxiv/PubMed)')
+    p.add_argument('--limit', '-n', type=int, default=None,
+                   help='Max number of papers to download in auto-mode')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -874,7 +879,7 @@ def main():
         return cmd_pdf(args, config)
     elif args.cmd is None:
         # Auto-mode: download all searched papers
-        return cmd_auto(config, args.data_dir, use_browser=args.browser)
+        return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit)
     return 1
 
 
