@@ -789,10 +789,13 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, use_browser=False, limit=None):
+def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
-    papers = get_papers_by_status(conn, 'searched')
+    if retry_failed:
+        papers = get_papers_by_status(conn, 'download_failed')
+    else:
+        papers = get_papers_by_status(conn, 'searched')
 
     if limit:
         papers = papers[:limit]
@@ -874,6 +877,8 @@ def main():
                    help='Use Chrome browser for PDF downloads (bioRxiv/medRxiv/PubMed)')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to download in auto-mode')
+    p.add_argument('--retry-failed', action='store_true',
+                   help='Retry downloading papers with download_failed status')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -915,7 +920,8 @@ def main():
         return cmd_pdf(args, config)
     elif args.cmd is None:
         # Auto-mode: download all searched papers
-        return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit)
+        return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit,
+                        retry_failed=args.retry_failed)
     return 1
 
 
