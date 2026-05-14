@@ -364,6 +364,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     if d.get('metadata_json'):
         try:
             meta = json.loads(d['metadata_json'])
+            # Only apply meta values that are non-null and don't clobber existing column values
+            meta = {k: v for k, v in meta.items() if v is not None and not d.get(k)}
             d.update(meta)
         except json.JSONDecodeError:
             pass
