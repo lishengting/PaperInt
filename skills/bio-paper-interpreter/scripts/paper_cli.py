@@ -349,6 +349,8 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
     meth_base_url = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
     enh_model = af_config.get('enhancement_model', '')
     enh_provider = af_config.get('enhancement_provider', 'openrouter')
+    repair_model = af_config.get('repair_model') or meth_model
+    repair_base_url = af_config.get('repair_base_url') or meth_base_url
     try:
         result = subprocess.run(
             [sys.executable, script, pdf_path,
@@ -363,8 +365,8 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
              '--methodology-base-url', meth_base_url,
              '--enhancement-model', enh_model,
              '--enhancement-provider', enh_provider,
-             '--repair-model', meth_model,
-             '--repair-base-url', meth_base_url,
+             '--repair-model', repair_model,
+             '--repair-base-url', repair_base_url,
              *(['--enable-enhancement'] if (enable_enhancement or af_config.get('enable_enhancement')) else [])],
             timeout=10800,
             env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'},
