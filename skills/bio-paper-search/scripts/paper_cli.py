@@ -547,10 +547,12 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
         abstract = abstracts_map.get(pmid, '')
 
         pmc_id = None
+        doi = None
         for aid in info.get('articleids', []):
             if aid.get('idtype') == 'pmc':
                 pmc_id = aid.get('value')
-                break
+            elif aid.get('idtype') == 'doi':
+                doi = aid.get('value')
 
         pdf_url = ''
         if pmc_id:
@@ -562,7 +564,7 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
             info.get('pubdate', ''), '',
             pdf_url, abs_url, pmid=pmid,
             extra={'pmc_id': pmc_id, 'journal': info.get('source', ''),
-                   'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else None}))
+                   'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else doi}))
 
     return papers, total
 
