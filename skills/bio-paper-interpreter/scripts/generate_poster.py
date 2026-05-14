@@ -31,7 +31,7 @@ def _call_text_llm(prompt, api_key, model, base_url):
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {api_key}',
     })
-    resp = json.loads(urllib.request.urlopen(req, timeout=900).read())
+    resp = json.loads(urllib.request.urlopen(req, timeout=1200).read())
     return resp['choices'][0]['message']['content']
 
 
