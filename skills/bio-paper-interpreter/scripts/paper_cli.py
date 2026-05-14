@@ -16,6 +16,7 @@ Three-phase pipeline:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -53,6 +54,10 @@ def cfg(config, path, default=None):
         else:
             return default
     return cur
+
+
+def sanitize(name):
+    return re.sub(r'[/\\:*?"<>|]', '_', str(name))[:200]
 
 
 def log_phase(log_file, paper_id, phase, status, msg=''):
@@ -104,8 +109,9 @@ def _call_llm(config, system_prompt, user_prompt):
 
 def run_phase1(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
+    safe_pid = sanitize(paper_id)
 
-    metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
+    metadata_path = os.path.join(paper_path, f'{safe_pid}.metadata.json')
     metadata = {}
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -125,7 +131,7 @@ def run_phase1(paper_path, paper, config, log_file):
             'include_matches': relevance.get('include_matches', []),
             'exclude_matches': relevance.get('exclude_matches', []),
         }
-        skip_path = os.path.join(paper_path, f'{paper_id}.skipped.json')
+        skip_path = os.path.join(paper_path, f'{safe_pid}.skipped.json')
         with open(skip_path, 'w') as f:
             json.dump(skipped, f, ensure_ascii=False, indent=2)
         conn = get_conn(config)
@@ -146,10 +152,11 @@ def run_phase1(paper_path, paper, config, log_file):
 
 def run_phase2(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
+    safe_pid = sanitize(paper_id)
     title = paper.get('title', '')
 
     # Step 1: Extract PDF content (now uses pymupdf4llm with pdftotext fallback)
-    pdf_path = os.path.join(paper_path, f'{paper_id}.pdf')
+    pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', 'no PDF file — skipping per abstract-only rule')
         return False
@@ -189,7 +196,7 @@ def run_phase2(paper_path, paper, config, log_file):
     print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")
 
     # Step 2: Build prompts and call LLM for both interpret and brief
-    metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
+    metadata_path = os.path.join(paper_path, f'{safe_pid}.metadata.json')
     paper_data = dict(paper)
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -205,7 +212,7 @@ def run_phase2(paper_path, paper, config, log_file):
     try:
         interpret_content = _call_llm(config, interpret_prompt['system_prompt'],
                                       interpret_prompt['user_prompt'])
-        md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
+        md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
         with open(md_path, 'w') as f:
             f.write(interpret_content)
         interpret_ok = True
@@ -219,7 +226,7 @@ def run_phase2(paper_path, paper, config, log_file):
     try:
         brief_content = _call_llm(config, brief_prompt['system_prompt'],
                                   brief_prompt['user_prompt'])
-        brief_path = os.path.join(paper_path, f'{paper_id}.brief.md')
+        brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
         with open(brief_path, 'w') as f:
             f.write(brief_content)
         brief_ok = True
@@ -234,7 +241,7 @@ def run_phase2(paper_path, paper, config, log_file):
 
     # Save interpret.json
     if interpret_ok:
-        json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
+        json_path = os.path.join(paper_path, f'{safe_pid}.interpret.json')
         tag_data = {}
         try:
             conn = get_conn(config)
@@ -273,12 +280,13 @@ def run_phase2(paper_path, paper, config, log_file):
 
 def run_phase3(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
+    safe_pid = sanitize(paper_id)
     script = os.path.join(SKILL_DIR, 'md_to_html.py')
     all_ok = True
 
     # Read representative image path from interpret.json if available
     rep_image_abs = None
-    interpret_json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
+    interpret_json_path = os.path.join(paper_path, f'{safe_pid}.interpret.json')
     if os.path.exists(interpret_json_path):
         try:
             with open(interpret_json_path) as f:
@@ -292,11 +300,11 @@ def run_phase3(paper_path, paper, config, log_file):
             pass
 
     for name in ('interpret', 'brief'):
-        md_path = os.path.join(paper_path, f'{paper_id}.{name}.md')
+        md_path = os.path.join(paper_path, f'{safe_pid}.{name}.md')
         if not os.path.exists(md_path):
             continue
 
-        html_path = os.path.join(paper_path, f'{paper_id}.{name}.html')
+        html_path = os.path.join(paper_path, f'{safe_pid}.{name}.html')
         cmd = [sys.executable, script, '--input', md_path, '--output', html_path]
         if rep_image_abs:
             cmd.extend(['--image', rep_image_abs])
@@ -317,6 +325,7 @@ def run_phase3(paper_path, paper, config, log_file):
 def run_phase4(paper_path, paper, config, log_file):
     """Generate a poster SVG using AutoFigure."""
     paper_id = paper['paper_id']
+    safe_pid = sanitize(paper_id)
 
     af_config = cfg(config, 'autofigure', {})
     api_key_env = af_config.get('api_key_env', 'AUTOFIGURE_API_KEY')
@@ -328,7 +337,7 @@ def run_phase4(paper_path, paper, config, log_file):
         log_phase(log_file, paper_id, 4, 'SKIPPED', 'no AutoFigure API key')
         return True  # optional phase — not a failure
 
-    pdf_path = os.path.join(paper_path, f'{paper_id}.pdf')
+    pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF file')
         return False
@@ -421,7 +430,7 @@ def cmd_run(args, config):
         return 0
 
     phase_str = getattr(args, 'phase', None)
-    phases = set(phase_str.split(',')) if phase_str else {'1', '2', '3'}
+    phases = set(phase_str.split(',')) if phase_str else {'1', '2', '3', '4'}
     log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
 
     print(f"Papers to interpret: {len(papers)}")

@@ -240,10 +240,11 @@ llm:
 
 # --- AutoFigure Poster Generation (Phase 4, optional) ---
 autofigure:
-  api_key_env: "AUTOFIGURE_API_KEY"     # env var or direct value
+  #api_key_env: "AUTOFIGURE_API_KEY"     # env var or direct value
+  api_key_env: "LLM_API_KEY"     # env var or direct value
   provider: "openrouter"                # openrouter | gemini | bianxie
-  model: "google/gemini-3.1-pro-preview"
-  base_url: ""                          # override default provider URL
+  model: "qwen-image-2.0-pro"
+  base_url: " https://dashscope.aliyuncs.com/compatible-mode/v1"       # override default provider URL
   max_iterations: 5
   enable_enhancement: false
 

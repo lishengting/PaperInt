@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import os
+import re
 import shutil
 import sys
 
@@ -48,11 +49,11 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         max_iterations=config.get('max_iterations', 5),
         output_format="svg",
         enable_enhancement=config.get('enable_enhancement', False),
-        topic="paper",
     )
 
     if result.success:
-        poster_path = os.path.join(output_dir, f'{paper_id}.poster.svg')
+        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(paper_id))[:200]
+        poster_path = os.path.join(output_dir, f'{safe_pid}.poster.svg')
         if result.svg_path and os.path.exists(result.svg_path):
             if os.path.abspath(result.svg_path) != os.path.abspath(poster_path):
                 shutil.move(result.svg_path, poster_path)
