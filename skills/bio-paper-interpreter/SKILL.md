@@ -1,15 +1,18 @@
 ---
 name: bio-paper-interpreter
 description: Interpret bioinformatics papers into structured Chinese technical reports. Filter for bioinformatics relevance, match topic tags, extract PDF text, and generate LLM-powered or Claude Code direct interpretations.
-compatibility: Requires Python 3, bash, poppler-utils (pdftotext). External LLM path requires network access to an OpenAI-compatible API endpoint.
+compatibility: Requires Python 3, pymupdf4llm (PyMuPDF), bash. pdftotext (poppler-utils) is optional for fallback. External LLM path requires network access to an OpenAI-compatible API endpoint.
 metadata:
   skit:
-    version: 0.2.0
+    version: 0.3.0
     requires:
       bins:
         - python3
         - bash
-        - pdftotext
+        - pdftotext  # optional, fallback only
+      packages:
+        - pymupdf4llm
+        - PyMuPDF
     keywords:
       - bioinformatics
       - paper-interpretation
@@ -126,7 +129,7 @@ Resolve scripts from this skill's `scripts/` directory.
 |--------|---------|
 | `filter_relevance.py` | Apply bioinformatics relevance keyword filter |
 | `match_tags.py` | Regex-based tag assignment from config definitions |
-| `extract_pdf_text.sh` | Extract plain text from PDF via pdftotext |
+| `extract_pdf.py` | Extract PDF → Markdown via pymupdf4llm (primary) or pdftotext (fallback); extract embedded images, select representative figure |
 | `build_prompt.py` | Template LLM system+user prompts (Path B only) |
 | `md_to_html.py` | Convert Markdown report to styled standalone HTML |
 
@@ -134,6 +137,7 @@ Resolve scripts from this skill's `scripts/` directory.
 
 - `{paper_dir}/{paper_id}.interpret.md` — structured Markdown report (Phase 2)
 - `{paper_dir}/{paper_id}.interpret.html` — standalone styled HTML (Phase 3)
+- `{paper_dir}/images/` — extracted embedded images (if pymupdf4llm used)
 - `{paper_dir}/{paper_id}.interpret.json` — metadata + full content (Phase 2)
 - `{paper_dir}/{paper_id}.skipped.json` — skip record for non-relevant papers
 - `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)

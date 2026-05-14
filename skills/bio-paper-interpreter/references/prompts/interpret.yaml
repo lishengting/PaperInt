@@ -81,4 +81,8 @@ user_template: |-
   【PDF全文内容】
   {pdf_text}
 
+  【图表信息】
+  包含代表性图表: {has_representative_figure}
+  {representative_figure_instruction}
+
   请严格按系统提示中定义的结构化模板生成报告，每个 section 不可省略，所有表格必须填写。

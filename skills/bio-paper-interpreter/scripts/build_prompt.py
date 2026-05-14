@@ -131,8 +131,8 @@ def load_prompt(name):
     return load_config(prompt_path)
 
 
-def _build_fields(paper, pdf_text=''):
-    return {
+def _build_fields(paper, pdf_text='', extract_meta=None):
+    fields = {
         'title': paper.get('title', ''),
         'authors': paper.get('authors', ''),
         'published': paper.get('date', paper.get('published', '')),
@@ -142,19 +142,34 @@ def _build_fields(paper, pdf_text=''):
         'pdf_text': pdf_text or '',
     }
 
+    if extract_meta and extract_meta.get('representative_image'):
+        fields['has_representative_figure'] = 'true'
+        fields['representative_figure_instruction'] = (
+            '本文包含代表性图表。请在报告的 Key Findings 或 Method Overview '
+            '部分描述该图表的内容、关键数据和意义。如果正文中提到了 Figure 编号，'
+            '请在描述中引用该编号。'
+        )
+    else:
+        fields['has_representative_figure'] = 'false'
+        fields['representative_figure_instruction'] = '本文未包含图表。'
 
-def build_prompt(paper, name, pdf_text=''):
+    return fields
+
+
+def build_prompt(paper, name, pdf_text='', extract_meta=None):
     """Build prompt from a named template.
 
     Args:
         paper: dict with title, authors, abstract, etc.
         name: prompt name ('interpret' or 'brief')
         pdf_text: extracted PDF full text
+        extract_meta: optional dict with image extraction metadata
+            (representative_image, image_count, images_dir)
 
     Returns dict with keys: system_prompt, user_prompt, mode
     """
     prompt = load_prompt(name)
-    fields = _build_fields(paper, pdf_text)
+    fields = _build_fields(paper, pdf_text, extract_meta)
     return {
         'system_prompt': prompt['system'],
         'user_prompt': prompt['user_template'].format(**fields),
@@ -166,14 +181,14 @@ def build_prompt(paper, name, pdf_text=''):
 # Backward-compatible API (used by paper_cli.py and CLI)
 # ---------------------------------------------------------------------------
 
-def build_full_text_prompt(paper, config, pdf_text):
+def build_full_text_prompt(paper, config, pdf_text, extract_meta=None):
     """Build structured interpretation prompt (uses interpret.yaml)."""
-    return build_prompt(paper, 'interpret', pdf_text)
+    return build_prompt(paper, 'interpret', pdf_text, extract_meta)
 
 
-def build_brief_prompt(paper, config, pdf_text):
+def build_brief_prompt(paper, config, pdf_text, extract_meta=None):
     """Build brief/article-style prompt (uses brief.yaml)."""
-    return build_prompt(paper, 'brief', pdf_text)
+    return build_prompt(paper, 'brief', pdf_text, extract_meta)
 
 
 def build_abstract_only_prompt(paper, config):

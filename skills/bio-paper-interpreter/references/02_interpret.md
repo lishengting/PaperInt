@@ -23,16 +23,33 @@ print(get_paper_dir(conn, '{paper_id}') or '')
 
 ## Workflow
 
-### Step 1: Extract PDF Text
+### Step 1: Extract PDF Content
 
 ```bash
-bash scripts/extract_pdf_text.sh $PAPER_DIR/{paper_id}.pdf \
-  --max-chars 100000 > /tmp/{paper_id}_text.txt
+# Primary method (pymupdf4llm → Markdown + images):
+python3 scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
+  --max-chars 100000 \
+  --image-path $PAPER_DIR/images/ \
+  --json > /tmp/{paper_id}_extract.json
+
+# Output fields: markdown, images_dir, representative_image, extractor, image_count
 ```
 
 检查提取结果：
 - **> 1000 字符** → full_text 模式（深度解读）
 - **≤ 1000 字符或无 PDF** → abstract_only 模式（基于标题+摘要）
+
+#### Image Extraction
+
+使用 pymupdf4llm 时，PDF 中的嵌入图片会自动提取到 `{paper_dir}/images/`
+目录（PNG 格式）。系统自动选择最有代表性的图表（优先早期页面的较大图片）。
+
+提取器通过 `config.yaml` 中的 `download.pdf_extraction.extractor` 配置：
+- `"auto"`（默认）— 优先 pymupdf4llm，失败时回退到 pdftotext
+- `"pymupdf4llm"` — 仅使用 pymupdf4llm
+- `"pdftotext"` — 仅使用 pdftotext（无图片提取）
+
+回退到 pdftotext 或无图片的 PDF 时，`representative_image` 为 null。
 
 ### Step 2: Determine Interpretation Path
 
@@ -236,7 +253,9 @@ Phase 3 将两者转换为 HTML：
 ## Completion Check
 
 Phase 2 完成前确认：
-- [ ] PDF 文本已提取（如有 PDF）
+- [ ] PDF 内容已提取（如有 PDF）
+- [ ] 图片已提取到 `{paper_dir}/images/`（如适用）
+- [ ] 代表性图表路径已记录到 `.interpret.json`
 - [ ] 模式已确定（full_text / abstract_only）
 - [ ] 论文页面和补充材料 tab 已检查（对预印本）
 - [ ] 所有 Output 模板中的 section 已填写

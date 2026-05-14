@@ -26,8 +26,12 @@ ls $PAPER_DIR/{paper_id}.interpret.md
 ```bash
 python3 scripts/md_to_html.py \
   --input $PAPER_DIR/{paper_id}.interpret.md \
-  --output $PAPER_DIR/{paper_id}.interpret.html
+  --output $PAPER_DIR/{paper_id}.interpret.html \
+  --image $PAPER_DIR/images/fig_xxx.png   # 代表性图表（可选）
 ```
+
+`--image` 标志接受代表性图表的路径。如果提供且文件存在，图片将以 base64
+内嵌到 HTML 中（无外部依赖），显示在正文之前。
 
 脚本使用 Python `markdown` 库（版本 ≥ 3.0，系统已安装），启用以下扩展：
 - `tables` — Markdown 表格 → HTML table

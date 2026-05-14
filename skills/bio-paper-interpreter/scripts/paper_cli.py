@@ -148,32 +148,45 @@ def run_phase2(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
     title = paper.get('title', '')
 
-    # Step 1: Extract PDF text
+    # Step 1: Extract PDF content (now uses pymupdf4llm with pdftotext fallback)
     pdf_path = os.path.join(paper_path, f'{paper_id}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', 'no PDF file — skipping per abstract-only rule')
         return False
 
     max_chars = cfg(config, 'download.pdf_text_max_chars', 100000)
-    extract_script = os.path.join(SKILL_DIR, 'extract_pdf_text.sh')
+    extractor_mode = cfg(config, 'download.pdf_extraction.extractor', 'auto')
+    image_subdir = cfg(config, 'download.pdf_extraction.image_dir', 'images')
+    image_dir_full = os.path.join(paper_path, image_subdir)
+
+    extract_script = os.path.join(SKILL_DIR, 'extract_pdf.py')
     try:
         result = subprocess.run(
-            ['bash', extract_script, pdf_path, '--max-chars', str(max_chars)],
-            capture_output=True, text=True, timeout=60,
+            ['python3', extract_script, pdf_path,
+             '--max-chars', str(max_chars),
+             '--image-path', image_dir_full,
+             '--extractor', extractor_mode,
+             '--json'],
+            capture_output=True, text=True, timeout=120,
         )
-        pdf_text = result.stdout.strip()
+        extract_data = json.loads(result.stdout)
     except Exception as e:
         print(f"  PDF extract failed: {e}", file=sys.stderr)
-        log_phase(log_file, paper_id, 2, 'FAILED', f'pdftotext error: {str(e)[:100]}')
+        log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {str(e)[:100]}')
         return False
+
+    pdf_text = extract_data.get('markdown', '')
+    extractor_used = extract_data.get('extractor', 'unknown')
+    rep_image = extract_data.get('representative_image')
+    image_count = extract_data.get('image_count', 0)
 
     if len(pdf_text) < 1000:
         log_phase(log_file, paper_id, 2, 'FAILED',
-                  f'insufficient PDF text ({len(pdf_text)} chars) — skipping per abstract-only rule')
+                  f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
         return False
 
     mode = 'full_text'
-    print(f"  PDF text: {len(pdf_text)} chars, mode={mode}")
+    print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")
 
     # Step 2: Build prompts and call LLM for both interpret and brief
     metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
@@ -182,8 +195,13 @@ def run_phase2(paper_path, paper, config, log_file):
         with open(metadata_path) as f:
             paper_data.update(json.load(f))
 
+    extract_meta = {
+        'representative_image': rep_image,
+        'image_count': image_count,
+    }
+
     # Generate structured interpretation (.interpret.md)
-    interpret_prompt = build_full_text_prompt(paper_data, config, pdf_text)
+    interpret_prompt = build_full_text_prompt(paper_data, config, pdf_text, extract_meta)
     try:
         interpret_content = _call_llm(config, interpret_prompt['system_prompt'],
                                       interpret_prompt['user_prompt'])
@@ -197,7 +215,7 @@ def run_phase2(paper_path, paper, config, log_file):
         interpret_ok = False
 
     # Generate brief article (.brief.md)
-    brief_prompt = build_brief_prompt(paper_data, config, pdf_text)
+    brief_prompt = build_brief_prompt(paper_data, config, pdf_text, extract_meta)
     try:
         brief_content = _call_llm(config, brief_prompt['system_prompt'],
                                   brief_prompt['user_prompt'])
@@ -234,6 +252,9 @@ def run_phase2(paper_path, paper, config, log_file):
             'tags': tag_data.get('tag_ids', []),
             'tag_labels': tag_data.get('matched_labels', []),
             'mode': mode,
+            'extractor': extractor_used,
+            'representative_image': rep_image,
+            'image_count': image_count,
             'interpreted_at': datetime.now().isoformat(),
         }
         with open(json_path, 'w') as f:
@@ -255,17 +276,32 @@ def run_phase3(paper_path, paper, config, log_file):
     script = os.path.join(SKILL_DIR, 'md_to_html.py')
     all_ok = True
 
+    # Read representative image path from interpret.json if available
+    rep_image_abs = None
+    interpret_json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
+    if os.path.exists(interpret_json_path):
+        try:
+            with open(interpret_json_path) as f:
+                ij = json.load(f)
+                rep_image_rel = ij.get('representative_image')
+                if rep_image_rel:
+                    rep_image_abs = os.path.join(paper_path, rep_image_rel)
+                    if not os.path.exists(rep_image_abs):
+                        rep_image_abs = None
+        except Exception:
+            pass
+
     for name in ('interpret', 'brief'):
         md_path = os.path.join(paper_path, f'{paper_id}.{name}.md')
         if not os.path.exists(md_path):
             continue
 
         html_path = os.path.join(paper_path, f'{paper_id}.{name}.html')
+        cmd = ['python3', script, '--input', md_path, '--output', html_path]
+        if rep_image_abs:
+            cmd.extend(['--image', rep_image_abs])
         try:
-            result = subprocess.run(
-                ['python3', script, '--input', md_path, '--output', html_path],
-                capture_output=True, text=True, timeout=30,
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 print(f"  md_to_html error ({name}): {result.stderr}", file=sys.stderr)
                 all_ok = False

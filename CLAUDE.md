@@ -28,7 +28,7 @@ python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.o
 
 # Interpreter runs within Claude Code following reference docs (3-phase pipeline)
 # Phase 1 scripts: filter_relevance.py, match_tags.py
-# Phase 2 scripts: extract_pdf_text.sh, build_prompt.py (Path B)
+# Phase 2 scripts: extract_pdf.py, build_prompt.py (Path B)
 # Phase 3 script:  md_to_html.py
 
 # Query the database directly
@@ -69,6 +69,8 @@ data/{Title_Slug}/
   {paper_id}.interpret.json    # structured metadata (Phase 2)
   {paper_id}.interpret.html    # styled standalone HTML (Phase 3)
   {paper_id}.skipped.json      # skip record if rejected (Phase 1)
+  images/                      # extracted PDF images (if pymupdf4llm used)
+    *.png
 ```
 
 Directory names are title-derived slugs: parentheses → `-`, semicolons/whitespace → `_`.
@@ -78,7 +80,11 @@ Directory names are title-derived slugs: parentheses → `-`, semicolons/whitesp
 Three phases driven by reference docs in `skills/bio-paper-interpreter/references/`:
 
 1. **Filter** (`01_filter.md`): `filter_relevance.py` checks title+abstract against `config.yaml` keywords. `match_tags.py` assigns topic tags via regex. Rejected papers get `.skipped.json` and DB status `skipped`.
-2. **Interpret** (`02_interpret.md`): Extracts PDF text via pdftotext. Two paths — Path A (Claude Code reads directly) or Path B (external LLM via `build_prompt.py` + curl). Outputs `.interpret.md` + `.interpret.json`. DB status → `interpreted`.
+2. **Interpret** (`02_interpret.md`): Extracts PDF to Markdown via pymupdf4llm
+   (primary) or pdftotext (fallback). Extracts embedded images, selects a
+   representative figure. Two paths — Path A (Claude Code reads directly) or
+   Path B (external LLM via `build_prompt.py` + curl). Outputs `.interpret.md`
+   + `.interpret.json` + `images/`. DB status → `interpreted`.
 3. **Convert** (`03_convert.md`): `md_to_html.py` converts `.interpret.md` to standalone HTML with dark/light mode CSS.
 
 ### Multi-Source Search
@@ -100,6 +106,6 @@ bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites
 
 ### Dependencies
 
-- `python3`, `bash`, `pdftotext` (poppler-utils), `google-chrome`
-- Python: `PyYAML`, `playwright` (for browser features)
+- `python3`, `bash`, `pdftotext` (poppler-utils, optional fallback), `google-chrome`
+- Python: `PyYAML`, `pymupdf4llm`, `PyMuPDF`, `playwright` (for browser features)
 - Optional: `markdown` library (Phase 3 HTML conversion), LLM API key and endpoint (Path B interpretation)
