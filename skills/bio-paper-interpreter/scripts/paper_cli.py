@@ -162,7 +162,7 @@ def run_phase2(paper_path, paper, config, log_file):
     extract_script = os.path.join(SKILL_DIR, 'extract_pdf.py')
     try:
         result = subprocess.run(
-            ['python3', extract_script, pdf_path,
+            [sys.executable, extract_script, pdf_path,
              '--max-chars', str(max_chars),
              '--image-path', image_dir_full,
              '--extractor', extractor_mode,
@@ -297,7 +297,7 @@ def run_phase3(paper_path, paper, config, log_file):
             continue
 
         html_path = os.path.join(paper_path, f'{paper_id}.{name}.html')
-        cmd = ['python3', script, '--input', md_path, '--output', html_path]
+        cmd = [sys.executable, script, '--input', md_path, '--output', html_path]
         if rep_image_abs:
             cmd.extend(['--image', rep_image_abs])
         try:
