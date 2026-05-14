@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import random
 import signal
 import socket
 import ssl
@@ -138,7 +139,7 @@ def make_paper(source, paper_id, title, authors, abstract, date, category,
     return p
 
 
-def _urlopen_with_retry(req, config, attempts=3, backoff=2):
+def _urlopen_with_retry(req, config, attempts=4, backoff=2):
     last_err = None
     for i in range(attempts):
         try:
@@ -146,7 +147,8 @@ def _urlopen_with_retry(req, config, attempts=3, backoff=2):
         except Exception as e:
             last_err = e
             if i < attempts - 1:
-                time.sleep(backoff * (i + 1))
+                delay = backoff * (2 ** i) + random.uniform(0, backoff)
+                time.sleep(delay)
     raise last_err
 
 
