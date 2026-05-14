@@ -2,19 +2,21 @@
 """
 Build LLM system and user prompts for paper interpretation.
 
-Reads a paper JSON object from stdin, selects the appropriate system prompt
-from config based on interpretation mode, substitutes paper fields into
-the user prompt template, and outputs a JSON object with `system_prompt`
-and `user_prompt` fields.
+Reads prompt templates from references/prompts/{name}.yaml, substitutes paper
+fields into the user prompt template, and outputs a JSON object with
+`system_prompt` and `user_prompt` fields.
 
 Modes:
-  - full_text: Deep interpretation from PDF full text (2000-2500 chars).
-  - abstract_only: Interpretation from title+abstract only (1500-1800 chars).
+  - interpret: Structured technical report (Paper Understanding, Claims tables, etc.)
+  - brief:     Narrative Chinese article (2000-2500 chars, reader-friendly)
 """
 import argparse
 import json
 import os
 import sys
+
+SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
+PROMPT_DIR = os.path.join(SKILL_DIR, '..', 'references', 'prompts')
 
 
 def load_config(path):
@@ -114,6 +116,75 @@ def _is_float(s):
         return False
 
 
+# ---------------------------------------------------------------------------
+# Prompt loading
+# ---------------------------------------------------------------------------
+
+def load_prompt(name):
+    """Load a prompt template from references/prompts/{name}.yaml.
+
+    Returns dict with keys: system, user_template
+    """
+    prompt_path = os.path.join(PROMPT_DIR, f'{name}.yaml')
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(f"Prompt not found: {prompt_path}")
+    return load_config(prompt_path)
+
+
+def _build_fields(paper, pdf_text=''):
+    return {
+        'title': paper.get('title', ''),
+        'authors': paper.get('authors', ''),
+        'published': paper.get('date', paper.get('published', '')),
+        'arxiv_id': paper.get('arxiv_id', paper.get('paper_id', '')),
+        'abs_url': paper.get('abs_url', ''),
+        'abstract': paper.get('abstract', ''),
+        'pdf_text': pdf_text or '',
+    }
+
+
+def build_prompt(paper, name, pdf_text=''):
+    """Build prompt from a named template.
+
+    Args:
+        paper: dict with title, authors, abstract, etc.
+        name: prompt name ('interpret' or 'brief')
+        pdf_text: extracted PDF full text
+
+    Returns dict with keys: system_prompt, user_prompt, mode
+    """
+    prompt = load_prompt(name)
+    fields = _build_fields(paper, pdf_text)
+    return {
+        'system_prompt': prompt['system'],
+        'user_prompt': prompt['user_template'].format(**fields),
+        'mode': name,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible API (used by paper_cli.py and CLI)
+# ---------------------------------------------------------------------------
+
+def build_full_text_prompt(paper, config, pdf_text):
+    """Build structured interpretation prompt (uses interpret.yaml)."""
+    return build_prompt(paper, 'interpret', pdf_text)
+
+
+def build_brief_prompt(paper, config, pdf_text):
+    """Build brief/article-style prompt (uses brief.yaml)."""
+    return build_prompt(paper, 'brief', pdf_text)
+
+
+def build_abstract_only_prompt(paper, config):
+    """Build abstract-only prompt (falls back to interpret template without PDF)."""
+    return build_prompt(paper, 'interpret', '')
+
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+
 def get_cfg(cfg, path_str, default=None):
     parts = path_str.split('.')
     current = cfg
@@ -125,106 +196,17 @@ def get_cfg(cfg, path_str, default=None):
     return current
 
 
-FULL_TEXT_USER_TEMPLATE = (
-    "请深度解读以下生物信息学论文（基于PDF全文）：\n\n"
-    "【论文元数据】\n"
-    "标题: {title}\n"
-    "作者: {authors}\n"
-    "发表日期: {published}\n"
-    "arXiv ID: {arxiv_id}\n"
-    "原文链接: {abs_url}\n\n"
-    "【论文摘要】\n"
-    "{abstract}\n\n"
-    "【PDF全文内容（前15000字符）】\n"
-    "{pdf_text}\n\n"
-    "请基于以上信息生成一篇深度解读文章，要求：\n"
-    "1. 深入分析论文的核心方法和技术创新\n"
-    "2. 解释实验设计和关键结果\n"
-    "3. 评估研究的贡献和局限性\n"
-    "4. 讨论对实际应用的指导意义\n"
-    "5. 提供精炼的总结（3-5条bullet points）\n\n"
-    "文章长度2000-2500字，要求专业、深入、有洞察力。"
-)
-
-ABSTRACT_ONLY_USER_TEMPLATE = (
-    "请解读以下预印本论文（基于标题和摘要）：\n\n"
-    "【论文标题】\n"
-    "{title}\n\n"
-    "【作者】\n"
-    "{authors}\n\n"
-    "【发表日期】\n"
-    "{published}\n\n"
-    "【DOI】\n"
-    "{doi}\n\n"
-    "【分类】\n"
-    "{category}\n\n"
-    "【摘要】\n"
-    "{abstract}\n\n"
-    "请生成一篇中文解读文章。要求：\n"
-    "1. 标题突出创新点\n"
-    "2. 解释研究背景和动机\n"
-    "3. 用通俗语言解释核心方法（基于摘要推断）\n"
-    "4. 总结主要发现和意义\n"
-    "5. 精炼总结（3-5条bullet points）\n"
-    "6. 明确标注哪些是摘要明确提到的，哪些是合理推断\n\n"
-    "文章长度1200-1500字。"
-)
-
-
-def build_full_text_prompt(paper, config, pdf_text):
-    """Build prompt for full-text PDF interpretation."""
-    system_prompt = get_cfg(config, 'system_prompts.full_text', '')
-
-    fields = {
-        'title': paper.get('title', ''),
-        'authors': paper.get('authors', ''),
-        'published': paper.get('date', paper.get('published', '')),
-        'arxiv_id': paper.get('arxiv_id', paper.get('paper_id', '')),
-        'abs_url': paper.get('abs_url', ''),
-        'abstract': paper.get('abstract', ''),
-        'pdf_text': pdf_text or '',
-    }
-
-    user_prompt = FULL_TEXT_USER_TEMPLATE.format(**fields)
-
-    return {
-        'system_prompt': system_prompt,
-        'user_prompt': user_prompt,
-        'mode': 'full_text',
-    }
-
-
-def build_abstract_only_prompt(paper, config):
-    """Build prompt for abstract-only interpretation."""
-    system_prompt = get_cfg(config, 'system_prompts.abstract_only', '')
-
-    fields = {
-        'title': paper.get('title', ''),
-        'authors': paper.get('authors', ''),
-        'published': paper.get('date', paper.get('published', '')),
-        'doi': paper.get('doi', ''),
-        'category': paper.get('category', ''),
-        'abstract': paper.get('abstract', ''),
-    }
-
-    user_prompt = ABSTRACT_ONLY_USER_TEMPLATE.format(**fields)
-
-    return {
-        'system_prompt': system_prompt,
-        'user_prompt': user_prompt,
-        'mode': 'abstract_only',
-    }
-
+# ---------------------------------------------------------------------------
+# CLI (kept for backward compatibility)
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description='Build LLM prompts for paper interpretation')
-    parser.add_argument('--config', required=True, help='Path to config file')
-    parser.add_argument('--mode', choices=['full_text', 'abstract_only'], required=True,
+    parser.add_argument('--config', help='Path to config file (ignored for prompts, kept for compat)')
+    parser.add_argument('--mode', choices=['full_text', 'abstract_only', 'brief'], default='full_text',
                         help='Interpretation mode')
     parser.add_argument('--pdf-text-file', help='File containing extracted PDF text')
     args = parser.parse_args()
-
-    config = load_config(args.config)
 
     input_data = json.loads(sys.stdin.read())
     paper = input_data if isinstance(input_data, dict) else input_data[0]
@@ -234,13 +216,16 @@ def main():
         with open(args.pdf_text_file, 'r', encoding='utf-8') as f:
             pdf_text = f.read()
 
-    if args.mode == 'full_text':
-        result = build_full_text_prompt(paper, config, pdf_text)
+    if args.mode == 'brief':
+        # Brief mode doesn't need config for prompts, but we still accept --config
+        result = build_brief_prompt(paper, {}, pdf_text)
+    elif args.mode == 'full_text':
+        result = build_full_text_prompt(paper, {}, pdf_text)
     else:
-        result = build_abstract_only_prompt(paper, config)
+        result = build_abstract_only_prompt(paper, {})
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    print(f"Built {args.mode} prompt: system={len(result['system_prompt'])}chars, user={len(result['user_prompt'])}chars",
+    print(f"Built {result['mode']} prompt: system={len(result['system_prompt'])}chars, user={len(result['user_prompt'])}chars",
           file=sys.stderr)
 
 

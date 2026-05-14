@@ -41,7 +41,7 @@ from paper_db import mark_interpreted, mark_skipped, update_relevance, update_ta
 
 from filter_relevance import check_relevance
 from match_tags import match_tags
-from build_prompt import build_full_text_prompt, build_abstract_only_prompt, load_config
+from build_prompt import build_full_text_prompt, build_brief_prompt, build_abstract_only_prompt, load_config
 
 
 def cfg(config, path, default=None):
@@ -63,6 +63,43 @@ def log_phase(log_file, paper_id, phase, status, msg=''):
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     with open(log_file, 'a') as f:
         f.write(line + '\n')
+
+
+def _call_llm(config, system_prompt, user_prompt):
+    """Call the configured LLM and return the response text."""
+    api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
+    model = cfg(config, 'llm.model', 'qwen3-235b-a22b')
+    temperature = cfg(config, 'llm.temperature', 0.3)
+    max_tokens = cfg(config, 'llm.max_tokens', 4000)
+    timeout = cfg(config, 'llm.timeout_seconds', 120)
+    api_key_cfg = cfg(config, 'llm.api_key_env', 'LLM_API_KEY')
+    api_key = os.environ.get(api_key_cfg, '')
+    if not api_key:
+        if api_key_cfg and ' ' not in api_key_cfg and len(api_key_cfg) > 20:
+            api_key = api_key_cfg
+        else:
+            print(f"  Warning: LLM API key not found (checked env var ${api_key_cfg})", file=sys.stderr)
+
+    body = json.dumps({
+        'model': model,
+        'temperature': temperature,
+        'max_tokens': max_tokens,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ],
+    }).encode('utf-8')
+
+    url = f"{api_base.rstrip('/')}/chat/completions"
+    req = urllib.request.Request(url, data=body, headers={
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    })
+
+    print(f"  Calling LLM: {model} ({url})...")
+    resp = urllib.request.urlopen(req, timeout=timeout)
+    resp_data = json.loads(resp.read().decode('utf-8'))
+    return resp_data['choices'][0]['message']['content']
 
 
 def run_phase1(paper_path, paper, config, log_file):
@@ -138,61 +175,43 @@ def run_phase2(paper_path, paper, config, log_file):
     mode = 'full_text'
     print(f"  PDF text: {len(pdf_text)} chars, mode={mode}")
 
-    # Step 2: Build prompt
+    # Step 2: Build prompts and call LLM for both interpret and brief
     metadata_path = os.path.join(paper_path, f'{paper_id}.metadata.json')
     paper_data = dict(paper)
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
             paper_data.update(json.load(f))
 
+    # Generate structured interpretation (.interpret.md)
     prompt = build_full_text_prompt(paper_data, config, pdf_text)
-
-    # Step 3: Call LLM
-    api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
-    model = cfg(config, 'llm.model', 'qwen3-235b-a22b')
-    temperature = cfg(config, 'llm.temperature', 0.3)
-    max_tokens = cfg(config, 'llm.max_tokens', 4000)
-    timeout = cfg(config, 'llm.timeout_seconds', 120)
-    api_key_cfg = cfg(config, 'llm.api_key_env', 'LLM_API_KEY')
-    # Support both env var name and direct key value in config
-    api_key = os.environ.get(api_key_cfg, '')
-    if not api_key:
-        # If not found as env var name, treat the config value itself as the key
-        if api_key_cfg and ' ' not in api_key_cfg and len(api_key_cfg) > 20:
-            api_key = api_key_cfg
-        else:
-            print(f"  Warning: LLM API key not found (checked env var ${api_key_cfg})", file=sys.stderr)
-
-    body = json.dumps({
-        'model': model,
-        'temperature': temperature,
-        'max_tokens': max_tokens,
-        'messages': [
-            {'role': 'system', 'content': prompt['system_prompt']},
-            {'role': 'user', 'content': prompt['user_prompt']},
-        ],
-    }).encode('utf-8')
-
-    url = f"{api_base.rstrip('/')}/chat/completions"
-    req = urllib.request.Request(url, data=body, headers={
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}',
-    })
-
-    print(f"  Calling LLM: {model} ({url})...")
+    print(f"  Calling LLM: {cfg(config, 'llm.model', '?')} (interpret)...")
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        resp_data = json.loads(resp.read().decode('utf-8'))
-        content = resp_data['choices'][0]['message']['content']
+        interpret_content = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
     except Exception as e:
-        print(f"  LLM call failed: {e}", file=sys.stderr)
-        log_phase(log_file, paper_id, 2, 'FAILED', f'LLM error: {str(e)[:100]}')
+        print(f"  LLM call failed (interpret): {e}", file=sys.stderr)
+        log_phase(log_file, paper_id, 2, 'FAILED', f'LLM error (interpret): {str(e)[:100]}')
         return False
 
-    # Step 4: Save outputs
     md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
     with open(md_path, 'w') as f:
-        f.write(content)
+        f.write(interpret_content)
+
+    # Generate brief article (.brief.md)
+    brief_prompt = build_brief_prompt(paper_data, config, pdf_text)
+    print(f"  Calling LLM: {cfg(config, 'llm.model', '?')} (brief)...")
+    try:
+        brief_content = _call_llm(config, brief_prompt['system_prompt'], brief_prompt['user_prompt'])
+    except Exception as e:
+        print(f"  LLM call failed (brief): {e}", file=sys.stderr)
+        log_phase(log_file, paper_id, 2, 'WARNING', f'brief LLM error: {str(e)[:100]}')
+        brief_content = None
+
+    if brief_content:
+        brief_path = os.path.join(paper_path, f'{paper_id}.brief.md')
+        with open(brief_path, 'w') as f:
+            f.write(brief_content)
+
+    # Save interpret.json
 
     json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
     tag_data = {}
@@ -208,7 +227,7 @@ def run_phase2(paper_path, paper, config, log_file):
         'paper_id': paper_id,
         'doi': paper.get('doi', ''),
         'title': title,
-        'content': content,
+        'content': interpret_content,
         'tags': tag_data.get('tag_ids', []),
         'tag_labels': tag_data.get('matched_labels', []),
         'mode': mode,
@@ -225,30 +244,30 @@ def run_phase2(paper_path, paper, config, log_file):
 
 def run_phase3(paper_path, paper, config, log_file):
     paper_id = paper['paper_id']
-
-    md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
-    if not os.path.exists(md_path):
-        log_phase(log_file, paper_id, 3, 'FAILED', 'no .interpret.md file')
-        return False
-
-    html_path = os.path.join(paper_path, f'{paper_id}.interpret.html')
     script = os.path.join(SKILL_DIR, 'md_to_html.py')
+    all_ok = True
 
-    try:
-        result = subprocess.run(
-            ['python3', script, '--input', md_path, '--output', html_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            print(f"  md_to_html error: {result.stderr}", file=sys.stderr)
-            log_phase(log_file, paper_id, 3, 'FAILED', result.stderr.strip()[:100])
-            return False
-    except Exception as e:
-        log_phase(log_file, paper_id, 3, 'FAILED', str(e)[:100])
-        return False
+    for name in ('interpret', 'brief'):
+        md_path = os.path.join(paper_path, f'{paper_id}.{name}.md')
+        if not os.path.exists(md_path):
+            continue
 
-    log_phase(log_file, paper_id, 3, 'COMPLETED', f'HTML saved: {html_path}')
-    return True
+        html_path = os.path.join(paper_path, f'{paper_id}.{name}.html')
+        try:
+            result = subprocess.run(
+                ['python3', script, '--input', md_path, '--output', html_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                print(f"  md_to_html error ({name}): {result.stderr}", file=sys.stderr)
+                all_ok = False
+        except Exception as e:
+            log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {str(e)[:100]}')
+            all_ok = False
+
+    if all_ok:
+        log_phase(log_file, paper_id, 3, 'COMPLETED', f'HTML saved: {paper_path}')
+    return all_ok
 
 
 def process_paper(paper, config, phases, log_file):

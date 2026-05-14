@@ -43,9 +43,11 @@ bash scripts/extract_pdf_text.sh $PAPER_DIR/{paper_id}.pdf \
 
 ### Step 3: Read System Prompt
 
-从 `config.yaml` 读取对应的 system prompt：
-- full_text: `system_prompts.full_text`
-- abstract_only: `system_prompts.abstract_only`
+从 `references/prompts/` 目录读取对应的 prompt 模板：
+- 结构化解读: `references/prompts/interpret.yaml` — 系统提示词 + 用户提示词模板
+- 文章体简报: `references/prompts/brief.yaml` — 系统提示词 + 用户提示词模板
+
+**不再从 `config.yaml` 读取 system_prompts**。所有 prompt 模板统一放在技能目录内，`build_prompt.py` 自动从 YAML 加载。
 
 ### Step 4: Collect Paper Resources
 
@@ -131,7 +133,18 @@ cat > $PAPER_DIR/{paper_id}.interpret.json << 'EOF'
 EOF
 ```
 
-## Output: {paper_dir}/{paper_id}.interpret.md
+## Output
+
+Phase 2 生成两个输出文件：
+
+1. **`{paper_dir}/{paper_id}.interpret.md`** — 结构化技术报告（Paper Understanding、Paper Claims 表格、资源清单等）
+2. **`{paper_dir}/{paper_id}.brief.md`** — 文章体中文简报（研究背景、核心方法、主要发现、讨论与意义、实践启示）
+
+Phase 3 将两者转换为 HTML：
+- `{paper_id}.interpret.html`
+- `{paper_id}.brief.html`
+
+### {paper_dir}/{paper_id}.interpret.md
 
 ```markdown
 # Paper: [论文英文标题]
