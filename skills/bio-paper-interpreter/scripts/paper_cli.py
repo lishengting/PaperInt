@@ -314,6 +314,50 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
+def run_phase4(paper_path, paper, config, log_file):
+    """Generate a poster SVG using AutoFigure."""
+    paper_id = paper['paper_id']
+
+    af_config = cfg(config, 'autofigure', {})
+    api_key_env = af_config.get('api_key_env', 'AUTOFIGURE_API_KEY')
+    api_key = os.environ.get(api_key_env, '')
+    if not api_key and len(api_key_env) > 20:
+        api_key = api_key_env  # direct value in config
+
+    if not api_key:
+        log_phase(log_file, paper_id, 4, 'SKIPPED', 'no AutoFigure API key')
+        return True  # optional phase — not a failure
+
+    pdf_path = os.path.join(paper_path, f'{paper_id}.pdf')
+    if not os.path.exists(pdf_path):
+        log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF file')
+        return False
+
+    script = os.path.join(SKILL_DIR, 'generate_poster.py')
+    try:
+        result = subprocess.run(
+            [sys.executable, script, pdf_path,
+             '--output-dir', paper_path,
+             '--paper-id', paper_id,
+             '--provider', af_config.get('provider', 'openrouter'),
+             '--model', af_config.get('model', 'google/gemini-3.1-pro-preview'),
+             '--max-iterations', str(af_config.get('max_iterations', 5)),
+             '--api-key', api_key,
+             *(['--base-url', af_config['base_url']] if af_config.get('base_url') else []),
+             *(['--enable-enhancement'] if af_config.get('enable_enhancement') else [])],
+            capture_output=True, text=True, timeout=600,
+            env={**os.environ, api_key_env: api_key},
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or 'AutoFigure returned non-zero')
+    except Exception as e:
+        log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
+        return False
+
+    log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster saved')
+    return True
+
+
 def process_paper(paper, config, phases, log_file):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
@@ -328,7 +372,7 @@ def process_paper(paper, config, phases, log_file):
     print(f"Title: {(paper.get('title', '') or '')[:80]}")
     print(f"Dir: {paper_dir}")
 
-    for phase in [1, 2, 3]:
+    for phase in [1, 2, 3, 4]:
         if str(phase) not in phases:
             continue
 
@@ -341,6 +385,8 @@ def process_paper(paper, config, phases, log_file):
             ok = run_phase2(paper_path, paper, config, log_file)
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
+        elif phase == 4:
+            ok = run_phase4(paper_path, paper, config, log_file)
 
         if ok:
             print('OK')
@@ -414,7 +460,7 @@ def main():
                            formatter_class=argparse.RawDescriptionHelpFormatter)
     run_p.add_argument('paper_id', help='Paper ID to interpret')
     run_p.add_argument('--phase', default=None,
-                       help='Phases to run (1,2,3 or 1,2). Default: all three.')
+                       help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
 
     args = p.parse_args()
 

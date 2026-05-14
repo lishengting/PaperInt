@@ -30,6 +30,7 @@ python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.o
 # Phase 1 scripts: filter_relevance.py, match_tags.py
 # Phase 2 scripts: extract_pdf.py, build_prompt.py (Path B)
 # Phase 3 script:  md_to_html.py
+# Phase 4 script:  generate_poster.py (AutoFigure poster generation)
 
 # Query the database directly
 python3 -c "
@@ -71,6 +72,7 @@ data/{Title_Slug}/
   {paper_id}.skipped.json      # skip record if rejected (Phase 1)
   images/                      # extracted PDF images (if pymupdf4llm used)
     *.png
+  {paper_id}.poster.svg        # poster diagram (Phase 4, optional)
 ```
 
 Directory names are title-derived slugs: parentheses → `-`, semicolons/whitespace → `_`.
@@ -86,6 +88,7 @@ Three phases driven by reference docs in `skills/bio-paper-interpreter/reference
    Path B (external LLM via `build_prompt.py` + curl). Outputs `.interpret.md`
    + `.interpret.json` + `images/`. DB status → `interpreted`.
 3. **Convert** (`03_convert.md`): `md_to_html.py` converts `.interpret.md` to standalone HTML with dark/light mode CSS.
+4. **Poster** (`04_poster.md`): `generate_poster.py` uses AutoFigure LLM pipeline to create a poster SVG from the PDF. Optional — skipped if `AUTOFIGURE_API_KEY` is not set.
 
 ### Multi-Source Search
 
@@ -108,4 +111,4 @@ bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites
 
 - `python3`, `bash`, `pdftotext` (poppler-utils, optional fallback), `google-chrome`
 - Python: `PyYAML`, `pymupdf4llm`, `PyMuPDF`, `playwright` (for browser features)
-- Optional: `markdown` library (Phase 3 HTML conversion), LLM API key and endpoint (Path B interpretation)
+- Optional: `markdown` library (Phase 3 HTML conversion), `AutoFigure` (Phase 4 poster generation), LLM API key and endpoint (Path B interpretation)

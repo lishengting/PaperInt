@@ -4,7 +4,7 @@ description: Interpret bioinformatics papers into structured Chinese technical r
 compatibility: Requires Python 3, pymupdf4llm (PyMuPDF), bash. pdftotext (poppler-utils) is optional for fallback. External LLM path requires network access to an OpenAI-compatible API endpoint.
 metadata:
   skit:
-    version: 0.3.0
+    version: 0.4.0
     requires:
       bins:
         - python3
@@ -132,12 +132,14 @@ Resolve scripts from this skill's `scripts/` directory.
 | `extract_pdf.py` | Extract PDF → Markdown via pymupdf4llm (primary) or pdftotext (fallback); extract embedded images, select representative figure |
 | `build_prompt.py` | Template LLM system+user prompts (Path B only) |
 | `md_to_html.py` | Convert Markdown report to styled standalone HTML |
+| `generate_poster.py` | Generate poster SVG from PDF via AutoFigure LLM pipeline |
 
 ## Output
 
 - `{paper_dir}/{paper_id}.interpret.md` — structured Markdown report (Phase 2)
 - `{paper_dir}/{paper_id}.interpret.html` — standalone styled HTML (Phase 3)
 - `{paper_dir}/images/` — extracted embedded images (if pymupdf4llm used)
+- `{paper_dir}/{paper_id}.poster.svg` — poster diagram (Phase 4, if AutoFigure configured)
 - `{paper_dir}/{paper_id}.interpret.json` — metadata + full content (Phase 2)
 - `{paper_dir}/{paper_id}.skipped.json` — skip record for non-relevant papers
 - `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)

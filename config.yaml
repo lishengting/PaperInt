@@ -238,6 +238,15 @@ llm:
   max_tokens: 100000
   timeout_seconds: 600
 
+# --- AutoFigure Poster Generation (Phase 4, optional) ---
+autofigure:
+  api_key_env: "AUTOFIGURE_API_KEY"     # env var or direct value
+  provider: "openrouter"                # openrouter | gemini | bianxie
+  model: "google/gemini-3.1-pro-preview"
+  base_url: ""                          # override default provider URL
+  max_iterations: 5
+  enable_enhancement: false
+
 # --- Database ---
 db:
   path: "data/papers.db"
