@@ -113,7 +113,7 @@ You are a professional SVG code debugging expert. The following SVG code has an 
 - Avoid additional namespace declarations like xmlns:xlink or xmlns:xml
 - Output format must be strictly: <svg>...</svg>
 """
-        for attempt in range(2):
+        for attempt in range(3):
             print(f"  [text-repair] Attempt {attempt + 1}/2 with {repair_model}...")
             try:
                 repaired = _call_text_llm(prompt, api_key, repair_model, repair_base_url)
