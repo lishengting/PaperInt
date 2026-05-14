@@ -85,8 +85,8 @@ def cmd_stats(args, config):
         'SELECT MIN(search_date) as mn, MAX(search_date) as mx FROM papers WHERE search_date IS NOT NULL'
     ).fetchone()
     if row and row['mn']:
-        mn = row['mn'][:10] if len(row['mn']) > 10 else row['mn']
-        mx = row['mx'][:10] if len(row['mx']) > 10 else row['mx']
+        mn = row['mn'][:19] if len(row['mn']) > 19 else row['mn']
+        mx = row['mx'][:19] if len(row['mx']) > 19 else row['mx']
         print(f"Date range: {mn} — {mx}")
 
     # Recent counts
@@ -140,7 +140,7 @@ def cmd_list(args, config):
     id_w = 36
     src_w = 8
     st_w = 17
-    date_w = 10
+    date_w = 19
 
     print(f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'Status':<{st_w}} {'Date':<{date_w}}")
     print(f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * st_w} {'─' * date_w}")
