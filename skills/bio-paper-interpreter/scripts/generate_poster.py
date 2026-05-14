@@ -15,24 +15,59 @@ import os
 import re
 import shutil
 import sys
+import time
 import urllib.request
 
 
 def _call_text_llm(prompt, api_key, model, base_url):
-    """Call a text-only LLM via OpenAI-compatible API. Returns response text."""
+    """Call a text-only LLM via OpenAI-compatible API with streaming progress."""
     body = json.dumps({
         'model': model,
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': 0.1,
         'max_tokens': 32000,
+        'stream': True,
+        'thinking': {'type': 'disabled'},
     }).encode('utf-8')
     url = f"{base_url.rstrip('/')}/chat/completions"
     req = urllib.request.Request(url, data=body, headers={
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {api_key}',
     })
-    resp = json.loads(urllib.request.urlopen(req, timeout=1200).read())
-    return resp['choices'][0]['message']['content']
+    resp = urllib.request.urlopen(req, timeout=1200)
+
+    chunks = []
+    char_count = 0
+    t_start = time.time()
+    last_report = t_start
+    for line in resp:
+        line_str = line.decode('utf-8').strip()
+        if not line_str.startswith('data: '):
+            continue
+        data_str = line_str[6:]
+        if data_str == '[DONE]':
+            break
+        try:
+            data = json.loads(data_str)
+            delta = data.get('choices', [{}])[0].get('delta', {})
+            content = delta.get('content', '')
+            if content:
+                chunks.append(content)
+                char_count += len(content)
+                now = time.time()
+                if now - last_report >= 3:
+                    elapsed = now - t_start
+                    print(f'  [stream] {len(chunks)} chunks, {char_count} chars, '
+                          f'{char_count/elapsed:.0f} chars/s, {elapsed:.0f}s elapsed')
+                    last_report = now
+        except json.JSONDecodeError:
+            pass
+
+    elapsed = time.time() - t_start
+    full_text = ''.join(chunks)
+    print(f'  [stream] done: {len(chunks)} chunks, {char_count} chars in {elapsed:.1f}s '
+          f'({char_count/elapsed:.0f} chars/s)')
+    return full_text
 
 
 def _patch_svg_repair(api_key, repair_model, repair_base_url):
