@@ -366,7 +366,7 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
              '--repair-model', meth_model,
              '--repair-base-url', meth_base_url,
              *(['--enable-enhancement'] if (enable_enhancement or af_config.get('enable_enhancement')) else [])],
-            timeout=1800,
+            timeout=3600,
             env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'},
         )
         if result.returncode != 0:
