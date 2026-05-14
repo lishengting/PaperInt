@@ -4,3 +4,6 @@ data/
 # Python cache
 __pycache__/
 *.pyc
+
+# Third-party tools
+tools/
