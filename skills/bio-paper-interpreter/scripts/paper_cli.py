@@ -183,62 +183,70 @@ def run_phase2(paper_path, paper, config, log_file):
             paper_data.update(json.load(f))
 
     # Generate structured interpretation (.interpret.md)
-    prompt = build_full_text_prompt(paper_data, config, pdf_text)
-    print(f"  Calling LLM: {cfg(config, 'llm.model', '?')} (interpret)...")
+    interpret_prompt = build_full_text_prompt(paper_data, config, pdf_text)
     try:
-        interpret_content = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+        interpret_content = _call_llm(config, interpret_prompt['system_prompt'],
+                                      interpret_prompt['user_prompt'])
+        md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
+        with open(md_path, 'w') as f:
+            f.write(interpret_content)
+        interpret_ok = True
     except Exception as e:
         print(f"  LLM call failed (interpret): {e}", file=sys.stderr)
-        log_phase(log_file, paper_id, 2, 'FAILED', f'LLM error (interpret): {str(e)[:100]}')
-        return False
-
-    md_path = os.path.join(paper_path, f'{paper_id}.interpret.md')
-    with open(md_path, 'w') as f:
-        f.write(interpret_content)
+        interpret_content = None
+        interpret_ok = False
 
     # Generate brief article (.brief.md)
     brief_prompt = build_brief_prompt(paper_data, config, pdf_text)
-    print(f"  Calling LLM: {cfg(config, 'llm.model', '?')} (brief)...")
     try:
-        brief_content = _call_llm(config, brief_prompt['system_prompt'], brief_prompt['user_prompt'])
-    except Exception as e:
-        print(f"  LLM call failed (brief): {e}", file=sys.stderr)
-        log_phase(log_file, paper_id, 2, 'WARNING', f'brief LLM error: {str(e)[:100]}')
-        brief_content = None
-
-    if brief_content:
+        brief_content = _call_llm(config, brief_prompt['system_prompt'],
+                                  brief_prompt['user_prompt'])
         brief_path = os.path.join(paper_path, f'{paper_id}.brief.md')
         with open(brief_path, 'w') as f:
             f.write(brief_content)
+        brief_ok = True
+    except Exception as e:
+        print(f"  LLM call failed (brief): {e}", file=sys.stderr)
+        brief_content = None
+        brief_ok = False
+
+    if not interpret_ok and not brief_ok:
+        log_phase(log_file, paper_id, 2, 'FAILED', 'both interpret and brief LLM calls failed')
+        return False
 
     # Save interpret.json
+    if interpret_ok:
+        json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
+        tag_data = {}
+        try:
+            conn = get_conn(config)
+            row = conn.execute("SELECT matched_tags FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+            if row and row[0]:
+                tag_data = json.loads(row[0])
+        except Exception:
+            pass
 
-    json_path = os.path.join(paper_path, f'{paper_id}.interpret.json')
-    tag_data = {}
-    try:
-        conn = get_conn(config)
-        row = conn.execute("SELECT matched_tags FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
-        if row and row[0]:
-            tag_data = json.loads(row[0])
-    except Exception:
-        pass
-
-    interpret_json = {
-        'paper_id': paper_id,
-        'doi': paper.get('doi', ''),
-        'title': title,
-        'content': interpret_content,
-        'tags': tag_data.get('tag_ids', []),
-        'tag_labels': tag_data.get('matched_labels', []),
-        'mode': mode,
-        'interpreted_at': datetime.now().isoformat(),
-    }
-    with open(json_path, 'w') as f:
-        json.dump(interpret_json, f, ensure_ascii=False, indent=2)
+        interpret_json = {
+            'paper_id': paper_id,
+            'doi': paper.get('doi', ''),
+            'title': title,
+            'content': interpret_content,
+            'tags': tag_data.get('tag_ids', []),
+            'tag_labels': tag_data.get('matched_labels', []),
+            'mode': mode,
+            'interpreted_at': datetime.now().isoformat(),
+        }
+        with open(json_path, 'w') as f:
+            json.dump(interpret_json, f, ensure_ascii=False, indent=2)
 
     conn = get_conn(config)
     mark_interpreted(conn, paper_id)
-    log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}, {len(tag_data.get("tag_ids", []))} tags')
+    extra = []
+    if not interpret_ok:
+        extra.append('interpret failed')
+    if not brief_ok:
+        extra.append('brief failed')
+    log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}' + (f' ({", ".join(extra)})' if extra else ''))
     return True
 
 

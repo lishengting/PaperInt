@@ -231,7 +231,7 @@ llm:
   backup_base_url: "http://localhost:8080/v1"
   temperature: 0.3
   max_tokens: 100000
-  timeout_seconds: 120
+  timeout_seconds: 300
 
 # --- Database ---
 db:
