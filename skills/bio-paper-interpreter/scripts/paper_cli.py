@@ -322,7 +322,7 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
-def run_phase4(paper_path, paper, config, log_file):
+def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
     """Generate a poster SVG using AutoFigure."""
     paper_id = paper['paper_id']
     safe_pid = sanitize(paper_id)
@@ -363,12 +363,18 @@ def run_phase4(paper_path, paper, config, log_file):
              '--methodology-base-url', meth_base_url,
              '--enhancement-model', enh_model,
              '--enhancement-provider', enh_provider,
-             *(['--enable-enhancement'] if af_config.get('enable_enhancement') else [])],
-            capture_output=True, text=True, timeout=600,
-            env={**os.environ, api_key_env: api_key},
+             '--repair-model', meth_model,
+             '--repair-base-url', meth_base_url,
+             *(['--enable-enhancement'] if (enable_enhancement or af_config.get('enable_enhancement')) else [])],
+            timeout=1800,
+            env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'},
         )
         if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or 'AutoFigure returned non-zero')
+            log_phase(log_file, paper_id, 4, 'FAILED', f'exit code {result.returncode}')
+            return False
+    except subprocess.TimeoutExpired:
+        log_phase(log_file, paper_id, 4, 'FAILED', 'timeout after 1800s')
+        return False
     except Exception as e:
         log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
         return False
@@ -377,7 +383,7 @@ def run_phase4(paper_path, paper, config, log_file):
     return True
 
 
-def process_paper(paper, config, phases, log_file):
+def process_paper(paper, config, phases, log_file, enable_enhancement=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -405,7 +411,7 @@ def process_paper(paper, config, phases, log_file):
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file)
+            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement)
 
         if ok:
             print('OK')
@@ -443,9 +449,10 @@ def cmd_run(args, config):
     print(f"Papers to interpret: {len(papers)}")
     print(f"Phases: {sorted(phases)}")
 
+    poster_enabled = getattr(args, 'poster', False)
     for i, paper in enumerate(papers):
         print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file)
+        process_paper(paper, config, phases, log_file, poster_enabled)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -477,6 +484,8 @@ def main():
     run_p.add_argument('paper_id', help='Paper ID to interpret')
     run_p.add_argument('--phase', default=None,
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
+    run_p.add_argument('--poster', action='store_true',
+                       help='Enable AutoFigure enhancement for Phase 4')
 
     args = p.parse_args()
 

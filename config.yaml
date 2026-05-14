@@ -249,9 +249,10 @@ autofigure:
   #   1. methodology_model — text LLM, extracts methodology from paper text
   #   2. generation_model  — vision LLM, generates SVG from text + reference images
   #   3. enhancement_model — image generation, beautifies final PNG (optional)
+  #   4. repair_model      — text LLM, fixes SVG XML syntax errors (defaults to methodology_model)
   methodology_model: "deepseek-v4-pro"
   methodology_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  generation_model: "qwen-vl-max"
+  generation_model: "qwen3-vl-plus"
   generation_provider: "openrouter"
   enhancement_model: "qwen-image-2.0-pro"
   enhancement_provider: "openrouter"
