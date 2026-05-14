@@ -491,7 +491,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
 
     Returns dict: {success, file_path, file_size, message}
     """
-    # Try headless first (3 attempts)
+    # Try headless first (3 attempts, but skip retries on Cloudflare failure)
     for attempt in range(3):
         if attempt > 0:
             delay = 5 * attempt
@@ -504,6 +504,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         if result['success']:
             return result
         print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
+        if 'Cloudflare' in result.get('message', ''):
+            break
 
     # Fallback to headed (3 attempts)
     print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)

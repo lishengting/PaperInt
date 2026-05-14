@@ -303,7 +303,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] DOI: {doi}", file=sys.stderr)
     print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
 
-    # Try headless first (3 attempts)
+    # Try headless first (3 attempts, but skip retries on anti-bot)
     for attempt in range(3):
         if attempt > 0:
             delay = 5 * attempt
@@ -316,6 +316,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
+        if 'Anti-bot' in result.get('message', ''):
+            break
 
     # Fallback to headed (3 attempts)
     print(f"  [publisher] falling back to headed Chrome...", file=sys.stderr)
