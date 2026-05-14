@@ -240,13 +240,21 @@ llm:
 
 # --- AutoFigure Poster Generation (Phase 4, optional) ---
 autofigure:
-  #api_key_env: "AUTOFIGURE_API_KEY"     # env var or direct value
   api_key_env: "LLM_API_KEY"     # env var or direct value
-  provider: "openrouter"                # openrouter | gemini | bianxie
-  model: "qwen-image-2.0-pro"
-  base_url: " https://dashscope.aliyuncs.com/compatible-mode/v1"       # override default provider URL
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   max_iterations: 5
   enable_enhancement: false
+
+  # Three models required by the AutoFigure pipeline:
+  #   1. methodology_model — text LLM, extracts methodology from paper text
+  #   2. generation_model  — vision LLM, generates SVG from text + reference images
+  #   3. enhancement_model — image generation, beautifies final PNG (optional)
+  methodology_model: "deepseek-v4-pro"
+  methodology_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  generation_model: "qwen-vl-max"
+  generation_provider: "openrouter"
+  enhancement_model: "qwen-image-2.0-pro"
+  enhancement_provider: "openrouter"
 
 # --- Database ---
 db:

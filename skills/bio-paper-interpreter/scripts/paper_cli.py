@@ -343,16 +343,26 @@ def run_phase4(paper_path, paper, config, log_file):
         return False
 
     script = os.path.join(SKILL_DIR, 'generate_poster.py')
+    gen_model = af_config.get('generation_model', 'qwen-vl-max')
+    gen_provider = af_config.get('generation_provider', 'openrouter')
+    meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
+    meth_base_url = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
+    enh_model = af_config.get('enhancement_model', '')
+    enh_provider = af_config.get('enhancement_provider', 'openrouter')
     try:
         result = subprocess.run(
             [sys.executable, script, pdf_path,
              '--output-dir', paper_path,
              '--paper-id', paper_id,
-             '--provider', af_config.get('provider', 'openrouter'),
-             '--model', af_config.get('model', 'google/gemini-3.1-pro-preview'),
-             '--max-iterations', str(af_config.get('max_iterations', 5)),
              '--api-key', api_key,
-             *(['--base-url', af_config['base_url']] if af_config.get('base_url') else []),
+             '--provider', gen_provider,
+             '--model', gen_model,
+             '--base-url', af_config.get('base_url', ''),
+             '--max-iterations', str(af_config.get('max_iterations', 5)),
+             '--methodology-model', meth_model,
+             '--methodology-base-url', meth_base_url,
+             '--enhancement-model', enh_model,
+             '--enhancement-provider', enh_provider,
              *(['--enable-enhancement'] if af_config.get('enable_enhancement') else [])],
             capture_output=True, text=True, timeout=600,
             env={**os.environ, api_key_env: api_key},
@@ -414,9 +424,6 @@ def cmd_run(args, config):
         paper = get_paper(conn, paper_id)
         if not paper:
             print(f"Paper not found: {paper_id}", file=sys.stderr)
-            return 1
-        if paper.get('status') != 'downloaded':
-            print(f"Paper status is '{paper.get('status')}', expected 'downloaded'", file=sys.stderr)
             return 1
         papers = [paper]
     else:

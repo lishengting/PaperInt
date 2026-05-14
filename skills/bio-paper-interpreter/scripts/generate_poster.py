@@ -23,8 +23,10 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         pdf_path: path to the paper PDF
         output_dir: directory to save the poster SVG
         paper_id: paper identifier for naming
-        config: dict with keys: api_key, provider, model, base_url,
-               max_iterations, enable_enhancement
+        config: dict with keys:
+            api_key, provider, model, base_url, max_iterations,
+            enable_enhancement, methodology_model, methodology_base_url,
+            enhancement_model, enhancement_provider
 
     Returns:
         {success: bool, svg_path: str|None, error: str|None}
@@ -38,9 +40,13 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     af_config = Config(
         generation_api_key=api_key,
         generation_provider=config.get('provider', 'openrouter'),
-        generation_model=config.get('model', 'google/gemini-3.1-pro-preview'),
+        generation_model=config.get('model'),
         generation_base_url=config.get('base_url', ''),
         output_dir=output_dir,
+        methodology_model=config.get('methodology_model'),
+        methodology_base_url=config.get('methodology_base_url'),
+        enhancement_model=config.get('enhancement_model'),
+        enhancement_provider=config.get('enhancement_provider', 'openrouter'),
     )
 
     agent = AutoFigureAgent(af_config)
@@ -49,6 +55,9 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         max_iterations=config.get('max_iterations', 5),
         output_format="svg",
         enable_enhancement=config.get('enable_enhancement', False),
+        methodology_api_key=api_key,
+        methodology_model=config.get('methodology_model'),
+        methodology_base_url=config.get('methodology_base_url'),
     )
 
     if result.success:
@@ -76,6 +85,10 @@ def main():
     parser.add_argument('--base-url', default='')
     parser.add_argument('--max-iterations', type=int, default=5)
     parser.add_argument('--enable-enhancement', action='store_true')
+    parser.add_argument('--methodology-model', default=None)
+    parser.add_argument('--methodology-base-url', default=None)
+    parser.add_argument('--enhancement-model', default=None)
+    parser.add_argument('--enhancement-provider', default='openrouter')
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get('AUTOFIGURE_API_KEY', '')
@@ -90,6 +103,10 @@ def main():
         'base_url': args.base_url,
         'max_iterations': args.max_iterations,
         'enable_enhancement': args.enable_enhancement,
+        'methodology_model': args.methodology_model,
+        'methodology_base_url': args.methodology_base_url,
+        'enhancement_model': args.enhancement_model,
+        'enhancement_provider': args.enhancement_provider,
     }
 
     result = generate_poster(args.pdf_path, args.output_dir, args.paper_id, config)
