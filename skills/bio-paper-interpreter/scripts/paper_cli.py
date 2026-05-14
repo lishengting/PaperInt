@@ -475,6 +475,8 @@ def main():
                    help='Path to shared YAML config file')
     p.add_argument('--dry-run', action='store_true',
                    help='List papers that would be processed, then exit')
+    p.add_argument('--poster', action='store_true',
+                   help='Enable AutoFigure enhancement for Phase 4')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to process')
 
