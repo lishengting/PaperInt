@@ -322,7 +322,7 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
-def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, poster_only=False):
+def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, poster_only=False, poster_direct=False):
     """Generate a poster SVG using AutoFigure."""
     paper_id = paper['paper_id']
     safe_pid = sanitize(paper_id)
@@ -341,6 +341,33 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, po
     enh_model = af_config.get('enhancement_model', '')
     enh_provider = af_config.get('enhancement_provider', 'openrouter')
     enh_base_url = af_config.get('enhancement_base_url', '')
+    meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
+    meth_base_url = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
+
+    if poster_direct:
+        pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
+        if not os.path.exists(pdf_path):
+            log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF for direct generation')
+            return False
+        cmd = [sys.executable, script, pdf_path,
+               '--output-dir', paper_path,
+               '--paper-id', paper_id,
+               '--api-key', api_key,
+               '--methodology-model', meth_model,
+               '--methodology-base-url', meth_base_url,
+               '--enhancement-model', enh_model,
+               '--direct']
+        try:
+            result = subprocess.run(cmd, timeout=600,
+                                    env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'})
+            if result.returncode != 0:
+                log_phase(log_file, paper_id, 4, 'FAILED', f'direct exit code {result.returncode}')
+                return False
+        except subprocess.TimeoutExpired:
+            log_phase(log_file, paper_id, 4, 'FAILED', 'direct timeout')
+            return False
+        log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster direct')
+        return True
 
     if poster_only:
         # Find existing poster PNG to enhance
@@ -416,7 +443,7 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, po
     return True
 
 
-def process_paper(paper, config, phases, log_file, enable_enhancement=False, poster_only=False):
+def process_paper(paper, config, phases, log_file, enable_enhancement=False, poster_only=False, poster_direct=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -444,7 +471,7 @@ def process_paper(paper, config, phases, log_file, enable_enhancement=False, pos
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement, poster_only)
+            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement, poster_only, poster_direct)
 
         if ok:
             print('OK')
@@ -484,9 +511,10 @@ def cmd_run(args, config):
 
     poster_enabled = getattr(args, 'poster', False)
     poster_only = getattr(args, 'poster_only', False)
+    poster_direct = getattr(args, 'poster_direct', False)
     for i, paper in enumerate(papers):
         print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file, poster_enabled, poster_only)
+        process_paper(paper, config, phases, log_file, poster_enabled, poster_only, poster_direct)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -511,6 +539,8 @@ def main():
                    help='Enable AutoFigure enhancement for Phase 4')
     p.add_argument('--poster-only', action='store_true',
                    help='Only enhance existing poster (skip generation iterations)')
+    p.add_argument('--poster-direct', action='store_true',
+                   help='Direct text-to-image poster (skip SVG pipeline entirely)')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to process')
 
@@ -526,6 +556,8 @@ def main():
                        help='Enable AutoFigure enhancement for Phase 4')
     run_p.add_argument('--poster-only', action='store_true',
                        help='Only enhance existing poster (skip generation iterations)')
+    run_p.add_argument('--poster-direct', action='store_true',
+                       help='Direct text-to-image poster (skip SVG pipeline entirely)')
 
     args = p.parse_args()
 

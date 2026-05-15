@@ -163,11 +163,14 @@ def _patch_token_tracking():
 
 
 def _enhance_via_dashscope(input_path, output_path, prompt, api_key, model, base_url):
-    """Enhance an image using DashScope's multimodal-generation API for qwen-image models."""
+    """Generate/enhance an image using DashScope's multimodal-generation API."""
     import requests as _requests
 
-    with open(input_path, "rb") as f:
-        image_b64 = base64.b64encode(f.read()).decode("utf-8")
+    content = [{"text": prompt}]
+    if input_path and os.path.exists(input_path):
+        with open(input_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode("utf-8")
+        content.append({"image": f"data:image/png;base64,{image_b64}"})
 
     url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     body = {
@@ -175,10 +178,7 @@ def _enhance_via_dashscope(input_path, output_path, prompt, api_key, model, base
         "input": {
             "messages": [{
                 "role": "user",
-                "content": [
-                    {"text": prompt},
-                    {"image": f"data:image/png;base64,{image_b64}"}
-                ]
+                "content": content
             }]
         }
     }
@@ -470,6 +470,8 @@ def main():
     parser.add_argument('--repair-base-url', default=None)
     parser.add_argument('--enhance-only', default=None, metavar='IMAGE_PATH',
                         help='Skip generation, only enhance an existing PNG image')
+    parser.add_argument('--direct', action='store_true',
+                        help='Direct text-to-image: skip SVG pipeline, generate poster from methodology')
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get('AUTOFIGURE_API_KEY', '')
@@ -516,6 +518,76 @@ def main():
             print(f"Enhanced poster saved: {result_path}")
         else:
             print("Enhancement failed", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # --- Direct text-to-image mode ---
+    if args.direct:
+        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
+        output_path = os.path.join(args.output_dir, f'{safe_pid}.poster.direct.png')
+        pdf_path = args.pdf_path
+
+        # Extract text from PDF
+        print(f"Direct mode: extracting text from {pdf_path}")
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            pdf_text = ''
+            for page in doc:
+                pdf_text += page.get_text()
+            doc.close()
+        except Exception as e:
+            print(f"Error reading PDF: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if len(pdf_text) < 500:
+            print(f"Error: insufficient text ({len(pdf_text)} chars)", file=sys.stderr)
+            sys.exit(1)
+
+        # Truncate to first 15K chars for the figure description prompt
+        paper_excerpt = pdf_text[:15000]
+        print(f"  PDF text: {len(pdf_text)} chars, using first {len(paper_excerpt)}")
+
+        # Build figure description via text LLM
+        meth_model = args.methodology_model or 'deepseek-v4-pro'
+        meth_base = args.methodology_base_url or args.base_url or ''
+
+        figure_prompt = f"""You are a scientific figure designer. Read the paper excerpt below and create a detailed visual description for a single poster figure that summarizes the paper's core methodology and key findings.
+
+**Requirements:**
+- Describe a SINGLE cohesive figure with clear panel layout (A, B, C...)
+- Include specific data types, algorithm names, performance metrics from the paper
+- Specify color scheme, arrows, labels, chart types
+- Use the paper's ACTUAL methods and results — do NOT invent generic content
+- Under 500 words, output ONLY the visual description
+
+**Paper Excerpt:**
+{paper_excerpt}"""
+
+        print(f"  Generating figure description via {meth_model}...")
+        try:
+            description = _call_text_llm(figure_prompt, api_key, meth_model, meth_base)
+        except Exception as e:
+            print(f"Error generating description: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"  Figure description: {len(description)} chars")
+        print(f"  Generating image via qwen-image-2.0-pro...")
+
+        enh_model = args.enhancement_model or 'qwen-image-2.0-pro'
+        try:
+            result_path = _enhance_via_dashscope(
+                None, output_path,
+                f"Create a professional scientific poster figure based on this description:\n\n{description}",
+                api_key, enh_model, '')
+        except Exception as e:
+            print(f"Error generating image: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if result_path:
+            print(f"Direct poster saved: {result_path}")
+        else:
+            print("Direct generation failed", file=sys.stderr)
             sys.exit(1)
         return
 
