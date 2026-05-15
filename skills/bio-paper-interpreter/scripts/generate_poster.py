@@ -18,6 +18,110 @@ import sys
 import time
 import urllib.request
 
+# --- Token usage tracking ---
+_token_usage = {}  # model -> {prompt_tokens, completion_tokens, calls}
+
+def _record_usage(model, prompt_tokens, completion_tokens):
+    if model not in _token_usage:
+        _token_usage[model] = {'prompt_tokens': 0, 'completion_tokens': 0, 'calls': 0}
+    _token_usage[model]['prompt_tokens'] += prompt_tokens
+    _token_usage[model]['completion_tokens'] += completion_tokens
+    _token_usage[model]['calls'] += 1
+
+def _print_usage_summary():
+    print()
+    print("=" * 60)
+    print("Token Usage Summary")
+    print("=" * 60)
+    grand = 0
+    for model, u in sorted(_token_usage.items()):
+        t = u['prompt_tokens'] + u['completion_tokens']
+        grand += t
+        print(f"  [{model}]")
+        print(f"    Calls:            {u['calls']}")
+        print(f"    Prompt tokens:    {u['prompt_tokens']:,}")
+        print(f"    Completion tokens:{u['completion_tokens']:,}")
+        print(f"    Subtotal:         {t:,}")
+    print(f"  ---")
+    print(f"  Grand total: {grand:,} tokens")
+    print("=" * 60)
+
+def _patch_token_tracking():
+    """Monkey-patch AutoFigure internals to track token usage across all models."""
+    import autofigure.generator as af_gen
+    import autofigure.utils.llm_client as af_llm
+
+    # --- Patch _call_openai_compatible (generation + evaluation model) ---
+    _orig_openai_call = af_gen._call_openai_compatible
+
+    def _patched_openai_call(contents, api_key=None, model=None, base_url=None):
+        from openai import OpenAI
+        import io as _io, base64 as _b64
+        from PIL import Image as _Image
+
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        message_content = []
+        for part in contents:
+            if isinstance(part, str):
+                message_content.append({"type": "text", "text": part})
+            elif isinstance(part, _Image.Image):
+                buf = _io.BytesIO()
+                part.save(buf, format='PNG')
+                image_b64 = _b64.b64encode(buf.getvalue()).decode('utf-8')
+                message_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+                })
+
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": message_content}]
+        )
+        if completion and completion.usage:
+            _record_usage(model or 'unknown',
+                         completion.usage.prompt_tokens,
+                         completion.usage.completion_tokens)
+        return completion.choices[0].message.content if completion and completion.choices else None
+
+    af_gen._call_openai_compatible = _patched_openai_call
+
+    # --- Patch LLMClient.call (methodology model) ---
+    _orig_llm_call = af_llm.LLMClient.call
+
+    def _patched_llm_call(self, contents, temperature=0.7, max_tokens=None):
+        from openai import OpenAI
+        import io as _io, base64 as _b64
+        from PIL import Image as _Image
+
+        client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        message_content = []
+        for part in contents:
+            if isinstance(part, str):
+                message_content.append({"type": "text", "text": part})
+            elif isinstance(part, _Image.Image):
+                buf = _io.BytesIO()
+                part.save(buf, format='PNG')
+                image_b64 = _b64.b64encode(buf.getvalue()).decode('utf-8')
+                message_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+                })
+
+        kwargs = {"model": self.model, "messages": [{"role": "user", "content": message_content}],
+                  "temperature": temperature}
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        completion = client.chat.completions.create(**kwargs)
+        if completion and completion.usage:
+            _record_usage(self.model or 'unknown',
+                         completion.usage.prompt_tokens,
+                         completion.usage.completion_tokens)
+        return completion.choices[0].message.content if completion and completion.choices else None
+
+    af_llm.LLMClient.call = _patched_llm_call
+
+    return _orig_openai_call, _orig_llm_call
+
 
 def _call_text_llm(prompt, api_key, model, base_url):
     """Call a text-only LLM via OpenAI-compatible API with streaming progress."""
@@ -40,6 +144,7 @@ def _call_text_llm(prompt, api_key, model, base_url):
     char_count = 0
     t_start = time.time()
     last_report = t_start
+    stream_usage = None
     for line in resp:
         line_str = line.decode('utf-8').strip()
         if not line_str.startswith('data: '):
@@ -60,6 +165,9 @@ def _call_text_llm(prompt, api_key, model, base_url):
                     print(f'  [stream] {len(chunks)} chunks, {char_count} chars, '
                           f'{char_count/elapsed:.0f} chars/s, {elapsed:.0f}s elapsed')
                     last_report = now
+            # Capture usage from final chunk if present
+            if 'usage' in data:
+                stream_usage = data['usage']
         except json.JSONDecodeError:
             pass
 
@@ -67,6 +175,19 @@ def _call_text_llm(prompt, api_key, model, base_url):
     full_text = ''.join(chunks)
     print(f'  [stream] done: {len(chunks)} chunks, {char_count} chars in {elapsed:.1f}s '
           f'({char_count/elapsed:.0f} chars/s)')
+
+    # Record token usage
+    if stream_usage:
+        _record_usage(model,
+                     stream_usage.get('prompt_tokens', 0),
+                     stream_usage.get('completion_tokens', 0))
+    else:
+        # Estimate: ~3 chars per token for Chinese/English mix, prompt ~4 chars/token
+        est_prompt = len(prompt) // 4
+        est_completion = char_count // 3
+        _record_usage(model, est_prompt, est_completion)
+        print(f'  [stream] usage not in response, estimated: ~{est_prompt:,} prompt + ~{est_completion:,} completion')
+
     return full_text
 
 
@@ -114,7 +235,7 @@ You are a professional SVG code debugging expert. The following SVG code has an 
 - Output format must be strictly: <svg>...</svg>
 """
         for attempt in range(3):
-            print(f"  [text-repair] Attempt {attempt + 1}/2 with {repair_model}...")
+            print(f"  [text-repair] Attempt {attempt + 1}/3 with {repair_model}...")
             try:
                 repaired = _call_text_llm(prompt, api_key, repair_model, repair_base_url)
                 if not repaired:
@@ -184,6 +305,9 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     repair_base_url = config.get('repair_base_url') or config.get('base_url', '')
     _orig_repair = _patch_svg_repair(api_key, repair_model, repair_base_url)
 
+    # Monkey-patch AutoFigure internals to track token usage across all models
+    _orig_openai, _orig_llm = _patch_token_tracking()
+
     try:
         result = agent.generate_from_paper(
             paper_path=pdf_path,
@@ -195,9 +319,14 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
             methodology_base_url=config.get('methodology_base_url'),
         )
     finally:
-        # Restore original repair function
+        # Restore original functions
         import autofigure.generator as af_gen
+        import autofigure.utils.llm_client as af_llm
         af_gen.repair_svg = _orig_repair
+        af_gen._call_openai_compatible = _orig_openai
+        af_llm.LLMClient.call = _orig_llm
+
+    _print_usage_summary()
 
     if result.success:
         safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(paper_id))[:200]
