@@ -256,7 +256,8 @@ autofigure:
   generation_provider: "openrouter"
   enhancement_model: "qwen-image-2.0-pro"
   enhancement_provider: "openrouter"
-  repair_model: "deepseek-v4-flash"
+  enhancement_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  repair_model: "deepseek-v4-pro"
   repair_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 # --- Database ---

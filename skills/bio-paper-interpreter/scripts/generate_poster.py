@@ -20,6 +20,8 @@ import urllib.request
 
 # --- Token usage tracking ---
 _token_usage = {}  # model -> {prompt_tokens, completion_tokens, calls}
+_enhancement_calls = 0
+_enhancement_model = None
 
 def _record_usage(model, prompt_tokens, completion_tokens):
     if model not in _token_usage:
@@ -42,8 +44,14 @@ def _print_usage_summary():
         print(f"    Prompt tokens:    {u['prompt_tokens']:,}")
         print(f"    Completion tokens:{u['completion_tokens']:,}")
         print(f"    Subtotal:         {t:,}")
+    if _enhancement_calls > 0:
+        print(f"  [{_enhancement_model or 'enhancement'}]")
+        print(f"    Calls:            {_enhancement_calls}")
+        print(f"    (image generation — token count not available)")
     print(f"  ---")
-    print(f"  Grand total: {grand:,} tokens")
+    print(f"  Grand total (text models): {grand:,} tokens")
+    if _enhancement_calls > 0:
+        print(f"  Enhancement calls: {_enhancement_calls}")
     print("=" * 60)
 
 def _patch_token_tracking():
@@ -120,7 +128,21 @@ def _patch_token_tracking():
 
     af_llm.LLMClient.call = _patched_llm_call
 
-    return _orig_openai_call, _orig_llm_call
+    # --- Patch ImageEnhancer.enhance (enhancement model) ---
+    import autofigure.enhancer as af_enhancer
+    _orig_enhance = af_enhancer.ImageEnhancer.enhance
+
+    def _patched_enhance(self, input_path, output_path=None, enhancement_input="",
+                        style=None, input_type="code2prompt"):
+        global _enhancement_calls, _enhancement_model
+        _enhancement_model = _enhancement_model or self.config.enhancement_model
+        _enhancement_calls += 1
+        return _orig_enhance(self, input_path, output_path, enhancement_input,
+                            style, input_type)
+
+    af_enhancer.ImageEnhancer.enhance = _patched_enhance
+
+    return _orig_openai_call, _orig_llm, _orig_enhance
 
 
 def _call_text_llm(prompt, api_key, model, base_url):
@@ -294,8 +316,10 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         output_dir=output_dir,
         methodology_model=config.get('methodology_model'),
         methodology_base_url=config.get('methodology_base_url'),
+        enhancement_api_key=api_key,
         enhancement_model=config.get('enhancement_model'),
         enhancement_provider=config.get('enhancement_provider', 'openrouter'),
+        enhancement_base_url=config.get('enhancement_base_url', ''),
     )
 
     agent = AutoFigureAgent(af_config)
@@ -306,7 +330,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     _orig_repair = _patch_svg_repair(api_key, repair_model, repair_base_url)
 
     # Monkey-patch AutoFigure internals to track token usage across all models
-    _orig_openai, _orig_llm = _patch_token_tracking()
+    _orig_openai, _orig_llm, _orig_enhance = _patch_token_tracking()
 
     try:
         result = agent.generate_from_paper(
@@ -322,9 +346,11 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         # Restore original functions
         import autofigure.generator as af_gen
         import autofigure.utils.llm_client as af_llm
+        import autofigure.enhancer as af_enhancer
         af_gen.repair_svg = _orig_repair
         af_gen._call_openai_compatible = _orig_openai
         af_llm.LLMClient.call = _orig_llm
+        af_enhancer.ImageEnhancer.enhance = _orig_enhance
 
     _print_usage_summary()
 
@@ -357,6 +383,7 @@ def main():
     parser.add_argument('--methodology-base-url', default=None)
     parser.add_argument('--enhancement-model', default=None)
     parser.add_argument('--enhancement-provider', default='openrouter')
+    parser.add_argument('--enhancement-base-url', default=None)
     parser.add_argument('--repair-model', default=None,
                         help='Text LLM for SVG XML repair (default: same as methodology-model)')
     parser.add_argument('--repair-base-url', default=None)
@@ -378,6 +405,7 @@ def main():
         'methodology_base_url': args.methodology_base_url,
         'enhancement_model': args.enhancement_model,
         'enhancement_provider': args.enhancement_provider,
+        'enhancement_base_url': args.enhancement_base_url or '',
         'repair_model': args.repair_model,
         'repair_base_url': args.repair_base_url,
     }
