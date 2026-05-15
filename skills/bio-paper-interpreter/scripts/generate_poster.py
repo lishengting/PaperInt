@@ -308,12 +308,16 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     if not api_key:
         return {'success': False, 'svg_path': None, 'error': 'no API key configured'}
 
+    # AutoFigure intermediate files go into a poster/ subdirectory
+    poster_dir = os.path.join(output_dir, 'poster')
+    os.makedirs(poster_dir, exist_ok=True)
+
     af_config = Config(
         generation_api_key=api_key,
         generation_provider=config.get('provider', 'openrouter'),
         generation_model=config.get('model'),
         generation_base_url=config.get('base_url', ''),
-        output_dir=output_dir,
+        output_dir=poster_dir,
         methodology_model=config.get('methodology_model'),
         methodology_base_url=config.get('methodology_base_url'),
         enhancement_api_key=api_key,
@@ -356,6 +360,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
 
     if result.success:
         safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(paper_id))[:200]
+        # Move final poster SVG from poster/ subdirectory to paper root
         poster_path = os.path.join(output_dir, f'{safe_pid}.poster.svg')
         if result.svg_path and os.path.exists(result.svg_path):
             if os.path.abspath(result.svg_path) != os.path.abspath(poster_path):
