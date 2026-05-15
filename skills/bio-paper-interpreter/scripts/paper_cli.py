@@ -512,6 +512,8 @@ def cmd_run(args, config):
     poster_enabled = getattr(args, 'poster', False)
     poster_only = getattr(args, 'poster_only', False)
     poster_direct = getattr(args, 'poster_direct', False)
+    if poster_only or poster_direct:
+        poster_enabled = True
     for i, paper in enumerate(papers):
         print(f"\n[{i+1}/{len(papers)}]", end='')
         process_paper(paper, config, phases, log_file, poster_enabled, poster_only, poster_direct)
