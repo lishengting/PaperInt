@@ -484,8 +484,9 @@ def main():
             print(f"Error: image not found: {image_path}", file=sys.stderr)
             sys.exit(1)
 
+        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
         output_path = os.path.join(args.output_dir,
-                                   f'{args.paper_id}.poster.enhanced.png')
+                                   f'{safe_pid}.poster.enhanced.png')
         enh_model = args.enhancement_model or 'qwen-image-2.0-pro'
         enh_base = args.enhancement_base_url or args.base_url or ''
 
