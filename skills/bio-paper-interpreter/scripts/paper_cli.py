@@ -322,7 +322,7 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
-def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
+def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, poster_only=False):
     """Generate a poster SVG using AutoFigure."""
     paper_id = paper['paper_id']
     safe_pid = sanitize(paper_id)
@@ -337,12 +337,41 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
         log_phase(log_file, paper_id, 4, 'SKIPPED', 'no AutoFigure API key')
         return True  # optional phase — not a failure
 
+    script = os.path.join(SKILL_DIR, 'generate_poster.py')
+    enh_model = af_config.get('enhancement_model', '')
+    enh_provider = af_config.get('enhancement_provider', 'openrouter')
+    enh_base_url = af_config.get('enhancement_base_url', '')
+
+    if poster_only:
+        # Find existing poster PNG to enhance
+        png_path = os.path.join(paper_path, 'poster', 'figure_final.png')
+        if not os.path.exists(png_path):
+            log_phase(log_file, paper_id, 4, 'FAILED', 'no poster/figure_final.png to enhance')
+            return False
+        cmd = [sys.executable, script, png_path,
+               '--output-dir', paper_path,
+               '--paper-id', paper_id,
+               '--api-key', api_key,
+               '--enhancement-model', enh_model,
+               '--enhancement-provider', enh_provider,
+               '--enhancement-base-url', enh_base_url or af_config.get('base_url', ''),
+               '--enhance-only', png_path]
+        try:
+            result = subprocess.run(cmd, timeout=600,
+                                    env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'})
+            if result.returncode != 0:
+                log_phase(log_file, paper_id, 4, 'FAILED', f'enhance exit code {result.returncode}')
+                return False
+        except subprocess.TimeoutExpired:
+            log_phase(log_file, paper_id, 4, 'FAILED', 'enhance timeout')
+            return False
+        log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster enhanced')
+        return True
+
     pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF file')
         return False
-
-    script = os.path.join(SKILL_DIR, 'generate_poster.py')
     gen_model = af_config.get('generation_model', 'qwen-vl-max')
     gen_provider = af_config.get('generation_provider', 'openrouter')
     meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
@@ -387,7 +416,7 @@ def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False):
     return True
 
 
-def process_paper(paper, config, phases, log_file, enable_enhancement=False):
+def process_paper(paper, config, phases, log_file, enable_enhancement=False, poster_only=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -415,7 +444,7 @@ def process_paper(paper, config, phases, log_file, enable_enhancement=False):
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement)
+            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement, poster_only)
 
         if ok:
             print('OK')
@@ -454,9 +483,10 @@ def cmd_run(args, config):
     print(f"Phases: {sorted(phases)}")
 
     poster_enabled = getattr(args, 'poster', False)
+    poster_only = getattr(args, 'poster_only', False)
     for i, paper in enumerate(papers):
         print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file, poster_enabled)
+        process_paper(paper, config, phases, log_file, poster_enabled, poster_only)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -479,6 +509,8 @@ def main():
                    help='List papers that would be processed, then exit')
     p.add_argument('--poster', action='store_true',
                    help='Enable AutoFigure enhancement for Phase 4')
+    p.add_argument('--poster-only', action='store_true',
+                   help='Only enhance existing poster (skip generation iterations)')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to process')
 
@@ -492,6 +524,8 @@ def main():
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
     run_p.add_argument('--poster', action='store_true',
                        help='Enable AutoFigure enhancement for Phase 4')
+    run_p.add_argument('--poster-only', action='store_true',
+                       help='Only enhance existing poster (skip generation iterations)')
 
     args = p.parse_args()
 

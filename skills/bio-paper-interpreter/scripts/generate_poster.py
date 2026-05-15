@@ -142,7 +142,81 @@ def _patch_token_tracking():
 
     af_enhancer.ImageEnhancer.enhance = _patched_enhance
 
-    return _orig_openai_call, _orig_llm_call, _orig_enhance
+    # --- Patch _enhance_with_openrouter to detect DashScope ---
+    global _orig_enhance_openrouter
+    _orig_enhance_openrouter = af_enhancer.ImageEnhancer._enhance_with_openrouter
+
+    def _patched_enhance_openrouter(self, input_path, enhancement_input, output_path,
+                                    style="", input_type="code2prompt", api_key=None,
+                                    base_url=None, model=None):
+        if base_url and 'dashscope' in base_url.lower():
+            prompt = self._build_enhancement_prompt(style, enhancement_input, input_type)
+            return _enhance_via_dashscope(input_path, output_path, prompt,
+                                         api_key, model or 'qwen-image-2.0-pro', base_url)
+        return _orig_enhance_openrouter(self, input_path, enhancement_input, output_path,
+                                       style, input_type, api_key, base_url, model)
+
+    af_enhancer.ImageEnhancer._enhance_with_openrouter = _patched_enhance_openrouter
+
+    return _orig_openai_call, _orig_llm_call, _orig_enhance, _orig_enhance_openrouter
+
+
+def _enhance_via_dashscope(input_path, output_path, prompt, api_key, model, base_url):
+    """Enhance an image using DashScope's multimodal-generation API for qwen-image models."""
+    import requests as _requests
+
+    with open(input_path, "rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    body = {
+        "model": model,
+        "input": {
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"text": prompt},
+                    {"image": f"data:image/png;base64,{image_b64}"}
+                ]
+            }]
+        }
+    }
+    print(f"[DashScope] Calling multimodal-generation API, model={model}...")
+    resp = _requests.post(url, headers={
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }, json=body, timeout=300)
+
+    if resp.status_code != 200:
+        print(f"[DashScope] API error: {resp.status_code} - {resp.text[:500]}")
+        return None
+
+    result = resp.json()
+    try:
+        image_url = result["output"]["choices"][0]["message"]["content"][0]["image"]
+    except (KeyError, IndexError, TypeError):
+        debug_path = output_path.replace(".png", "_dashscope_response.json")
+        with open(debug_path, "w") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+        print(f"[DashScope] Unexpected response, debug saved: {debug_path}")
+        return None
+
+    # Download the generated image
+    print(f"[DashScope] Downloading enhanced image...")
+    img_resp = _requests.get(image_url, timeout=60)
+    if img_resp.status_code == 200:
+        with open(output_path, "wb") as f:
+            f.write(img_resp.content)
+        usage = result.get("usage", {})
+        print(f"[DashScope] Enhanced: {usage.get('width')}x{usage.get('height')}, "
+              f"{usage.get('image_count', 1)} image(s)")
+        return output_path
+
+    print(f"[DashScope] Failed to download image: {img_resp.status_code}")
+    return None
+
+
+_orig_enhance_openrouter = None
 
 
 def _call_text_llm(prompt, api_key, model, base_url):
@@ -334,7 +408,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     _orig_repair = _patch_svg_repair(api_key, repair_model, repair_base_url)
 
     # Monkey-patch AutoFigure internals to track token usage across all models
-    _orig_openai, _orig_llm_call, _orig_enhance = _patch_token_tracking()
+    _orig_openai, _orig_llm_call, _orig_enhance, _orig_enh_openrouter = _patch_token_tracking()
 
     try:
         result = agent.generate_from_paper(
@@ -355,6 +429,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         af_gen._call_openai_compatible = _orig_openai
         af_llm.LLMClient.call = _orig_llm_call
         af_enhancer.ImageEnhancer.enhance = _orig_enhance
+        af_enhancer.ImageEnhancer._enhance_with_openrouter = _orig_enh_openrouter
 
     _print_usage_summary()
 
@@ -392,6 +467,8 @@ def main():
     parser.add_argument('--repair-model', default=None,
                         help='Text LLM for SVG XML repair (default: same as methodology-model)')
     parser.add_argument('--repair-base-url', default=None)
+    parser.add_argument('--enhance-only', default=None, metavar='IMAGE_PATH',
+                        help='Skip generation, only enhance an existing PNG image')
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get('AUTOFIGURE_API_KEY', '')
@@ -399,6 +476,48 @@ def main():
         print("Error: no API key. Set AUTOFIGURE_API_KEY env var or use --api-key.", file=sys.stderr)
         sys.exit(1)
 
+    # --- Enhance-only mode: skip AutoFigure, just enhance an existing image ---
+    if args.enhance_only:
+        image_path = args.enhance_only
+        if not os.path.exists(image_path):
+            print(f"Error: image not found: {image_path}", file=sys.stderr)
+            sys.exit(1)
+
+        output_path = os.path.join(args.output_dir,
+                                   f'{args.paper_id}.poster.enhanced.png')
+        enh_model = args.enhancement_model or 'qwen-image-2.0-pro'
+        enh_base = args.enhancement_base_url or args.base_url or ''
+
+        print(f"Enhance-only mode: {image_path} -> {output_path}")
+        print(f"  Model: {enh_model}")
+
+        if 'dashscope' in enh_base.lower():
+            prompt = ("You are a world-class scientific illustrator. Transform this black-and-white "
+                      "diagram into a professional, publication-ready scientific illustration with "
+                      "vibrant colors, clean typography, and polished visual hierarchy. Preserve all "
+                      "structural elements, labels, and spatial relationships exactly.")
+            result_path = _enhance_via_dashscope(image_path, output_path, prompt,
+                                                 api_key, enh_model, enh_base)
+        else:
+            from autofigure.enhancer import ImageEnhancer
+            from autofigure import Config as AFConfig
+            af_config = AFConfig(
+                enhancement_api_key=api_key,
+                enhancement_model=enh_model,
+                enhancement_provider=args.enhancement_provider,
+                enhancement_base_url=enh_base,
+            )
+            enhancer = ImageEnhancer(af_config)
+            result_path = enhancer.enhance(image_path, output_path)
+
+        if result_path:
+            print(f"Enhanced poster saved: {result_path}")
+        else:
+            print("Enhancement failed", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # --- Normal mode: full AutoFigure pipeline ---
     config = {
         'api_key': api_key,
         'provider': args.provider,
