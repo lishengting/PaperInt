@@ -142,7 +142,7 @@ def _patch_token_tracking():
 
     af_enhancer.ImageEnhancer.enhance = _patched_enhance
 
-    return _orig_openai_call, _orig_llm, _orig_enhance
+    return _orig_openai_call, _orig_llm_call, _orig_enhance
 
 
 def _call_text_llm(prompt, api_key, model, base_url):
@@ -334,7 +334,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
     _orig_repair = _patch_svg_repair(api_key, repair_model, repair_base_url)
 
     # Monkey-patch AutoFigure internals to track token usage across all models
-    _orig_openai, _orig_llm, _orig_enhance = _patch_token_tracking()
+    _orig_openai, _orig_llm_call, _orig_enhance = _patch_token_tracking()
 
     try:
         result = agent.generate_from_paper(
@@ -353,7 +353,7 @@ def generate_poster(pdf_path, output_dir, paper_id, config):
         import autofigure.enhancer as af_enhancer
         af_gen.repair_svg = _orig_repair
         af_gen._call_openai_compatible = _orig_openai
-        af_llm.LLMClient.call = _orig_llm
+        af_llm.LLMClient.call = _orig_llm_call
         af_enhancer.ImageEnhancer.enhance = _orig_enhance
 
     _print_usage_summary()
