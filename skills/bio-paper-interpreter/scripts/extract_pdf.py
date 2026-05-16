@@ -128,7 +128,7 @@ def select_representative_image(image_dir, images_rel_prefix, min_area=40000):
             continue
         if width < 100 or height < 100:
             continue
-        if page == 0 and area < 100000:
+        if page == 1 and area < 100000:
             continue  # title page logos are usually small
 
         candidates.append({
@@ -150,8 +150,8 @@ def _parse_page_from_filename(filename):
     """Parse page number from pymupdf4llm image filename pattern: *-{page:04d}-*.png"""
     m = re.search(r'-(\d{4})-', filename)
     if m:
-        return int(m.group(1)) - 1  # pymupdf4llm pages are 1-based
-    return 99  # fallback: treat as very late page
+        return int(m.group(1))  # pymupdf4llm pages are 1-based
+    return 999  # fallback: treat as very late page
 
 
 def _get_image_size(filepath):
