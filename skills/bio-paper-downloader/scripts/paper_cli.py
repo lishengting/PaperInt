@@ -31,7 +31,7 @@ os.environ.setdefault('NODE_NO_WARNINGS', '1')
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
 from paper_db import (get_conn, get_db_path, get_papers_by_status,
                       is_downloaded, mark_downloaded, mark_download_failed,
-                      get_paper, get_stats)
+                      get_paper, get_stats, load_cnsp_journal_set, filter_cnsp_papers)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -847,13 +847,19 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False):
+def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False, cnsp_only=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
         papers = get_papers_by_status(conn, 'download_failed')
     else:
         papers = get_papers_by_status(conn, 'searched')
+
+    if cnsp_only:
+        cnsp_names = load_cnsp_journal_set(config, config.get('__config_path__', 'config.yaml'))
+        before = len(papers)
+        papers = filter_cnsp_papers(papers, cnsp_names)
+        print(f"CNSP filter: {before} -> {len(papers)} papers")
 
     if limit:
         papers = papers[:limit]
@@ -937,6 +943,8 @@ def main():
                    help='Max number of papers to download in auto-mode')
     p.add_argument('--retry-failed', action='store_true',
                    help='Retry downloading papers with download_failed status')
+    p.add_argument('--cnsp', action='store_true',
+                   help='Only download papers published in C/N/S/P journals')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -968,6 +976,7 @@ def main():
 
     args = p.parse_args()
     config = load_config(args.config)
+    config['__config_path__'] = args.config
 
     if args.db:
         config.setdefault('db', {})['path'] = args.db
@@ -979,7 +988,7 @@ def main():
     elif args.cmd is None:
         # Auto-mode: download all searched papers
         return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit,
-                        retry_failed=args.retry_failed)
+                        retry_failed=args.retry_failed, cnsp_only=args.cnsp)
     return 1
 
 

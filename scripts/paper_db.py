@@ -380,3 +380,46 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         except json.JSONDecodeError:
             pass
     return d
+
+
+# ---------------------------------------------------------------------------
+# CNSP journal filter
+# ---------------------------------------------------------------------------
+
+def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> set:
+    """Load all CNSP journal names (lowercase) from journals_config/*.json.
+
+    Resolves relative paths against the directory of config_path.
+    Returns a set of lowercase journal names.
+    """
+    cnsp_cfg = config.get('cnsp', {})
+    names: set = set()
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    for key in ('nature_journals', 'science_journals', 'cell_journals', 'plos_journals'):
+        rel = cnsp_cfg.get(key, '')
+        if not rel:
+            continue
+        jpath = rel if os.path.isabs(rel) else os.path.join(config_dir, rel)
+        if not os.path.exists(jpath):
+            continue
+        for j in json.load(open(jpath)):
+            name = (j.get('name', '') or '').replace(' (partner)', '')
+            if name:
+                names.add(name.lower())
+    return names
+
+
+def filter_cnsp_papers(papers: list, cnsp_names: set) -> list:
+    """Filter papers to only those whose journal (from metadata_json) is in cnsp_names."""
+    result = []
+    for p in papers:
+        meta = p.get('metadata_json')
+        if not meta:
+            continue
+        try:
+            journal = (json.loads(meta) if isinstance(meta, str) else meta).get('journal', '') or ''
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if journal.lower() in cnsp_names:
+            result.append(p)
+    return result

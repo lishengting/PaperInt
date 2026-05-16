@@ -37,8 +37,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SKILL_DIR)))
 sys.path.insert(0, os.path.join(REPO_ROOT, 'scripts'))
 sys.path.insert(0, SKILL_DIR)
 
-from paper_db import get_conn, get_papers_by_status, get_paper_dir, get_paper
-from paper_db import mark_interpreted, mark_skipped, update_relevance, update_tags
+from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
+                      mark_interpreted, mark_skipped, update_relevance, update_tags,
+                      load_cnsp_journal_set, filter_cnsp_papers)
 
 from filter_relevance import check_relevance
 from match_tags import match_tags
@@ -424,6 +425,15 @@ def cmd_run(args, config):
     else:
         papers = get_papers_by_status(conn, 'downloaded')
         limit = getattr(args, 'limit', None)
+
+        cnsp_only = getattr(args, 'cnsp', False)
+        if cnsp_only:
+            config['__config_path__'] = config.get('__config_path__', 'config.yaml')
+            cnsp_names = load_cnsp_journal_set(config)
+            before = len(papers)
+            papers = filter_cnsp_papers(papers, cnsp_names)
+            print(f"CNSP filter: {before} -> {len(papers)} papers")
+
         if limit:
             papers = papers[:limit]
 
@@ -462,6 +472,8 @@ def main():
                    help='List papers that would be processed, then exit')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to process')
+    p.add_argument('--cnsp', action='store_true',
+                   help='Only interpret papers published in C/N/S/P journals')
 
     sub = p.add_subparsers(dest='cmd', title='commands',
                            description='"run" a single paper, or omit for auto-mode')
@@ -475,10 +487,15 @@ def main():
     args = p.parse_args()
 
     config = load_config(args.config)
+    config['__config_path__'] = args.config
 
     if args.dry_run:
         conn = get_conn(config)
         papers = get_papers_by_status(conn, 'downloaded')
+        if args.cnsp:
+            config['__config_path__'] = config.get('__config_path__', 'config.yaml')
+            cnsp_names = load_cnsp_journal_set(config)
+            papers = filter_cnsp_papers(papers, cnsp_names)
         if args.limit:
             papers = papers[:args.limit]
         print(f"Would process {len(papers)} paper(s):")
