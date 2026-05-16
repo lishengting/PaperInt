@@ -421,6 +421,8 @@ def _is_pdf(data: bytes) -> bool:
 
 
 def _download_direct_pdf(pdf_url, config, use_browser=False):
+    if not pdf_url:
+        return None
     # Direct HTTP attempt
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
