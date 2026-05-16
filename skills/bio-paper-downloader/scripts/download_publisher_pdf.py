@@ -165,8 +165,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             # Step 1: follow DOI to publisher page
             print(f"  [publisher:{mode}] Following DOI...", file=sys.stderr)
-            await page.goto(doi_url, wait_until='domcontentloaded',
+            await page.goto(doi_url, wait_until='networkidle',
                             timeout=timeout * 1000)
+            # Elsevier/ScienceDirect redirect chain: wait for final page to settle
+            await asyncio.sleep(3)
             if not await _wait_for_page(page, 30):
                 result['message'] = 'Anti-bot challenge did not resolve'
                 return result
