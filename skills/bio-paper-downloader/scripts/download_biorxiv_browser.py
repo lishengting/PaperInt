@@ -165,9 +165,23 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     print(f"  [browser] Navigating to PDF...", file=sys.stderr)
     await page.goto(url_or_doi, wait_until='networkidle',
                     timeout=timeout * 1000)
-    # Some servers (PMC) serve an interstitial "Preparing to download..."
-    # page that auto-redirects via JS. Wait for the redirect to settle.
-    await asyncio.sleep(5)
+    # Some servers (PMC) serve a PoW challenge page ("Preparing to download...")
+    # that computes a proof-of-work in JS, sets a cookie, then redirects.
+    # Since PoW is CPU-bound, networkidle fires before it completes.
+    # Wait for the page to resolve (redirect, or content-type change).
+    for _ in range(10):
+        await asyncio.sleep(3)
+        ct = await page.evaluate('() => document.contentType')
+        if ct == 'application/pdf':
+            break
+        # Check if page redirected away from the interstitial
+        title = await page.title()
+        if 'preparing to download' not in title.lower():
+            break
+    else:
+        # PoW may have completed - try a reload to trigger the redirect
+        await page.reload(wait_until='networkidle', timeout=timeout * 1000)
+        await asyncio.sleep(3)
 
     final_url = page.url
     ct = await page.evaluate('() => document.contentType')
