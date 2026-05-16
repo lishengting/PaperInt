@@ -22,6 +22,7 @@ import asyncio
 import base64
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -283,7 +284,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
 
 
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
-                                     headless):
+                                     headless, profile_dir=None):
     """
     Core download logic. Returns dict result.
     """
@@ -308,7 +309,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
         print(f"  [browser:{mode}] Generic URL: {url_or_doi}", file=sys.stderr)
         chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
-                                headless=headless)
+                                headless=headless,
+                                profile_dir=profile_dir)
 
         # Suppress TargetClosedError from Playwright's internal waiters
         # that fire after the browser connection is closed.
@@ -369,7 +371,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
     print(f"  [browser:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 
     chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
-                            headless=headless)
+                            headless=headless,
+                            profile_dir=profile_dir)
 
     # Suppress TargetClosedError from Playwright's internal waiters
     loop = asyncio.get_event_loop()
@@ -507,44 +510,58 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
     Tries headless Chrome first (3 attempts), then falls back to headed if headed_fallback=True.
+    Shares a single Chrome profile across retries so cookies persist.
 
     Returns dict: {success, file_path, file_size, message}
     """
-    # Try headless first (3 attempts, but skip retries on Cloudflare failure)
-    for attempt in range(3):
-        if attempt > 0:
-            delay = 5 * attempt
-            print(f"  [browser] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-            time.sleep(delay)
+    # Shared profile dir so retries share cookies
+    profile_dir = os.path.join(output_dir, 'tmp', 'chrome_profile')
+    os.makedirs(profile_dir, exist_ok=True)
 
-        result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                chrome_bin, timeout,
-                                                headless=True)
-        if result['success']:
+    result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
+
+    try:
+        # Try headless first (3 attempts, but skip retries on Cloudflare failure)
+        for attempt in range(3):
+            if attempt > 0:
+                delay = 5 * attempt
+                print(f"  [browser] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                time.sleep(delay)
+
+            result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                    chrome_bin, timeout,
+                                                    headless=True,
+                                                    profile_dir=profile_dir)
+            if result['success']:
+                return result
+            print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
+            if 'Cloudflare' in result.get('message', ''):
+                break
+
+        if not headed_fallback:
             return result
-        print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
-        if 'Cloudflare' in result.get('message', ''):
-            break
 
-    if not headed_fallback:
+        # Fallback to headed (3 attempts)
+        print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
+        for attempt in range(3):
+            if attempt > 0:
+                delay = 5 * attempt
+                print(f"  [browser] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+                time.sleep(delay)
+
+            result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                    chrome_bin, timeout,
+                                                    headless=False,
+                                                    profile_dir=profile_dir)
+            if result['success']:
+                result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+                return result
+            print(f"  [browser] headed failed: {result['message']}", file=sys.stderr)
         return result
-
-    # Fallback to headed (3 attempts)
-    print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
-    for attempt in range(3):
-        if attempt > 0:
-            delay = 5 * attempt
-            print(f"  [browser] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-            time.sleep(delay)
-
-        result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                chrome_bin, timeout,
-                                                headless=False)
-        if result['success']:
-            result['message'] = result['message'].replace('(headed)', '(headed fallback)')
-            return result
-        print(f"  [browser] headed failed: {result['message']}", file=sys.stderr)
-    return result
+    finally:
+        # Clean up shared profile
+        if os.path.isdir(profile_dir):
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
