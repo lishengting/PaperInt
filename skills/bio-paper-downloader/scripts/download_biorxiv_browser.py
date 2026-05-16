@@ -267,6 +267,12 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
                 return result
             print(f"  [browser] JS fetch got non-PDF data ({len(pdf_bytes)} bytes)",
                   file=sys.stderr)
+            # Show what the browser actually returned for debugging
+            try:
+                preview = pdf_bytes[:500].decode('utf-8', errors='replace')
+                print(f"  [browser] Response preview: {preview}", file=sys.stderr)
+            except Exception:
+                pass
     except Exception as e:
         print(f"  [browser] JS fetch error: {e}", file=sys.stderr)
 
@@ -302,6 +308,21 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
         chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
                                 headless=headless)
 
+        # Suppress TargetClosedError from Playwright's internal waiters
+        # that fire after the browser connection is closed.
+        loop = asyncio.get_event_loop()
+        old_handler = loop.get_exception_handler()
+
+        def _ignore_target_closed(loop, context):
+            exc = context.get('exception')
+            if exc and type(exc).__name__ == 'TargetClosedError':
+                return
+            if old_handler:
+                old_handler(loop, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_ignore_target_closed)
         try:
             chrome.start()
 
@@ -320,8 +341,10 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 await cdp_tmp.detach()
 
                 page = await ctx.new_page()
-                return await _download_generic_pdf(page, url_or_doi,
-                                                   output_path, timeout)
+                sub_result = await _download_generic_pdf(page, url_or_doi,
+                                                         output_path, timeout)
+                await browser.close()
+                return sub_result
 
         except ImportError:
             result['message'] = 'Playwright not installed'
@@ -331,6 +354,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             return result
         finally:
             chrome.stop()
+            loop.set_exception_handler(old_handler)
 
     # --- bioRxiv / medRxiv path ---
     article_url = f"https://www.{server}.org/content/{doi}"
@@ -345,6 +369,20 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
     chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
                             headless=headless)
 
+    # Suppress TargetClosedError from Playwright's internal waiters
+    loop = asyncio.get_event_loop()
+    old_handler = loop.get_exception_handler()
+
+    def _ignore_target_closed(loop, context):
+        exc = context.get('exception')
+        if exc and type(exc).__name__ == 'TargetClosedError':
+            return
+        if old_handler:
+            old_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_ignore_target_closed)
     try:
         chrome.start()
 
@@ -458,6 +496,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
         return result
     finally:
         chrome.stop()
+        loop.set_exception_handler(old_handler)
 
 
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
