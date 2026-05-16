@@ -82,8 +82,7 @@ class ChromeInstance:
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
                  headless=True):
         self.chrome_bin = chrome_bin
-        self.profile_dir = profile_dir or os.path.join(
-            tempfile.gettempdir(), 'paper_cli_chrome_profile')
+        self.profile_dir = profile_dir or tempfile.mkdtemp(prefix='paper_cli_chrome_')
         self.port = port or _find_free_port()
         self.process = None
         self.headless = headless

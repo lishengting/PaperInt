@@ -38,8 +38,7 @@ class ChromeInstance:
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
                  headless=True):
         self.chrome_bin = chrome_bin
-        self.profile_dir = profile_dir or os.path.join(
-            tempfile.gettempdir(), 'paper_cli_publisher_chrome')
+        self.profile_dir = profile_dir or tempfile.mkdtemp(prefix='paper_cli_pub_chrome_')
         self.port = port or _find_free_port()
         self.process = None
         self.headless = headless
@@ -144,6 +143,38 @@ async def _wait_for_page(page, timeout=30):
     return False
 
 
+async def _wait_for_url_stable(page, max_wait=20, stable_secs=3):
+    """Wait for URL to stop changing for `stable_secs` consecutive seconds."""
+    prev_url = page.url
+    stable_count = 0
+    for _ in range(max_wait):
+        await asyncio.sleep(1)
+        try:
+            cur_url = page.url
+        except Exception:
+            stable_count = 0
+            continue
+        if cur_url == prev_url:
+            stable_count += 1
+            if stable_count >= stable_secs:
+                return cur_url
+        else:
+            stable_count = 0
+            prev_url = cur_url
+    return prev_url
+
+
+async def _safe_eval(page, js, retries=3):
+    """Evaluate JS on a page, retrying on navigation errors."""
+    for attempt in range(retries):
+        try:
+            return await page.evaluate(js)
+        except Exception:
+            if attempt < retries - 1:
+                await asyncio.sleep(2)
+    raise Exception('Page navigation destroyed execution context')
+
+
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless):
     """Core download logic. Returns dict result."""
@@ -165,23 +196,29 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             # Step 1: follow DOI to publisher page
             print(f"  [publisher:{mode}] Following DOI...", file=sys.stderr)
-            await page.goto(doi_url, wait_until='networkidle',
+            await page.goto(doi_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
-            # Elsevier/ScienceDirect redirect chain: wait for final page to settle
-            await asyncio.sleep(3)
+            # Elsevier redirect chain (doi.org → linkinghub → cell.com):
+            # wait for JS-driven navigations to settle before touching the page
+            final_url = await _wait_for_url_stable(page)
+            print(f"  [publisher:{mode}] Landed on: {final_url}", file=sys.stderr)
             if not await _wait_for_page(page, 30):
                 result['message'] = 'Anti-bot challenge did not resolve'
                 return result
-            print(f"  [publisher:{mode}] Landed on: {page.url}", file=sys.stderr)
 
             # Verify page has real content (bot pages have very few links)
-            link_count = await page.evaluate('() => document.querySelectorAll("a").length')
+            try:
+                link_count = await _safe_eval(page, '() => document.querySelectorAll("a").length')
+            except Exception:
+                result['message'] = 'Page navigation destroyed execution context'
+                return result
             if link_count < 5:
                 result['message'] = f'Page has no content ({link_count} links), likely blocked'
                 return result
 
             # Step 2: find PDF links on the article page
-            pdf_links = await page.evaluate('''() => {
+            try:
+                pdf_links = await _safe_eval(page, '''() => {
                 const found = [];
                 document.querySelectorAll('a').forEach(a => {
                     const href = a.getAttribute('href') || '';
@@ -198,6 +235,9 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 });
                 return found;
             }''')
+            except Exception:
+                result['message'] = 'Page navigation destroyed execution context'
+                return result
 
             if not pdf_links:
                 result['message'] = 'No PDF links found on publisher page'

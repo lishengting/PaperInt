@@ -398,14 +398,14 @@ def _publisher_download(doi, pmid, config, use_browser=False):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     base_cmd = [sys.executable, script, '--doi', doi,
-                '--timeout', '180']
+                '--timeout', '60']
     if use_browser:
         base_cmd.append('--headed-fallback')
     with tempfile.TemporaryDirectory() as tmpdir:
         cmd = base_cmd + ['-o', tmpdir]
         r = subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
-            timeout=300)
+            timeout=600)
         if r.returncode == 0:
             safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
             pdf_path = os.path.join(tmpdir, safe_name)
