@@ -397,12 +397,12 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
 def _publisher_download(doi, pmid, config, use_browser=False):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
-    cmd = [sys.executable, script, '--doi', doi, '-o', '/dev/stdout',
-           '--timeout', '180']
+    base_cmd = [sys.executable, script, '--doi', doi,
+                '--timeout', '180']
     if use_browser:
-        cmd.append('--headed-fallback')
+        base_cmd.append('--headed-fallback')
     with tempfile.TemporaryDirectory() as tmpdir:
-        cmd[cmd.index('/dev/stdout')] = tmpdir
+        cmd = base_cmd + ['-o', tmpdir]
         r = subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
             timeout=300)
@@ -434,15 +434,15 @@ def _download_direct_pdf(pdf_url, config, use_browser=False):
     # Browser fallback (headless, +headed if use_browser)
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
-    cmd = [sys.executable, script, pdf_url, '-o', '/dev/stdout',
-           '--timeout', '180']
+    base_cmd = [sys.executable, script, pdf_url,
+                '--timeout', '180']
     if use_browser:
-        cmd.append('--headed-fallback')
+        base_cmd.append('--headed-fallback')
     for attempt in range(3):
         if attempt > 0:
             time.sleep(5 * attempt)
         with tempfile.TemporaryDirectory() as tmpdir:
-            cmd[cmd.index('/dev/stdout')] = tmpdir
+            cmd = base_cmd + ['-o', tmpdir]
             r = subprocess.run(
                 cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
             if r.returncode == 0:
@@ -619,9 +619,10 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 # Not OA, try direct PDF and publisher fallback
                 if not pmc_has_pdf:
                     print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
-                pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
+                if paper.get('pdf_url'):
+                    pdf_data = _download_direct_pdf(paper['pdf_url'], config, use_browser=use_browser)
                 if not pdf_data and paper.get('doi'):
-                    pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, use_browser=use_browser)
+                    pdf_data = _publisher_download(paper['doi'], paper.get('pmid'), config, use_browser=use_browser)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
     elif src in ('nature', 'science', 'cell', 'plos'):
@@ -648,8 +649,8 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 print(f"  [cnsp] has_pdf=True but no PMCID, skipping PMC download", file=sys.stderr)
 
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
-        if not pdf_data:
-            pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
+        if not pdf_data and paper.get('pdf_url'):
+            pdf_data = _download_direct_pdf(paper['pdf_url'], config, use_browser=use_browser)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
