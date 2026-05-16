@@ -206,7 +206,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
         tmp_path = await download.path()
         if tmp_path and os.path.exists(tmp_path):
             pdf_bytes = open(tmp_path, 'rb').read()
-            if pdf_bytes.startswith(b'%PDF') or len(pdf_bytes) >= 10000:
+            if pdf_bytes.startswith(b'%PDF'):
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, 'wb') as f:
                     f.write(pdf_bytes)
@@ -257,7 +257,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
                   file=sys.stderr)
         else:
             pdf_bytes = base64.b64decode(js_result['data'])
-            if pdf_bytes.startswith(b'%PDF') or len(pdf_bytes) >= 10000:
+            if pdf_bytes.startswith(b'%PDF'):
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, 'wb') as f:
                     f.write(pdf_bytes)
