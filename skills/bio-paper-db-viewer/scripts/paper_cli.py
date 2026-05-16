@@ -151,10 +151,13 @@ def cmd_list(args, config):
     src_w = 8
     st_w = 17
     date_w = 19
+    cnsp_w = 4
     j_w = 20
 
-    header = f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
-    sep = f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
+    cnsp_map = {'nature': 'N', 'science': 'S', 'cell': 'C', 'plos': 'P'}
+
+    header = f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
+    sep = f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
     print(header)
     print(sep)
 
@@ -166,6 +169,7 @@ def cmd_list(args, config):
         if len(title) > 58:
             title = title[:57] + '...'
         source = r['source'] or ''
+        cnsp = cnsp_map.get(source, '')
         if len(source) > src_w:
             source = source[:src_w - 1]
         status = r['status'] or ''
@@ -176,7 +180,7 @@ def cmd_list(args, config):
         if len(journal) > j_w:
             journal = journal[:j_w - 2] + '..'
 
-        print(f"{pid:<{id_w}} {title:<60} {source:<{src_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
+        print(f"{pid:<{id_w}} {title:<60} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
 
     showing = min(args.limit, len(rows))
     if total > args.limit:
