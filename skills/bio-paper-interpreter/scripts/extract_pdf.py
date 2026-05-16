@@ -18,6 +18,8 @@ import re
 import subprocess
 import sys
 
+from merge_split_images import merge_split_images
+
 
 def extract_with_pymupdf4llm(pdf_path, max_chars, image_path):
     """Extract PDF to Markdown using pymupdf4llm, save images, select representative.
@@ -45,6 +47,10 @@ def extract_with_pymupdf4llm(pdf_path, max_chars, image_path):
         )
 
         markdown = markdown[:max_chars]
+
+        merge_count, merged_names = merge_split_images(image_path)
+        if merge_count > 0:
+            print(f"  Merged {merge_count} split figure(s): {', '.join(merged_names)}", file=sys.stderr)
 
         images_dir = os.path.basename(image_path.rstrip('/')) + '/'
         rep_image_rel = select_representative_image(image_path, images_dir)
