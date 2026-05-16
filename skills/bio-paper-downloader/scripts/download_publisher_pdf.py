@@ -127,11 +127,16 @@ def doi_from_pmid(pmid):
 
 async def _wait_for_page(page, timeout=30):
     """Wait for anti-bot challenges (Cloudflare/reCAPTCHA) to resolve."""
-    for _ in range(timeout // 2):
+    for i in range(timeout // 2):
         await asyncio.sleep(2)
         try:
             t = (await page.title()).lower()
-            if 'moment' not in t and 'recaptcha' not in t and 'checking' not in t:
+            u = page.url.lower()
+            # Common anti-bot page indicators
+            blocked = ('moment' in t or 'recaptcha' in t or 'checking' in t or
+                      'challenge' in t or 'captcha' in t or 'attention required' in t or
+                      'cloudflare' in u or 'challenge' in u or 'access denied' in t)
+            if not blocked:
                 return True
         except Exception:
             if 'cloudflare' not in page.url.lower():
@@ -167,13 +172,25 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 return result
             print(f"  [publisher:{mode}] Landed on: {page.url}", file=sys.stderr)
 
+            # Verify page has real content (bot pages have very few links)
+            link_count = await page.evaluate('() => document.querySelectorAll("a").length')
+            if link_count < 5:
+                result['message'] = f'Page has no content ({link_count} links), likely blocked'
+                return result
+
             # Step 2: find PDF links on the article page
             pdf_links = await page.evaluate('''() => {
                 const found = [];
                 document.querySelectorAll('a').forEach(a => {
-                    const href = a.getAttribute('href');
+                    const href = a.getAttribute('href') || '';
                     const text = (a.innerText || '').toLowerCase().trim();
-                    if (href && href.endsWith('.pdf')) {
+                    // Direct PDF, showPdf (Cell/Elsevier), /pdf/ path, or text hint
+                    const isPdf = href.endsWith('.pdf') ||
+                        href.includes('showPdf') ||
+                        href.includes('/pdf/') ||
+                        href.includes('download') ||
+                        text.includes('pdf') || text.includes('download');
+                    if (isPdf && href && !href.startsWith('#')) {
                         found.push({href: href, text: text});
                     }
                 });
@@ -201,6 +218,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 h = link['href']
                 if 'download pdf' in t:
                     s += 100
+                if 'showpdf' in h.lower():
+                    s += 80
                 if 'supplement' in t or 'esm' in h.lower():
                     s -= 50
                 if 'reporting summary' in t:
