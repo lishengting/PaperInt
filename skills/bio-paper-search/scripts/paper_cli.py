@@ -500,7 +500,7 @@ def pubmed_api(endpoint, params, config):
         return None
 
 
-BATCH_SIZE = 200
+BATCH_SIZE = 1000
 
 
 def pubmed_fetch_abstracts(pmids, config):
@@ -592,9 +592,6 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
                    'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else doi}))
 
     return papers, total
-
-
-BATCH_SIZE = 200
 
 
 def _pubmed_esummary_batched(idlist, config):
