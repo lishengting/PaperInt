@@ -107,7 +107,7 @@ def cmd_stats(args, config):
 def cmd_list(args, config):
     conn = get_conn(config)
 
-    sql = 'SELECT paper_id, title, source, status, search_date FROM papers WHERE 1=1'
+    sql = 'SELECT paper_id, title, source, status, search_date, metadata_json FROM papers WHERE 1=1'
     params: list = []
 
     if args.status:
@@ -122,7 +122,7 @@ def cmd_list(args, config):
 
     # Total matching count (before LIMIT/OFFSET)
     count_sql = sql.replace(
-        'SELECT paper_id, title, source, status, search_date',
+        'SELECT paper_id, title, source, status, search_date, metadata_json',
         'SELECT COUNT(*) as cnt', 1
     )
     total = conn.execute(count_sql, params).fetchone()['cnt']
@@ -136,14 +136,27 @@ def cmd_list(args, config):
         print(f"No papers found{f' matching filters' if (args.status or args.source or args.keyword) else ''}.")
         return 0
 
+    # Parse journal from metadata_json for each row
+    def _get_journal(metadata_json):
+        if not metadata_json:
+            return ''
+        try:
+            meta = json.loads(metadata_json)
+            return meta.get('journal', '') or ''
+        except Exception:
+            return ''
+
     # Column widths
     id_w = 36
     src_w = 8
     st_w = 17
     date_w = 19
+    j_w = 20
 
-    print(f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'Status':<{st_w}} {'Date':<{date_w}}")
-    print(f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * st_w} {'─' * date_w}")
+    header = f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
+    sep = f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
+    print(header)
+    print(sep)
 
     for r in rows:
         pid = r['paper_id'] or ''
@@ -159,8 +172,11 @@ def cmd_list(args, config):
         date_str = r['search_date'] or ''
         if len(date_str) > date_w:
             date_str = date_str[:date_w]
+        journal = _get_journal(r['metadata_json'])
+        if len(journal) > j_w:
+            journal = journal[:j_w - 2] + '..'
 
-        print(f"{pid:<{id_w}} {title:<60} {source:<{src_w}} {status:<{st_w}} {date_str:<{date_w}}")
+        print(f"{pid:<{id_w}} {title:<60} {source:<{src_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
 
     showing = min(args.limit, len(rows))
     if total > args.limit:
