@@ -430,7 +430,7 @@ def preprint_search_title(title, config, server='biorxiv', use_browser=False):
     return papers, scanned
 
 
-def _get_or_start_chrome(headless=True):
+def _get_or_start_chrome(headless=True, fallback_to_headed=False):
     if headless:
         profile = os.path.join(tempfile.gettempdir(), 'paper_cli_cnsp_chrome')
     else:
@@ -442,7 +442,9 @@ def _get_or_start_chrome(headless=True):
         r2 = subprocess.run(['pgrep', '-a', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
         m = re.search(r'--remote-debugging-port=(\d+)', r2.stdout)
         if m:
-            return int(m.group(1))
+            port = int(m.group(1))
+            if _verify_chrome_port(port):
+                return port
 
     port = None
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -463,8 +465,27 @@ def _get_or_start_chrome(headless=True):
     cmd.append('about:blank')
 
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
-    time.sleep(3)
-    return port
+
+    if _verify_chrome_port(port):
+        return port
+
+    if headless and fallback_to_headed:
+        print("  Headless Chrome unavailable, falling back to headed mode...", file=sys.stderr)
+        return _get_or_start_chrome(headless=False, fallback_to_headed=False)
+
+    raise RuntimeError(f"Chrome failed to start on port {port} (headless={headless})")
+
+
+def _verify_chrome_port(port, timeout=5):
+    """Poll Chrome's /json/version endpoint to confirm it is listening."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version', timeout=1)
+            return True
+        except Exception:
+            time.sleep(0.5)
+    return False
 
 _shared_chrome_port = None
 
@@ -1021,11 +1042,17 @@ def cmd_search(args, config):
     elif source == 'scholar':
         papers, scanned = scholar_search(keywords, config, max_results=num)
     elif source == 'all':
+        chrome_port = None
+        try:
+            chrome_port = _get_or_start_chrome(headless=True, fallback_to_headed=args.browser)
+            _shared_chrome_port = chrome_port
+        except Exception as e:
+            print(f"  Chrome: {e}", file=sys.stderr)
         papers = search_all(keywords, config, max_results=num, use_browser=args.browser,
-                           sort_by='date', chrome_port=None,
+                           sort_by='date', chrome_port=chrome_port,
                            start_date=start_date, end_date=end_date)
     elif source == 'cnsp':
-        _shared_chrome_port = _get_or_start_chrome(headless=True)
+        _shared_chrome_port = _get_or_start_chrome(headless=True, fallback_to_headed=args.browser)
         from cnsp import cnsp_search
         cnsp_journals = getattr(args, 'cnsp_journals', None) or None
         papers = cnsp_search(keywords, config, max_results=num * 3,
@@ -1070,7 +1097,7 @@ def cmd_find(args, config):
         papers, scanned = scholar_search_title(args.title, config, 5)
     elif source == 'all':
         global _shared_chrome_port
-        _shared_chrome_port = _get_or_start_chrome()
+        _shared_chrome_port = _get_or_start_chrome(fallback_to_headed=args.browser)
         try:
             all_papers = []
             try:
