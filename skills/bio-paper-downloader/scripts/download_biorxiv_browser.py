@@ -162,9 +162,11 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
     print(f"  [browser] Navigating to PDF...", file=sys.stderr)
-    await page.goto(url_or_doi, wait_until='domcontentloaded',
+    await page.goto(url_or_doi, wait_until='networkidle',
                     timeout=timeout * 1000)
-    await asyncio.sleep(3)
+    # Some servers (PMC) serve an interstitial "Preparing to download..."
+    # page that auto-redirects via JS. Wait for the redirect to settle.
+    await asyncio.sleep(5)
 
     final_url = page.url
     ct = await page.evaluate('() => document.contentType')
