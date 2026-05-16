@@ -217,7 +217,7 @@ def _svg_to_png(svg_code, output_path):
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": w, "height": h})
+        page = browser.new_page(viewport={"width": w, "height": h}, device_scale_factor=2)
         page.set_content(svg_code)
         page.wait_for_timeout(500)  # let fonts/text layout settle
         page.screenshot(path=output_path, full_page=True)
