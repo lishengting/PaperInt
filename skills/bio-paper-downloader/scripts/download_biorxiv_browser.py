@@ -271,28 +271,6 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     except Exception as e:
         print(f"  [browser] JS fetch error: {e}", file=sys.stderr)
 
-    # Method 3: Save page via CDP (Page.printToPDF — generates from view,
-    # not ideal but may work as a last resort for text-based content).
-    try:
-        print(f"  [browser] Trying CDP Page.printToPDF...", file=sys.stderr)
-        cdp = await page.context.new_cdp_session(page)
-        pr = await cdp.send('Page.printToPDF', {
-            'printBackground': True,
-            'preferCSSPageSize': True,
-        })
-        pdf_bytes = base64.b64decode(pr['data'])
-        if len(pdf_bytes) >= 10000:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, 'wb') as f:
-                f.write(pdf_bytes)
-            result['success'] = True
-            result['file_path'] = str(output_path)
-            result['file_size'] = len(pdf_bytes)
-            result['message'] = f'OK (printToPDF): {len(pdf_bytes)} bytes'
-            return result
-    except Exception as e:
-        print(f"  [browser] Page.printToPDF error: {e}", file=sys.stderr)
-
     result['message'] = 'Unable to capture PDF data from browser'
     return result
 
@@ -483,11 +461,12 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
         chrome.stop()
 
 
-async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60):
+async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
+                               headed_fallback=False):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
-    Tries headless Chrome first (3 attempts), then falls back to headed (1 attempt).
+    Tries headless Chrome first (3 attempts), then falls back to headed if headed_fallback=True.
 
     Returns dict: {success, file_path, file_size, message}
     """
@@ -506,6 +485,9 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
         if 'Cloudflare' in result.get('message', ''):
             break
+
+    if not headed_fallback:
+        return result
 
     # Fallback to headed (3 attempts)
     print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
@@ -539,10 +521,13 @@ def main():
                    help='Path to Chrome binary (auto-detect if omitted)')
     p.add_argument('--timeout', type=int, default=60,
                    help='Page load timeout in seconds (default: 60)')
+    p.add_argument('--headed-fallback', action='store_true',
+                   help='Allow falling back to headed Chrome if headless fails')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
-        args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout))
+        args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout,
+        headed_fallback=args.headed_fallback))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

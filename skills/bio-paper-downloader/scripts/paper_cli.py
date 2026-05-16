@@ -394,11 +394,13 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
     return None
 
 
-def _publisher_download(doi, pmid, config):
+def _publisher_download(doi, pmid, config, use_browser=False):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     cmd = [sys.executable, script, '--doi', doi, '-o', '/dev/stdout',
            '--timeout', '180']
+    if use_browser:
+        cmd.append('--headed-fallback')
     with tempfile.TemporaryDirectory() as tmpdir:
         cmd[cmd.index('/dev/stdout')] = tmpdir
         r = subprocess.run(
@@ -418,7 +420,7 @@ def _is_pdf(data: bytes) -> bool:
     return data[:5] == b'%PDF-'
 
 
-def _download_direct_pdf(pdf_url, config):
+def _download_direct_pdf(pdf_url, config, use_browser=False):
     # Direct HTTP attempt
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
@@ -429,17 +431,20 @@ def _download_direct_pdf(pdf_url, config):
     except Exception:
         pass
 
-    # Browser fallback with retry (Chrome launch can fail transiently)
+    # Browser fallback (headless, +headed if use_browser)
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
+    cmd = [sys.executable, script, pdf_url, '-o', '/dev/stdout',
+           '--timeout', '180']
+    if use_browser:
+        cmd.append('--headed-fallback')
     for attempt in range(3):
         if attempt > 0:
             time.sleep(5 * attempt)
         with tempfile.TemporaryDirectory() as tmpdir:
+            cmd[cmd.index('/dev/stdout')] = tmpdir
             r = subprocess.run(
-                [sys.executable, script, pdf_url, '-o', tmpdir,
-                 '--timeout', '180'],
-                stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
+                cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
             if r.returncode == 0:
                 for f in os.listdir(tmpdir):
                     if f.endswith('.pdf'):
@@ -594,26 +599,14 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
         if pdf_url and use_browser:
-            for attempt in range(3):
-                print(f"  Trying direct PDF from Scholar (attempt {attempt+1}/3)...", file=sys.stderr)
-                pdf_data = _download_direct_pdf(pdf_url, config)
-                if pdf_data:
-                    break
-                if attempt < 2:
-                    time.sleep(5)
+            pdf_data = _download_direct_pdf(pdf_url, config, use_browser=use_browser)
         if not pdf_data and doi and use_browser:
-            for attempt in range(3):
-                print(f"  Trying publisher via DOI {doi} (attempt {attempt+1}/3)...", file=sys.stderr)
-                pdf_data = _publisher_download(doi, paper.get('pmid'), config)
-                if pdf_data:
-                    break
-                if attempt < 2:
-                    time.sleep(5)
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, use_browser=use_browser)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         if use_browser and paper.get('doi'):
-            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config)
+            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, use_browser=use_browser)
         if not pdf_data:
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
             if pmc_has_pdf:
@@ -623,25 +616,14 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 if pmc_id:
                     pdf_data = _download_pmc_pdf(pmc_id, config)
             if not pdf_data:
-                # Not OA, try direct PDF and publisher fallback (same as CNSP)
+                # Not OA, try direct PDF and publisher fallback
                 if not pmc_has_pdf:
                     print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
-                for attempt in range(3):
-                    if attempt > 0:
-                        time.sleep(5 * attempt)
-                    pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
-                    if pdf_data and _is_pdf(pdf_data):
-                        break
-                    pdf_data = None
+                pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
                 if not pdf_data and paper.get('doi'):
-                    for attempt in range(3):
-                        if attempt > 0:
-                            time.sleep(5 * attempt)
-                        pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config)
-                        if pdf_data:
-                            break
+                    pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, use_browser=use_browser)
     elif src == 'generic':
-        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -665,31 +647,17 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
             else:
                 print(f"  [cnsp] has_pdf=True but no PMCID, skipping PMC download", file=sys.stderr)
 
-        # Step 1: try direct PDF URL (retry 3x, with browser fallback built into _download_direct_pdf)
+        # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data:
-            for attempt in range(3):
-                if attempt > 0:
-                    delay = 5 * attempt
-                    print(f"  [cnsp] direct retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-                    time.sleep(delay)
-                pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
-                if pdf_data and _is_pdf(pdf_data):
-                    break
-                if pdf_data and not _is_pdf(pdf_data):
-                    print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
-                    pdf_data = None
+            pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser)
+            if pdf_data and not _is_pdf(pdf_data):
+                print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
+                pdf_data = None
 
-        # Step 2: if direct failed, use publisher download via DOI (scans article page for real PDF link)
+        # Step 2: if direct failed, use publisher download via DOI
         if not pdf_data and doi:
-            for attempt in range(3):
-                if attempt > 0:
-                    delay = 5 * attempt
-                    print(f"  [cnsp] publisher retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-                    time.sleep(delay)
-                print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
-                pdf_data = _publisher_download(doi, paper.get('pmid'), config)
-                if pdf_data:
-                    break
+            print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, use_browser=use_browser)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
@@ -709,12 +677,12 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                 pdf_data = download_preprint(adoi, alt_src, config, use_browser=use_browser)
             elif alt_src == 'scholar':
                 if alt.get('pdf_url') and use_browser:
-                    pdf_data = _download_direct_pdf(alt['pdf_url'], config)
+                    pdf_data = _download_direct_pdf(alt['pdf_url'], config, use_browser=use_browser)
                 if not pdf_data and alt.get('doi') and use_browser:
-                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config)
+                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, use_browser=use_browser)
             elif alt_src == 'pubmed':
                 if use_browser and alt.get('doi'):
-                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config)
+                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, use_browser=use_browser)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:

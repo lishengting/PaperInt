@@ -278,11 +278,12 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
 
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
-                                  chrome_bin=None, timeout=60):
+                                  chrome_bin=None, timeout=60,
+                                  headed_fallback=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
-    Tries headless Chrome first (3 attempts), then falls back to headed (1 attempt).
+    Tries headless Chrome first (3 attempts), then falls back to headed if headed_fallback=True.
 
     Returns dict: {success, file_path, file_size, message}
     """
@@ -319,6 +320,9 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         if 'Anti-bot' in result.get('message', ''):
             break
 
+    if not headed_fallback:
+        return result
+
     # Fallback to headed (3 attempts)
     print(f"  [publisher] falling back to headed Chrome...", file=sys.stderr)
     for attempt in range(3):
@@ -352,6 +356,8 @@ def main():
                    help='Path to Chrome binary (auto-detect if omitted)')
     p.add_argument('--timeout', type=int, default=60,
                    help='Page load timeout in seconds (default: 60)')
+    p.add_argument('--headed-fallback', action='store_true',
+                   help='Allow falling back to headed Chrome if headless fails')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -359,7 +365,8 @@ def main():
 
     result = asyncio.run(download_via_publisher(
         doi=args.doi, pmid=args.pmid, output_dir=args.output_dir,
-        chrome_bin=args.chrome_bin, timeout=args.timeout))
+        chrome_bin=args.chrome_bin, timeout=args.timeout,
+        headed_fallback=args.headed_fallback))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
