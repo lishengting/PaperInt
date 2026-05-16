@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -104,9 +105,10 @@ def extract_with_pdftotext(pdf_path, max_chars):
 
 
 def select_representative_image(image_dir, images_rel_prefix, min_area=40000):
-    """Select the most representative image: largest figure on early pages.
+    """Select the most representative image: largest figure on earliest page.
 
-    Parses page number from pymupdf4llm naming: {pdf}-{page:04d}-{idx:02d}.png.
+    Sorts candidates by floor(log(area)) descending (prefer larger images),
+    then by page number ascending (prefer earlier pages).
     Returns relative path like "images/paper.pdf-0003-05.png" or None.
     """
     image_files = _list_image_files(image_dir)
@@ -140,7 +142,7 @@ def select_representative_image(image_dir, images_rel_prefix, min_area=40000):
     if not candidates:
         return None
 
-    candidates.sort(key=lambda c: (c['area'] ** 0.5) / (c['page'] + 1), reverse=True)
+    candidates.sort(key=lambda c: (-int(math.log(c['area'])), c['page']))
     return images_rel_prefix + candidates[0]['filename']
 
 
