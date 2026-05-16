@@ -399,6 +399,8 @@ def process_paper(paper, config, phases, log_file):
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
             ok = run_phase4(paper_path, paper, config, log_file)
+            if ok:
+                run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
         if ok:
             print('OK')
