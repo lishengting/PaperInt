@@ -308,10 +308,10 @@ def run_phase3(paper_path, paper, config, log_file):
         cmd = [sys.executable, script, '--input', md_path, '--output', html_path]
         if rep_image_abs:
             cmd.extend(['--image', rep_image_abs])
-        poster_suffix = 'poster.zh.png' if name == 'interpret' else 'poster.direct.zh.png'
-        poster_path = os.path.join(paper_path, f'{safe_pid}.{poster_suffix}')
-        if os.path.exists(poster_path):
-            cmd.extend(['--poster', poster_path])
+        if name == 'interpret':
+            poster_path = os.path.join(paper_path, f'{safe_pid}.poster.zh.png')
+            if os.path.exists(poster_path):
+                cmd.extend(['--poster', poster_path])
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
