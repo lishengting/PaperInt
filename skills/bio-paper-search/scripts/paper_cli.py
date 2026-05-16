@@ -885,6 +885,16 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
         except Exception as e:
             print(f"  scholar: error - {e}", file=sys.stderr)
 
+        try:
+            from cnsp import cnsp_search
+            papers = cnsp_search(keywords, config, max_results=max_results * 3,
+                                 start_date=start_date, end_date=end_date,
+                                 chrome_port=chrome_port)
+            all_papers.extend(papers)
+            print(f"  cnsp: {len(papers)} results")
+        except Exception as e:
+            print(f"  cnsp: error - {e}", file=sys.stderr)
+
     if not all_papers:
         return []
 
