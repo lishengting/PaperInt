@@ -556,12 +556,12 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
 SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
 
 
-def download_paper(paper, config, data_dir, conn, use_browser=False):
+def download_paper(paper, config, data_dir, conn, use_browser=False, force=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
 
-    if is_downloaded(conn, pid):
+    if not force and is_downloaded(conn, pid):
         print(f"  [skip] already downloaded")
         return None
 
@@ -836,7 +836,7 @@ def cmd_get(args, config):
 
     conn = get_conn(config)
     ok = download_paper(paper, config, args.data_dir, conn,
-                        use_browser=args.browser)
+                        use_browser=args.browser, force=args.force)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -962,6 +962,8 @@ def main():
                     help='Paper ID from database (resolves URL automatically)')
     gp.add_argument('-l', '--list', action='store_true',
                     help='Parse and show paper info from the URL without downloading')
+    gp.add_argument('-f', '--force', action='store_true',
+                    help='Force re-download even if already downloaded')
 
     # ---- pdf ----
     pp = sub.add_parser(
