@@ -6,8 +6,8 @@ Pipeline:
   One-shot SVG  (methodology_model → deepseek-v4-pro):
     1. {pid}.poster.en.svg   — text→SVG, English
     2. {pid}.poster.zh.svg   — text→SVG, Chinese
-    3. {pid}.poster.en.png   — cairosvg render of #1
-    4. {pid}.poster.zh.png   — cairosvg render of #2
+    3. {pid}.poster.en.png   — browser render of #1 (CJK-safe)
+    4. {pid}.poster.zh.png   — browser render of #2 (CJK-safe)
 
   Direct PNG   (text→description→qwen-image-2.0-pro):
     5. {pid}.poster.direct.en.png  — English
@@ -192,6 +192,34 @@ def _validate_svg(svg_code):
         return True, None
     except Exception as e:
         return False, str(e)[:200]
+
+
+def _svg_to_png(svg_code, output_path):
+    """Render SVG to PNG using headless Chrome (supports CJK fonts)."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(f"  playwright not available, trying cairosvg...")
+        import cairosvg
+        cairosvg.svg2png(bytestring=svg_code.encode('utf-8'), write_to=output_path)
+        return
+
+    svg_bytes = svg_code.encode('utf-8')
+    svg_b64 = base64.b64encode(svg_bytes).decode('ascii')
+    html = f'<html><body style="margin:0"><img src="data:image/svg+xml;base64,{svg_b64}"></body></html>'
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html)
+        # Get SVG natural dimensions
+        dims = page.evaluate("""() => {
+            const img = document.querySelector('img');
+            return {w: img.naturalWidth || 1000, h: img.naturalHeight || 700};
+        }""")
+        page.set_viewport_size({"width": max(dims['w'], 100), "height": max(dims['h'], 100)})
+        page.screenshot(path=output_path, full_page=True)
+        browser.close()
 
 
 def _repair_svg(svg_code, error_msg, api_key, model, base_url):
@@ -432,11 +460,10 @@ def main():
             print(f"  Saved: {svg_path} ({len(svg):,} chars)")
             results.append(svg_path)
 
-            # Render to PNG
+            # Render to PNG via headless Chrome (supports CJK)
             try:
-                import cairosvg
                 png_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.png')
-                cairosvg.svg2png(bytestring=svg.encode('utf-8'), write_to=png_path)
+                _svg_to_png(svg, png_path)
                 print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
                 results.append(png_path)
             except Exception as e:
