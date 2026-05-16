@@ -272,8 +272,13 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
                   file=sys.stderr)
             # Show what the browser actually returned for debugging
             try:
-                preview = pdf_bytes[:500].decode('utf-8', errors='replace')
-                print(f"  [browser] Response preview: {preview}", file=sys.stderr)
+                preview = pdf_bytes[:3000].decode('utf-8', errors='replace')
+                print(f"  [browser] Response preview:\n{preview}", file=sys.stderr)
+            except Exception:
+                pass
+            # Also show the current page URL after any redirects
+            try:
+                print(f"  [browser] Final URL: {page.url}", file=sys.stderr)
             except Exception:
                 pass
     except Exception as e:
