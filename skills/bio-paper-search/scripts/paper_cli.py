@@ -500,33 +500,40 @@ def pubmed_api(endpoint, params, config):
         return None
 
 
+BATCH_SIZE = 200
+
+
 def pubmed_fetch_abstracts(pmids, config):
     if not pmids:
         return {}
-    url = f"{PUBMED_BASE}/efetch.fcgi"
-    params = urllib.parse.urlencode({
-        'db': 'pubmed', 'id': ','.join(pmids),
-        'rettype': 'abstract', 'retmode': 'xml',
-        'tool': 'PaperInt',
-        'email': cfg(config, 'download.user_agent', ''),
-    })
-    req = urllib.request.Request(f"{url}?{params}", headers={'User-Agent': ua(config)})
-    try:
-        with _urlopen_with_retry(req, config, attempts=3) as r:
-            xml_text = r.read().decode('utf-8')
-    except Exception as e:
-        print(f"  PubMed efetch error: {e}", file=sys.stderr)
-        return {}
-
     abstracts = {}
-    for m in re.finditer(
-        r'<PubmedArticle>.*?<PMID[^>]*>(\d+)</PMID>.*?<Abstract>(.*?)</Abstract>',
-        xml_text, re.DOTALL
-    ):
-        pmid = m.group(1)
-        abs_text = re.sub(r'<[^>]+>', ' ', m.group(2)).strip()
-        abs_text = re.sub(r'\s+', ' ', abs_text)
-        abstracts[pmid] = abs_text
+    url = f"{PUBMED_BASE}/efetch.fcgi"
+    for i in range(0, len(pmids), BATCH_SIZE):
+        batch = pmids[i:i + BATCH_SIZE]
+        params = urllib.parse.urlencode({
+            'db': 'pubmed', 'id': ','.join(batch),
+            'rettype': 'abstract', 'retmode': 'xml',
+            'tool': 'PaperInt',
+            'email': cfg(config, 'download.user_agent', ''),
+        })
+        req = urllib.request.Request(f"{url}?{params}", headers={'User-Agent': ua(config)})
+        try:
+            with _urlopen_with_retry(req, config, attempts=3) as r:
+                xml_text = r.read().decode('utf-8')
+        except Exception as e:
+            print(f"  PubMed efetch error: {e}", file=sys.stderr)
+            if not abstracts:
+                return {}
+            continue
+
+        for m in re.finditer(
+            r'<PubmedArticle>.*?<PMID[^>]*>(\d+)</PMID>.*?<Abstract>(.*?)</Abstract>',
+            xml_text, re.DOTALL
+        ):
+            pmid = m.group(1)
+            abs_text = re.sub(r'<[^>]+>', ' ', m.group(2)).strip()
+            abs_text = re.sub(r'\s+', ' ', abs_text)
+            abstracts[pmid] = abs_text
     return abstracts
 
 
@@ -549,9 +556,7 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
     if not idlist:
         return [], total
 
-    sm = pubmed_api('esummary.fcgi', {
-        'db': 'pubmed', 'id': ','.join(idlist),
-    }, config)
+    sm = _pubmed_esummary_batched(idlist, config)
     if not sm:
         return [], total
 
@@ -587,6 +592,24 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
                    'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else doi}))
 
     return papers, total
+
+
+BATCH_SIZE = 200
+
+
+def _pubmed_esummary_batched(idlist, config):
+    """Call esummary.fcgi in batches, merging results."""
+    merged = None
+    for i in range(0, len(idlist), BATCH_SIZE):
+        batch = idlist[i:i + BATCH_SIZE]
+        sm = pubmed_api('esummary.fcgi', {'db': 'pubmed', 'id': ','.join(batch)}, config)
+        if not sm:
+            return None
+        if merged is None:
+            merged = sm
+        else:
+            merged['result'].update(sm.get('result', {}))
+    return merged
 
 
 def pubmed_search_title(title, config, max_results=10):
