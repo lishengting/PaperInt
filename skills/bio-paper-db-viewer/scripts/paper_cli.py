@@ -156,7 +156,7 @@ def cmd_list(args, config):
 
     def _load_cnsp_map():
         cnsp_cfg = config.get('cnsp', {})
-        flagships = {'Nature', 'Science', 'Cell'}
+        flagships = {'Nature', 'Science', 'Cell', 'PLOS Biology', 'PLOS Medicine'}
         journal_map = {}
         for key, letter in [('nature_journals', 'n'), ('science_journals', 's'),
                             ('cell_journals', 'c'), ('plos_journals', 'p')]:
