@@ -430,7 +430,7 @@ def preprint_search_title(title, config, server='biorxiv', use_browser=False):
     return papers, scanned
 
 
-def _get_or_start_chrome(headless=False):
+def _get_or_start_chrome(headless=True):
     if headless:
         profile = os.path.join(tempfile.gettempdir(), 'paper_cli_cnsp_chrome')
     else:
@@ -877,23 +877,22 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
     except Exception as e:
         print(f"  pubmed: error - {e}", file=sys.stderr)
 
-    if use_browser:
-        try:
-            papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
-            all_papers.extend(papers)
-            print(f"  scholar: {len(papers)} results")
-        except Exception as e:
-            print(f"  scholar: error - {e}", file=sys.stderr)
+    try:
+        papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
+        all_papers.extend(papers)
+        print(f"  scholar: {len(papers)} results")
+    except Exception as e:
+        print(f"  scholar: error - {e}", file=sys.stderr)
 
-        try:
-            from cnsp import cnsp_search
-            papers = cnsp_search(keywords, config, max_results=max_results * 3,
-                                 start_date=start_date, end_date=end_date,
-                                 chrome_port=chrome_port)
-            all_papers.extend(papers)
-            print(f"  cnsp: {len(papers)} results")
-        except Exception as e:
-            print(f"  cnsp: error - {e}", file=sys.stderr)
+    try:
+        from cnsp import cnsp_search
+        papers = cnsp_search(keywords, config, max_results=max_results * 3,
+                             start_date=start_date, end_date=end_date,
+                             chrome_port=chrome_port)
+        all_papers.extend(papers)
+        print(f"  cnsp: {len(papers)} results")
+    except Exception as e:
+        print(f"  cnsp: error - {e}", file=sys.stderr)
 
     if not all_papers:
         return []
@@ -1020,29 +1019,19 @@ def cmd_search(args, config):
         papers, scanned = pubmed_search(keywords, config, max_results=num * 5,
                                          start_date=start_date, end_date=end_date)
     elif source == 'scholar':
-        if not args.browser:
-            print("Warning: --browser not specified, skipping Google Scholar", file=sys.stderr)
-            papers = []
-        else:
-            papers, scanned = scholar_search(keywords, config, max_results=num)
+        papers, scanned = scholar_search(keywords, config, max_results=num)
     elif source == 'all':
-        if not args.browser:
-            print("Warning: --browser not specified, skipping Google Scholar", file=sys.stderr)
         papers = search_all(keywords, config, max_results=num, use_browser=args.browser,
                            sort_by='date', chrome_port=None,
                            start_date=start_date, end_date=end_date)
     elif source == 'cnsp':
-        if not args.browser:
-            print("Warning: --browser not specified, skipping CNSP", file=sys.stderr)
-            papers = []
-        else:
-            _shared_chrome_port = _get_or_start_chrome(headless=True)
-            from cnsp import cnsp_search
-            cnsp_journals = getattr(args, 'cnsp_journals', None) or None
-            papers = cnsp_search(keywords, config, max_results=num * 3,
-                                 start_date=start_date, end_date=end_date,
-                                 cnsp_journals=cnsp_journals,
-                                 chrome_port=_shared_chrome_port)
+        _shared_chrome_port = _get_or_start_chrome(headless=True)
+        from cnsp import cnsp_search
+        cnsp_journals = getattr(args, 'cnsp_journals', None) or None
+        papers = cnsp_search(keywords, config, max_results=num * 3,
+                             start_date=start_date, end_date=end_date,
+                             cnsp_journals=cnsp_journals,
+                             chrome_port=_shared_chrome_port)
     else:
         print(f"Unknown source: {source}", file=sys.stderr)
         return 1
@@ -1078,17 +1067,10 @@ def cmd_find(args, config):
     elif source == 'pubmed':
         papers, scanned = pubmed_search_title(args.title, config, 10)
     elif source == 'scholar':
-        if not args.browser:
-            print("Warning: --browser not specified, skipping Google Scholar", file=sys.stderr)
-            papers = []
-        else:
-            papers, scanned = scholar_search_title(args.title, config, 5)
+        papers, scanned = scholar_search_title(args.title, config, 5)
     elif source == 'all':
-        if not args.browser:
-            print("Warning: --browser not specified, skipping Google Scholar", file=sys.stderr)
-        else:
-            global _shared_chrome_port
-            _shared_chrome_port = _get_or_start_chrome()
+        global _shared_chrome_port
+        _shared_chrome_port = _get_or_start_chrome()
         try:
             all_papers = []
             try:
