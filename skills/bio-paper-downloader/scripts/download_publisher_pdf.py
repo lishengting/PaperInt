@@ -229,7 +229,13 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         href.includes('/pdf/') ||
                         href.includes('download') ||
                         text.includes('pdf') || text.includes('download');
-                    if (isPdf && href && !href.startsWith('#')) {
+                    // Exclude citation/reference export links
+                    const isCitation = href.includes('citation-needed') ||
+                        href.includes('format=refman') ||
+                        href.includes('format=ris') ||
+                        href.includes('format=bibtex') ||
+                        (text.includes('citation') && !text.includes('pdf'));
+                    if (isPdf && !isCitation && href && !href.startsWith('#')) {
                         found.push({href: href, text: text});
                     }
                 });
@@ -266,6 +272,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     s -= 50
                 if 'reporting summary' in t:
                     s -= 50
+                if 'citation' in t or 'citation-needed' in h:
+                    s -= 200
+                if any(x in h for x in ('format=refman', 'format=ris', 'format=bibtex')):
+                    s -= 200
                 s -= len(h)
                 return s
 
@@ -284,8 +294,16 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             # Step 3: navigate to PDF
             print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
-            await page.goto(pdf_url, wait_until='domcontentloaded',
-                            timeout=timeout * 1000)
+            try:
+                await page.goto(pdf_url, wait_until='domcontentloaded',
+                                timeout=timeout * 1000)
+            except Exception as e:
+                msg = str(e)
+                if 'Download is starting' in msg:
+                    result['message'] = 'PDF URL triggered download (not a PDF)'
+                else:
+                    result['message'] = f'Navigation failed: {msg[:200]}'
+                return result
             await asyncio.sleep(3)
 
             ct = await page.evaluate('() => document.contentType')
