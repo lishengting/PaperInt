@@ -204,20 +204,22 @@ def _svg_to_png(svg_code, output_path):
         cairosvg.svg2png(bytestring=svg_code.encode('utf-8'), write_to=output_path)
         return
 
-    svg_bytes = svg_code.encode('utf-8')
-    svg_b64 = base64.b64encode(svg_bytes).decode('ascii')
-    html = f'<html><body style="margin:0"><img src="data:image/svg+xml;base64,{svg_b64}"></body></html>'
+    # Parse viewBox from SVG for correct dimensions
+    vb_match = re.search(r'viewBox=["\']([^"\']*)["\']', svg_code)
+    if vb_match:
+        parts = vb_match.group(1).split()
+        if len(parts) >= 4:
+            w, h = int(float(parts[2])), int(float(parts[3]))
+        else:
+            w, h = 1200, 800
+    else:
+        w, h = 1200, 800
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page()
-        page.set_content(html)
-        # Get SVG natural dimensions
-        dims = page.evaluate("""() => {
-            const img = document.querySelector('img');
-            return {w: img.naturalWidth || 1000, h: img.naturalHeight || 700};
-        }""")
-        page.set_viewport_size({"width": max(dims['w'], 100), "height": max(dims['h'], 100)})
+        page = browser.new_page(viewport={"width": w, "height": h})
+        page.set_content(svg_code)
+        page.wait_for_timeout(500)  # let fonts/text layout settle
         page.screenshot(path=output_path, full_page=True)
         browser.close()
 
@@ -413,7 +415,10 @@ def generate_direct_png(paper_text, language, api_key, text_model, text_base, en
 
     # Step 2: Generate image from description
     print(f"  Step 2: Generating image...")
-    enh_prompt = f"Create a professional scientific poster figure based on this description:\n\n{description}"
+    if language == 'zh':
+        enh_prompt = f"请根据以下描述创建一张专业科学海报图。图中所有文字必须是中文：\n\n{description}"
+    else:
+        enh_prompt = f"Create a professional scientific poster figure based on this description. All text in the image must be in English:\n\n{description}"
     return _enhance_via_dashscope(output_path, enh_prompt, api_key, enh_model)
 
 
