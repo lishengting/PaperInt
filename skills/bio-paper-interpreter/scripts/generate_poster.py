@@ -215,13 +215,9 @@ def _svg_to_png(svg_code, output_path):
     else:
         w, h = 1200, 800
 
-    # Scale up so the longer side is at least 1200
-    scale = max(1200 / max(w, h), 1.0)
-    w, h = int(w * scale), int(h * scale)
-
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": w, "height": h}, device_scale_factor=2)
+        page = browser.new_page(viewport={"width": w, "height": h})
         page.set_content(svg_code)
         page.wait_for_timeout(500)  # let fonts/text layout settle
         page.screenshot(path=output_path, full_page=True)
