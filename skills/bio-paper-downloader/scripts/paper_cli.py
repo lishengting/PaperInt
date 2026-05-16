@@ -622,8 +622,24 @@ def download_paper(paper, config, data_dir, conn, use_browser=False):
                     pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
                 if pmc_id:
                     pdf_data = _download_pmc_pdf(pmc_id, config)
-            else:
-                print(f"  [info] not OA via PMC (has_pdf=False), skipping PMC download", file=sys.stderr)
+            if not pdf_data:
+                # Not OA, try direct PDF and publisher fallback (same as CNSP)
+                if not pmc_has_pdf:
+                    print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
+                for attempt in range(3):
+                    if attempt > 0:
+                        time.sleep(5 * attempt)
+                    pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
+                    if pdf_data and _is_pdf(pdf_data):
+                        break
+                    pdf_data = None
+                if not pdf_data and paper.get('doi'):
+                    for attempt in range(3):
+                        if attempt > 0:
+                            time.sleep(5 * attempt)
+                        pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config)
+                        if pdf_data:
+                            break
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config)
     elif src in ('nature', 'science', 'cell', 'plos'):
