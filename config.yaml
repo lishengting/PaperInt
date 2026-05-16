@@ -238,27 +238,12 @@ llm:
   max_tokens: 100000
   timeout_seconds: 600
 
-# --- AutoFigure Poster Generation (Phase 4, optional) ---
+# --- AutoFigure Poster Generation (Phase 4) ---
 autofigure:
-  api_key_env: "LLM_API_KEY"     # env var or direct value
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  max_iterations: 5
-  enable_enhancement: false
-
-  # Three models required by the AutoFigure pipeline:
-  #   1. methodology_model — text LLM, extracts methodology from paper text
-  #   2. generation_model  — vision LLM, generates SVG from text + reference images
-  #   3. enhancement_model — image generation, beautifies final PNG (optional)
-  #   4. repair_model      — text LLM, fixes SVG XML syntax errors (defaults to methodology_model)
+  api_key_env: "LLM_API_KEY"
   methodology_model: "deepseek-v4-pro"
   methodology_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  generation_model: "qwen3-vl-plus"
-  generation_provider: "openrouter"
   enhancement_model: "qwen-image-2.0-pro"
-  enhancement_provider: "openrouter"
-  enhancement_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  repair_model: "deepseek-v4-pro"
-  repair_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 # --- Database ---
 db:

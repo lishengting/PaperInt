@@ -322,128 +322,51 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
-def run_phase4(paper_path, paper, config, log_file, enable_enhancement=False, poster_only=False, poster_direct=False):
-    """Generate a poster SVG using AutoFigure."""
+def run_phase4(paper_path, paper, config, log_file):
+    """Generate 6 posters: 2 one-shot SVG + 2 rendered PNG + 2 direct PNG."""
     paper_id = paper['paper_id']
-    safe_pid = sanitize(paper_id)
 
     af_config = cfg(config, 'autofigure', {})
-    api_key_env = af_config.get('api_key_env', 'AUTOFIGURE_API_KEY')
+    api_key_env = af_config.get('api_key_env', 'LLM_API_KEY')
     api_key = os.environ.get(api_key_env, '')
     if not api_key and len(api_key_env) > 20:
-        api_key = api_key_env  # direct value in config
+        api_key = api_key_env
 
     if not api_key:
-        log_phase(log_file, paper_id, 4, 'SKIPPED', 'no AutoFigure API key')
-        return True  # optional phase — not a failure
+        log_phase(log_file, paper_id, 4, 'SKIPPED', 'no API key')
+        return True
 
     script = os.path.join(SKILL_DIR, 'generate_poster.py')
-    enh_model = af_config.get('enhancement_model', '')
-    enh_provider = af_config.get('enhancement_provider', 'openrouter')
-    enh_base_url = af_config.get('enhancement_base_url', '')
     meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
-    meth_base_url = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
+    meth_base = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
+    enh_model = af_config.get('enhancement_model', 'qwen-image-2.0-pro')
 
-    if poster_direct:
-        pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
-        if not os.path.exists(pdf_path):
-            log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF for direct generation')
-            return False
-        cmd = [sys.executable, script, pdf_path,
-               '--output-dir', paper_path,
-               '--paper-id', paper_id,
-               '--api-key', api_key,
-               '--methodology-model', meth_model,
-               '--methodology-base-url', meth_base_url,
-               '--enhancement-model', enh_model,
-               '--direct']
-        try:
-            result = subprocess.run(cmd, timeout=600,
-                                    env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'})
-            if result.returncode != 0:
-                log_phase(log_file, paper_id, 4, 'FAILED', f'direct exit code {result.returncode}')
-                return False
-        except subprocess.TimeoutExpired:
-            log_phase(log_file, paper_id, 4, 'FAILED', 'direct timeout')
-            return False
-        log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster direct')
-        return True
+    cmd = [sys.executable, script,
+           '--paper-dir', paper_path,
+           '--paper-id', paper_id,
+           '--api-key', api_key,
+           '--methodology-model', meth_model,
+           '--methodology-base-url', meth_base,
+           '--enhancement-model', enh_model]
 
-    if poster_only:
-        # Find existing poster PNG to enhance
-        png_path = os.path.join(paper_path, 'poster', 'figure_final.png')
-        if not os.path.exists(png_path):
-            log_phase(log_file, paper_id, 4, 'FAILED', 'no poster/figure_final.png to enhance')
-            return False
-        cmd = [sys.executable, script, png_path,
-               '--output-dir', paper_path,
-               '--paper-id', paper_id,
-               '--api-key', api_key,
-               '--enhancement-model', enh_model,
-               '--enhancement-provider', enh_provider,
-               '--enhancement-base-url', enh_base_url or af_config.get('base_url', ''),
-               '--enhance-only', png_path]
-        try:
-            result = subprocess.run(cmd, timeout=600,
-                                    env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'})
-            if result.returncode != 0:
-                log_phase(log_file, paper_id, 4, 'FAILED', f'enhance exit code {result.returncode}')
-                return False
-        except subprocess.TimeoutExpired:
-            log_phase(log_file, paper_id, 4, 'FAILED', 'enhance timeout')
-            return False
-        log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster enhanced')
-        return True
-
-    pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
-    if not os.path.exists(pdf_path):
-        log_phase(log_file, paper_id, 4, 'FAILED', 'no PDF file')
-        return False
-    gen_model = af_config.get('generation_model', 'qwen-vl-max')
-    gen_provider = af_config.get('generation_provider', 'openrouter')
-    meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
-    meth_base_url = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
-    enh_model = af_config.get('enhancement_model', '')
-    enh_provider = af_config.get('enhancement_provider', 'openrouter')
-    enh_base_url = af_config.get('enhancement_base_url', '')
-    repair_model = af_config.get('repair_model') or meth_model
-    repair_base_url = af_config.get('repair_base_url') or meth_base_url
     try:
-        result = subprocess.run(
-            [sys.executable, script, pdf_path,
-             '--output-dir', paper_path,
-             '--paper-id', paper_id,
-             '--api-key', api_key,
-             '--provider', gen_provider,
-             '--model', gen_model,
-             '--base-url', af_config.get('base_url', ''),
-             '--max-iterations', str(af_config.get('max_iterations', 5)),
-             '--methodology-model', meth_model,
-             '--methodology-base-url', meth_base_url,
-             '--enhancement-model', enh_model,
-             '--enhancement-provider', enh_provider,
-             '--enhancement-base-url', enh_base_url,
-             '--repair-model', repair_model,
-             '--repair-base-url', repair_base_url,
-             *(['--enable-enhancement'] if (enable_enhancement or af_config.get('enable_enhancement')) else [])],
-            timeout=10800,
-            env={**os.environ, api_key_env: api_key, 'PYTHONUNBUFFERED': '1'},
-        )
+        result = subprocess.run(cmd, timeout=1200,
+                                env={**os.environ, 'PYTHONUNBUFFERED': '1'})
         if result.returncode != 0:
             log_phase(log_file, paper_id, 4, 'FAILED', f'exit code {result.returncode}')
             return False
     except subprocess.TimeoutExpired:
-        log_phase(log_file, paper_id, 4, 'FAILED', 'timeout after 1800s')
+        log_phase(log_file, paper_id, 4, 'FAILED', 'timeout')
         return False
     except Exception as e:
         log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
         return False
 
-    log_phase(log_file, paper_id, 4, 'COMPLETED', 'poster saved')
+    log_phase(log_file, paper_id, 4, 'COMPLETED', '6 posters generated')
     return True
 
 
-def process_paper(paper, config, phases, log_file, enable_enhancement=False, poster_only=False, poster_direct=False):
+def process_paper(paper, config, phases, log_file):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -471,7 +394,7 @@ def process_paper(paper, config, phases, log_file, enable_enhancement=False, pos
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file, enable_enhancement, poster_only, poster_direct)
+            ok = run_phase4(paper_path, paper, config, log_file)
 
         if ok:
             print('OK')
@@ -508,15 +431,9 @@ def cmd_run(args, config):
 
     print(f"Papers to interpret: {len(papers)}")
     print(f"Phases: {sorted(phases)}")
-
-    poster_enabled = getattr(args, 'poster', False)
-    poster_only = getattr(args, 'poster_only', False)
-    poster_direct = getattr(args, 'poster_direct', False)
-    if poster_only or poster_direct:
-        poster_enabled = True
     for i, paper in enumerate(papers):
         print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file, poster_enabled, poster_only, poster_direct)
+        process_paper(paper, config, phases, log_file)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -537,12 +454,6 @@ def main():
                    help='Path to shared YAML config file')
     p.add_argument('--dry-run', action='store_true',
                    help='List papers that would be processed, then exit')
-    p.add_argument('--poster', action='store_true',
-                   help='Enable AutoFigure enhancement for Phase 4')
-    p.add_argument('--poster-only', action='store_true',
-                   help='Only enhance existing poster (skip generation iterations)')
-    p.add_argument('--poster-direct', action='store_true',
-                   help='Direct text-to-image poster (skip SVG pipeline entirely)')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to process')
 
@@ -554,12 +465,6 @@ def main():
     run_p.add_argument('paper_id', help='Paper ID to interpret')
     run_p.add_argument('--phase', default=None,
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
-    run_p.add_argument('--poster', action='store_true',
-                       help='Enable AutoFigure enhancement for Phase 4')
-    run_p.add_argument('--poster-only', action='store_true',
-                       help='Only enhance existing poster (skip generation iterations)')
-    run_p.add_argument('--poster-direct', action='store_true',
-                       help='Direct text-to-image poster (skip SVG pipeline entirely)')
 
     args = p.parse_args()
 

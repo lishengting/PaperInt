@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-Generate a poster SVG from a paper PDF using AutoFigure.
+Zero-shot poster generation — 6 outputs per paper, no AutoFigure dependency.
 
-Uses AutoFigure's generate_from_paper() which extracts the paper's methodology
-via LLM and iteratively refines a publication-ready SVG diagram.
+Pipeline:
+  One-shot SVG  (methodology_model → deepseek-v4-pro):
+    1. {pid}.poster.en.svg   — text→SVG, English
+    2. {pid}.poster.zh.svg   — text→SVG, Chinese
+    3. {pid}.poster.en.png   — cairosvg render of #1
+    4. {pid}.poster.zh.png   — cairosvg render of #2
+
+  Direct PNG   (text→description→qwen-image-2.0-pro):
+    5. {pid}.poster.direct.en.png  — English
+    6. {pid}.poster.direct.zh.png  — Chinese
 
 Usage:
-  generate_poster.py paper.pdf --output-dir /path/to/output --paper-id 2605.10876
+  generate_poster.py --paper-dir /path/to/paper --paper-id ID --api-key KEY
 """
 
 import argparse
@@ -14,15 +22,15 @@ import base64
 import json
 import os
 import re
-import shutil
 import sys
 import time
 import urllib.request
 
 # --- Token usage tracking ---
-_token_usage = {}  # model -> {prompt_tokens, completion_tokens, calls}
+_token_usage = {}
 _enhancement_calls = 0
 _enhancement_model = None
+
 
 def _record_usage(model, prompt_tokens, completion_tokens):
     if model not in _token_usage:
@@ -30,6 +38,7 @@ def _record_usage(model, prompt_tokens, completion_tokens):
     _token_usage[model]['prompt_tokens'] += prompt_tokens
     _token_usage[model]['completion_tokens'] += completion_tokens
     _token_usage[model]['calls'] += 1
+
 
 def _print_usage_summary():
     print()
@@ -55,177 +64,15 @@ def _print_usage_summary():
         print(f"  Enhancement calls: {_enhancement_calls}")
     print("=" * 60)
 
-def _patch_token_tracking():
-    """Monkey-patch AutoFigure internals to track token usage across all models."""
-    import autofigure.generator as af_gen
-    import autofigure.utils.llm_client as af_llm
 
-    # --- Patch _call_openai_compatible (generation + evaluation model) ---
-    _orig_openai_call = af_gen._call_openai_compatible
-
-    def _patched_openai_call(contents, api_key=None, model=None, base_url=None):
-        from openai import OpenAI
-        import io as _io, base64 as _b64
-        from PIL import Image as _Image
-
-        client = OpenAI(base_url=base_url, api_key=api_key)
-        message_content = []
-        for part in contents:
-            if isinstance(part, str):
-                message_content.append({"type": "text", "text": part})
-            elif isinstance(part, _Image.Image):
-                buf = _io.BytesIO()
-                part.save(buf, format='PNG')
-                image_b64 = _b64.b64encode(buf.getvalue()).decode('utf-8')
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
-                })
-
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": message_content}]
-        )
-        if completion and completion.usage:
-            _record_usage(model or 'unknown',
-                         completion.usage.prompt_tokens,
-                         completion.usage.completion_tokens)
-        return completion.choices[0].message.content if completion and completion.choices else None
-
-    af_gen._call_openai_compatible = _patched_openai_call
-
-    # --- Patch LLMClient.call (methodology model) ---
-    _orig_llm_call = af_llm.LLMClient.call
-
-    def _patched_llm_call(self, contents, temperature=0.7, max_tokens=None):
-        from openai import OpenAI
-        import io as _io, base64 as _b64
-        from PIL import Image as _Image
-
-        client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-        message_content = []
-        for part in contents:
-            if isinstance(part, str):
-                message_content.append({"type": "text", "text": part})
-            elif isinstance(part, _Image.Image):
-                buf = _io.BytesIO()
-                part.save(buf, format='PNG')
-                image_b64 = _b64.b64encode(buf.getvalue()).decode('utf-8')
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
-                })
-
-        kwargs = {"model": self.model, "messages": [{"role": "user", "content": message_content}],
-                  "temperature": temperature}
-        if max_tokens:
-            kwargs["max_tokens"] = max_tokens
-        completion = client.chat.completions.create(**kwargs)
-        if completion and completion.usage:
-            _record_usage(self.model or 'unknown',
-                         completion.usage.prompt_tokens,
-                         completion.usage.completion_tokens)
-        return completion.choices[0].message.content if completion and completion.choices else None
-
-    af_llm.LLMClient.call = _patched_llm_call
-
-    # --- Patch ImageEnhancer.enhance (enhancement model) ---
-    import autofigure.enhancer as af_enhancer
-    _orig_enhance = af_enhancer.ImageEnhancer.enhance
-
-    def _patched_enhance(self, input_path, output_path=None, enhancement_input="",
-                        style=None, input_type="code2prompt"):
-        global _enhancement_calls, _enhancement_model
-        _enhancement_model = _enhancement_model or self.config.enhancement_model
-        _enhancement_calls += 1
-        return _orig_enhance(self, input_path, output_path, enhancement_input,
-                            style, input_type)
-
-    af_enhancer.ImageEnhancer.enhance = _patched_enhance
-
-    # --- Patch _enhance_with_openrouter to detect DashScope ---
-    global _orig_enhance_openrouter
-    _orig_enhance_openrouter = af_enhancer.ImageEnhancer._enhance_with_openrouter
-
-    def _patched_enhance_openrouter(self, input_path, enhancement_input, output_path,
-                                    style="", input_type="code2prompt", api_key=None,
-                                    base_url=None, model=None):
-        if base_url and 'dashscope' in base_url.lower():
-            prompt = self._build_enhancement_prompt(style, enhancement_input, input_type)
-            return _enhance_via_dashscope(input_path, output_path, prompt,
-                                         api_key, model or 'qwen-image-2.0-pro', base_url)
-        return _orig_enhance_openrouter(self, input_path, enhancement_input, output_path,
-                                       style, input_type, api_key, base_url, model)
-
-    af_enhancer.ImageEnhancer._enhance_with_openrouter = _patched_enhance_openrouter
-
-    return _orig_openai_call, _orig_llm_call, _orig_enhance, _orig_enhance_openrouter
-
-
-def _enhance_via_dashscope(input_path, output_path, prompt, api_key, model, base_url):
-    """Generate/enhance an image using DashScope's multimodal-generation API."""
-    import requests as _requests
-
-    content = [{"text": prompt}]
-    if input_path and os.path.exists(input_path):
-        with open(input_path, "rb") as f:
-            image_b64 = base64.b64encode(f.read()).decode("utf-8")
-        content.append({"image": f"data:image/png;base64,{image_b64}"})
-
-    url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-    body = {
-        "model": model,
-        "input": {
-            "messages": [{
-                "role": "user",
-                "content": content
-            }]
-        }
-    }
-    print(f"[DashScope] Calling multimodal-generation API, model={model}...")
-    resp = _requests.post(url, headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }, json=body, timeout=300)
-
-    if resp.status_code != 200:
-        print(f"[DashScope] API error: {resp.status_code} - {resp.text[:500]}")
-        return None
-
-    result = resp.json()
-    try:
-        image_url = result["output"]["choices"][0]["message"]["content"][0]["image"]
-    except (KeyError, IndexError, TypeError):
-        debug_path = output_path.replace(".png", "_dashscope_response.json")
-        with open(debug_path, "w") as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        print(f"[DashScope] Unexpected response, debug saved: {debug_path}")
-        return None
-
-    # Download the generated image
-    print(f"[DashScope] Downloading enhanced image...")
-    img_resp = _requests.get(image_url, timeout=60)
-    if img_resp.status_code == 200:
-        with open(output_path, "wb") as f:
-            f.write(img_resp.content)
-        usage = result.get("usage", {})
-        print(f"[DashScope] Enhanced: {usage.get('width')}x{usage.get('height')}, "
-              f"{usage.get('image_count', 1)} image(s)")
-        return output_path
-
-    print(f"[DashScope] Failed to download image: {img_resp.status_code}")
-    return None
-
-
-_orig_enhance_openrouter = None
-
+# ── Text LLM call (streaming) ────────────────────────────────────────────────
 
 def _call_text_llm(prompt, api_key, model, base_url):
     """Call a text-only LLM via OpenAI-compatible API with streaming progress."""
     body = json.dumps({
         'model': model,
         'messages': [{'role': 'user', 'content': prompt}],
-        'temperature': 0.1,
+        'temperature': 0.3,
         'max_tokens': 32000,
         'stream': True,
         'thinking': {'type': 'disabled'},
@@ -237,11 +84,8 @@ def _call_text_llm(prompt, api_key, model, base_url):
     })
     resp = urllib.request.urlopen(req, timeout=1200)
 
-    chunks = []
-    char_count = 0
-    t_start = time.time()
-    last_report = t_start
-    stream_usage = None
+    chunks, stream_usage = [], None
+    char_count, t_start, last_report = 0, time.time(), time.time()
     for line in resp:
         line_str = line.decode('utf-8').strip()
         if not line_str.startswith('data: '):
@@ -257,12 +101,11 @@ def _call_text_llm(prompt, api_key, model, base_url):
                 chunks.append(content)
                 char_count += len(content)
                 now = time.time()
-                if now - last_report >= 3:
+                if now - last_report >= 5:
                     elapsed = now - t_start
-                    print(f'  [stream] {len(chunks)} chunks, {char_count} chars, '
-                          f'{char_count/elapsed:.0f} chars/s, {elapsed:.0f}s elapsed')
+                    print(f'  [stream] {char_count:,} chars, {char_count/elapsed:.0f} chars/s, '
+                          f'{elapsed:.0f}s elapsed')
                     last_report = now
-            # Capture usage from final chunk if present
             if 'usage' in data:
                 stream_usage = data['usage']
         except json.JSONDecodeError:
@@ -270,350 +113,359 @@ def _call_text_llm(prompt, api_key, model, base_url):
 
     elapsed = time.time() - t_start
     full_text = ''.join(chunks)
-    print(f'  [stream] done: {len(chunks)} chunks, {char_count} chars in {elapsed:.1f}s '
+    print(f'  [stream] done: {char_count:,} chars in {elapsed:.1f}s '
           f'({char_count/elapsed:.0f} chars/s)')
 
-    # Record token usage
     if stream_usage:
         _record_usage(model,
-                     stream_usage.get('prompt_tokens', 0),
-                     stream_usage.get('completion_tokens', 0))
+                      stream_usage.get('prompt_tokens', 0),
+                      stream_usage.get('completion_tokens', 0))
     else:
-        # Estimate: ~3 chars per token for Chinese/English mix, prompt ~4 chars/token
         est_prompt = len(prompt) // 4
         est_completion = char_count // 3
         _record_usage(model, est_prompt, est_completion)
-        print(f'  [stream] usage not in response, estimated: ~{est_prompt:,} prompt + ~{est_completion:,} completion')
+        print(f'  [stream] usage estimated: ~{est_prompt:,}p + ~{est_completion:,}c')
 
     return full_text
 
 
-def _patch_svg_repair(api_key, repair_model, repair_base_url):
-    """Monkey-patch AutoFigure's SVG repair to use a text LLM instead of the vision model.
+# ── Image generation via DashScope ───────────────────────────────────────────
 
-    Qwen VL models generate SVG with minor XML syntax errors. The vision model
-    can't reliably fix its own mistakes. A text LLM (like deepseek-v4-pro)
-    is much better at precise XML syntax repair.
-    """
-    import autofigure.generator as af_gen
-    import cairosvg
+def _enhance_via_dashscope(output_path, prompt, api_key, model):
+    """Generate an image from text prompt using DashScope multimodal-generation API."""
+    import requests as _requests
 
-    original_repair_svg = af_gen.repair_svg
+    content = [{"text": prompt}]
+    url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    body = {
+        "model": model,
+        "input": {"messages": [{"role": "user", "content": content}]}
+    }
+    print(f"  [DashScope] Calling {model}...")
+    resp = _requests.post(url, headers={
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }, json=body, timeout=300)
 
-    def patched_repair_svg(svg_code, error_message):
-        if not repair_model:
-            return original_repair_svg(svg_code, error_message)
+    if resp.status_code != 200:
+        print(f"  [DashScope] API error: {resp.status_code} - {resp.text[:500]}")
+        return None
 
-        prompt = f"""
-You are a professional SVG code debugging expert. The following SVG code has an error during parsing. Please fix it.
-
-**Error Message:**
-{error_message}
-
-**Broken SVG Code:**
-```xml
-{svg_code}
-```
-
-**Requirements:**
-1.  Carefully analyze the error message and the code to locate the issue.
-2.  Fix syntax errors, such as unclosed tags, unescaped special characters, incorrect attributes, etc.
-3.  Ensure the repaired code is well-formed XML.
-4.  Do not change the visual content of the SVG; only perform syntax repairs.
-5.  **Please output the complete, repaired SVG code directly, without any other explanation.**
-
-**Strict Syntax Check:**
-- All attribute values must be enclosed in double quotes.
-- All tags must be properly closed; self-closing tags should end with "/>".
-- Special characters must be escaped: & -> &amp;, < -> &lt;, > -> &gt;.
-- Ensure tags are nested correctly with no syntax errors.
-- Use only the basic SVG namespace: xmlns="http://www.w3.org/2000/svg"
-- Avoid additional namespace declarations like xmlns:xlink or xmlns:xml
-- Output format must be strictly: <svg>...</svg>
-"""
-        for attempt in range(3):
-            print(f"  [text-repair] Attempt {attempt + 1}/3 with {repair_model}...")
-            try:
-                repaired = _call_text_llm(prompt, api_key, repair_model, repair_base_url)
-                if not repaired:
-                    continue
-
-                svg_start = repaired.find('<svg')
-                svg_end = repaired.rfind('</svg>') + 6
-                if svg_start == -1 or svg_end == 5:
-                    continue
-
-                repaired_svg = repaired[svg_start:svg_end]
-                processed = af_gen.preprocess_svg_for_cairo(repaired_svg)
-                cairosvg.svg2png(bytestring=processed.encode('utf-8'))
-                print(f"  [text-repair] SVG fixed and validated!")
-                return processed
-            except Exception as e:
-                print(f"  [text-repair] Attempt {attempt + 1} failed: {e}")
-                prompt = prompt.replace(
-                    f"**Error Message:**\n{error_message}",
-                    f"**Previous repair failed, new error message:**\n{e}"
-                )
-
-        print("  [text-repair] Text LLM repair failed, falling back to vision model...")
-        return original_repair_svg(svg_code, error_message)
-
-    af_gen.repair_svg = patched_repair_svg
-    return original_repair_svg
-
-
-def generate_poster(pdf_path, output_dir, paper_id, config):
-    """Generate a poster SVG from a paper PDF using AutoFigure.
-
-    Args:
-        pdf_path: path to the paper PDF
-        output_dir: directory to save the poster SVG
-        paper_id: paper identifier for naming
-        config: dict with keys:
-            api_key, provider, model, base_url, max_iterations,
-            enable_enhancement, methodology_model, methodology_base_url,
-            enhancement_model, enhancement_provider
-
-    Returns:
-        {success: bool, svg_path: str|None, error: str|None}
-    """
-    from autofigure import AutoFigureAgent, Config
-
-    api_key = config.get('api_key', '')
-    if not api_key:
-        return {'success': False, 'svg_path': None, 'error': 'no API key configured'}
-
-    # AutoFigure intermediate files go into a poster/ subdirectory
-    poster_dir = os.path.join(output_dir, 'poster')
-    os.makedirs(poster_dir, exist_ok=True)
-
-    af_config = Config(
-        generation_api_key=api_key,
-        generation_provider=config.get('provider', 'openrouter'),
-        generation_model=config.get('model'),
-        generation_base_url=config.get('base_url', ''),
-        output_dir=poster_dir,
-        methodology_model=config.get('methodology_model'),
-        methodology_base_url=config.get('methodology_base_url'),
-        enhancement_api_key=api_key,
-        enhancement_model=config.get('enhancement_model'),
-        enhancement_provider=config.get('enhancement_provider', 'openrouter'),
-        enhancement_base_url=config.get('enhancement_base_url', ''),
-    )
-
-    agent = AutoFigureAgent(af_config)
-
-    # Monkey-patch SVG repair to use text LLM for precise XML syntax fixing
-    repair_model = config.get('repair_model')
-    repair_base_url = config.get('repair_base_url') or config.get('base_url', '')
-    _orig_repair = _patch_svg_repair(api_key, repair_model, repair_base_url)
-
-    # Monkey-patch AutoFigure internals to track token usage across all models
-    _orig_openai, _orig_llm_call, _orig_enhance, _orig_enh_openrouter = _patch_token_tracking()
-
+    result = resp.json()
     try:
-        result = agent.generate_from_paper(
-            paper_path=pdf_path,
-            max_iterations=config.get('max_iterations', 5),
-            output_format="svg",
-            enable_enhancement=config.get('enable_enhancement', False),
-            methodology_api_key=api_key,
-            methodology_model=config.get('methodology_model'),
-            methodology_base_url=config.get('methodology_base_url'),
-        )
-    finally:
-        # Restore original functions
-        import autofigure.generator as af_gen
-        import autofigure.utils.llm_client as af_llm
-        import autofigure.enhancer as af_enhancer
-        af_gen.repair_svg = _orig_repair
-        af_gen._call_openai_compatible = _orig_openai
-        af_llm.LLMClient.call = _orig_llm_call
-        af_enhancer.ImageEnhancer.enhance = _orig_enhance
-        af_enhancer.ImageEnhancer._enhance_with_openrouter = _orig_enh_openrouter
+        image_url = result["output"]["choices"][0]["message"]["content"][0]["image"]
+    except (KeyError, IndexError, TypeError):
+        debug_path = output_path.replace(".png", "_dashscope_response.json")
+        with open(debug_path, "w") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+        print(f"  [DashScope] Unexpected response, debug: {debug_path}")
+        return None
 
-    _print_usage_summary()
+    print(f"  [DashScope] Downloading image...")
+    img_resp = _requests.get(image_url, timeout=60)
+    if img_resp.status_code == 200:
+        with open(output_path, "wb") as f:
+            f.write(img_resp.content)
+        global _enhancement_calls, _enhancement_model
+        _enhancement_calls += 1
+        _enhancement_model = _enhancement_model or model
+        usage = result.get("usage", {})
+        print(f"  [DashScope] {usage.get('width')}x{usage.get('height')}, "
+              f"{usage.get('image_count', 1)} image(s)")
+        return output_path
 
-    if result.success:
-        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(paper_id))[:200]
-        # Move final poster SVG from poster/ subdirectory to paper root
-        poster_path = os.path.join(output_dir, f'{safe_pid}.poster.svg')
-        if result.svg_path and os.path.exists(result.svg_path):
-            if os.path.abspath(result.svg_path) != os.path.abspath(poster_path):
-                shutil.move(result.svg_path, poster_path)
-        return {'success': True, 'svg_path': poster_path, 'error': None}
+    print(f"  [DashScope] Download failed: {img_resp.status_code}")
+    return None
 
-    return {'success': False, 'svg_path': None, 'error': 'AutoFigure generation failed'}
 
+# ── SVG helpers ──────────────────────────────────────────────────────────────
+
+def _extract_svg(text):
+    s, e = text.find('<svg'), text.rfind('</svg>') + 6
+    return text[s:e] if s != -1 and e != 5 else None
+
+
+def _validate_svg(svg_code):
+    try:
+        import cairosvg
+        cairosvg.svg2png(bytestring=svg_code.encode('utf-8'))
+        return True, None
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+def _repair_svg(svg_code, error_msg, api_key, model, base_url):
+    """Standalone SVG repair via text LLM (no monkey-patching)."""
+    prompt = f"""Fix the following SVG code that has a syntax error.
+
+Error: {error_msg}
+
+Rules:
+- Output ONLY the repaired SVG code, starting with <svg> and ending with </svg>.
+- Fix XML syntax: close all tags, quote all attributes, escape &<>.
+- Do NOT change visual content, colors, layout, or text.
+
+SVG to repair:
+{svg_code}"""
+
+    for attempt in range(3):
+        print(f"  [repair] Attempt {attempt + 1}/3...")
+        try:
+            repaired = _call_text_llm(prompt, api_key, model, base_url)
+            if not repaired:
+                continue
+            fixed = _extract_svg(repaired)
+            if not fixed:
+                continue
+            ok, err = _validate_svg(fixed)
+            if ok:
+                print(f"  [repair] Fixed!")
+                return fixed
+            else:
+                prompt = prompt.replace(f"Error: {error_msg}", f"Error: {err}")
+        except Exception as e:
+            print(f"  [repair] Attempt {attempt + 1} failed: {e}")
+            prompt = prompt.replace(f"Error: {error_msg}", f"Error: {e}")
+    print(f"  [repair] All attempts failed")
+    return None
+
+
+# ── Paper text loading ───────────────────────────────────────────────────────
+
+def _read_paper_text(paper_dir):
+    """Read paper content from interpret.md, info.md, or PDF (in that order).
+    Returns: (text, source_name) or (None, error)."""
+    # Prefer interpret.md (has both Chinese and English content)
+    for fname in ['interpret.md', 'info.md']:
+        for item in os.listdir(paper_dir):
+            if item.endswith(f'.{fname}'):
+                path = os.path.join(paper_dir, item)
+                with open(path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                if len(text) >= 500:
+                    print(f"  Text source: {item} ({len(text):,} chars)")
+                    return text, item
+
+    # Fallback: PDF
+    for item in os.listdir(paper_dir):
+        if item.endswith('.pdf'):
+            pdf_path = os.path.join(paper_dir, item)
+            try:
+                import fitz
+                doc = fitz.open(pdf_path)
+                text = ''
+                for page in doc:
+                    text += page.get_text()
+                doc.close()
+                if len(text) >= 500:
+                    print(f"  Text source: {item} via PyMuPDF ({len(text):,} chars)")
+                    return text, item
+            except Exception as e:
+                print(f"  PDF extraction failed: {e}")
+
+    return None, "no usable text source found"
+
+
+# ── Prompt builders ──────────────────────────────────────────────────────────
+
+_SVG_PROMPT_EN = """You are an expert scientific illustrator. Based on the following research paper content, create a publication-quality SVG poster diagram that summarizes the paper's core methodology, workflow, and key findings.
+
+The SVG should be a clear, visually appealing scientific figure suitable for a conference poster.
+
+Requirements:
+1. **Language**: ALL text labels, titles, annotations MUST be in English.
+2. **Layout**: Use a logical flow — top-to-bottom or left-to-right — showing inputs → methods → outputs → key results.
+3. **Colors**: Professional, harmonious palette (3-5 colors max). Light backgrounds for boxes, darker borders. Use gradients sparingly.
+4. **Elements**: <rect rx="6">, <text>, <path>, <g>, <defs>/<marker> for arrowheads. Group related elements with <g>.
+5. **Typography**: font-family="Arial, sans-serif". Bold for titles, normal for body. 12-16px body, 18-24px headings.
+6. **Arrows**: Solid arrows (→) with marker-end connecting workflow steps.
+7. **Canvas**: ~1000×700px, white background (#ffffff).
+8. **Structure**: Title at top → main workflow in center → key results/metrics as callout boxes at bottom.
+9. **CRITICAL**: Output ONLY valid SVG code. Start directly with <svg> and end with </svg>. No markdown fences, no explanation.
+
+PAPER CONTENT:
+{paper_text}"""
+
+_SVG_PROMPT_ZH = """你是一位专业的科学插画师。请根据以下研究论文内容，创建一张适合会议海报的出版质量SVG图表，总结论文的核心方法、工作流程和关键发现。
+
+要求：
+1. **语言**：所有文字标签、标题、注释必须使用中文。
+2. **布局**：逻辑清晰的流程——从上到下或从左到右——展示 输入→方法→输出→关键结果。
+3. **配色**：专业和谐的配色（最多3-5种颜色）。方框浅色背景+深色边框。谨慎使用渐变。
+4. **元素**：<rect rx="6">、<text>、<path>、<g>、<defs>/<marker>定义箭头。用<g>分组相关元素。
+5. **字体**：font-family="Arial, sans-serif"。标题加粗，正文正常。正文12-16px，标题18-24px。
+6. **箭头**：实线箭头（→）带marker-end连接流程步骤。
+7. **画布**：~1000×700px，白色背景（#ffffff）。
+8. **结构**：顶部标题→中间主流程→底部关键结果/指标卡片。
+9. **关键**：只输出有效的SVG代码。直接以<svg>开头，以</svg>结尾。不要markdown围栏，不要解释。
+
+论文内容：
+{paper_text}"""
+
+_DESC_PROMPT_EN = """You are a scientific figure designer. Read the paper excerpt below and create a detailed visual description for a single poster figure that summarizes the paper's core methodology and key findings.
+
+Requirements:
+- ALL text in the description and labels must be in English.
+- Describe a SINGLE cohesive figure with clear panel layout (A, B, C...).
+- Include specific data types, algorithm names, performance metrics from the paper.
+- Specify color scheme, arrows, labels, chart types.
+- Use the paper's ACTUAL methods and results — do NOT invent generic content.
+- Under 500 words, output ONLY the visual description.
+
+Paper Excerpt:
+{paper_text}"""
+
+_DESC_PROMPT_ZH = """你是一位科学图表设计师。阅读以下论文摘录，为一张海报图创建详细的视觉描述，总结论文的核心方法和关键发现。
+
+要求：
+- 描述和标签中的所有文字必须使用中文。
+- 描述一张具有清晰面板布局（A、B、C……）的完整图表。
+- 包含论文中具体的数据类型、算法名称、性能指标。
+- 指定配色方案、箭头、标签、图表类型。
+- 使用论文的真实方法和结果——不要编造通用内容。
+- 500字以内，只输出视觉描述。
+
+论文摘录：
+{paper_text}"""
+
+
+# ── Generators ───────────────────────────────────────────────────────────────
+
+def generate_oneshot_svg(paper_text, language, api_key, model, base_url):
+    """Zero-shot: paper text → SVG via text LLM.
+    language: 'en' or 'zh'. Returns svg_code or None."""
+    label = 'EN' if language == 'en' else 'ZH'
+    prompt_template = _SVG_PROMPT_EN if language == 'en' else _SVG_PROMPT_ZH
+    prompt = prompt_template.format(paper_text=paper_text[:15000])
+
+    print(f"\n{'─'*50}")
+    print(f"  One-shot SVG [{label}] — {model}")
+    print(f"  Prompt: {len(prompt):,} chars")
+    print(f"{'─'*50}")
+
+    t0 = time.time()
+    response = _call_text_llm(prompt, api_key, model, base_url)
+    svg = _extract_svg(response)
+    if not svg:
+        print(f"  ERROR: No SVG in response!")
+        return None
+
+    print(f"  SVG: {len(svg):,} chars in {time.time()-t0:.1f}s")
+
+    ok, err = _validate_svg(svg)
+    if not ok:
+        print(f"  SVG syntax error: {err}")
+        fixed = _repair_svg(svg, err, api_key, model, base_url)
+        if fixed:
+            svg = fixed
+        else:
+            print(f"  Repair failed, using original (may not render as PNG)")
+    else:
+        print(f"  SVG validates OK")
+
+    return svg
+
+
+def generate_direct_png(paper_text, language, api_key, text_model, text_base, enh_model, output_path):
+    """Two-step: paper text → figure description → image.
+    language: 'en' or 'zh'. Returns output_path or None."""
+    label = 'EN' if language == 'en' else 'ZH'
+    desc_template = _DESC_PROMPT_EN if language == 'en' else _DESC_PROMPT_ZH
+
+    print(f"\n{'─'*50}")
+    print(f"  Direct PNG [{label}] — {text_model} → {enh_model}")
+    print(f"{'─'*50}")
+
+    # Step 1: Generate figure description
+    desc_prompt = desc_template.format(paper_text=paper_text[:15000])
+    print(f"  Step 1: Generating figure description...")
+    t0 = time.time()
+    description = _call_text_llm(desc_prompt, api_key, text_model, text_base)
+    print(f"  Description: {len(description):,} chars in {time.time()-t0:.1f}s")
+
+    # Step 2: Generate image from description
+    print(f"  Step 2: Generating image...")
+    enh_prompt = f"Create a professional scientific poster figure based on this description:\n\n{description}"
+    return _enhance_via_dashscope(output_path, enh_prompt, api_key, enh_model)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate a poster SVG from a paper PDF using AutoFigure',
+        description='Zero-shot poster generation — 6 outputs per paper',
     )
-    parser.add_argument('pdf_path', help='Path to the paper PDF')
-    parser.add_argument('--output-dir', required=True, help='Output directory for the poster SVG')
-    parser.add_argument('--paper-id', required=True, help='Paper identifier for naming')
-    parser.add_argument('--api-key', default=None, help='API key (or set AUTOFIGURE_API_KEY env var)')
-    parser.add_argument('--provider', default='openrouter',
-                        choices=['openrouter', 'gemini', 'bianxie'])
-    parser.add_argument('--model', default='google/gemini-3.1-pro-preview')
-    parser.add_argument('--base-url', default='')
-    parser.add_argument('--max-iterations', type=int, default=5)
-    parser.add_argument('--enable-enhancement', action='store_true')
-    parser.add_argument('--methodology-model', default=None)
-    parser.add_argument('--methodology-base-url', default=None)
-    parser.add_argument('--enhancement-model', default=None)
-    parser.add_argument('--enhancement-provider', default='openrouter')
-    parser.add_argument('--enhancement-base-url', default=None)
-    parser.add_argument('--repair-model', default=None,
-                        help='Text LLM for SVG XML repair (default: same as methodology-model)')
-    parser.add_argument('--repair-base-url', default=None)
-    parser.add_argument('--enhance-only', default=None, metavar='IMAGE_PATH',
-                        help='Skip generation, only enhance an existing PNG image')
-    parser.add_argument('--direct', action='store_true',
-                        help='Direct text-to-image: skip SVG pipeline, generate poster from methodology')
+    parser.add_argument('--paper-dir', required=True, help='Paper directory')
+    parser.add_argument('--paper-id', required=True, help='Paper identifier')
+    parser.add_argument('--api-key', required=True, help='LLM API key')
+    parser.add_argument('--methodology-model', default='deepseek-v4-pro')
+    parser.add_argument('--methodology-base-url',
+                        default='https://dashscope.aliyuncs.com/compatible-mode/v1')
+    parser.add_argument('--enhancement-model', default='qwen-image-2.0-pro')
+    parser.add_argument('--lang', default='both',
+                        choices=['en', 'zh', 'both'],
+                        help='Which language(s) to generate (default: both)')
     args = parser.parse_args()
 
-    api_key = args.api_key or os.environ.get('AUTOFIGURE_API_KEY', '')
-    if not api_key:
-        print("Error: no API key. Set AUTOFIGURE_API_KEY env var or use --api-key.", file=sys.stderr)
+    safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
+    api_key = args.api_key
+    meth_model = args.methodology_model
+    meth_base = args.methodology_base_url
+    enh_model = args.enhancement_model
+
+    # Read paper text
+    paper_text, source = _read_paper_text(args.paper_dir)
+    if not paper_text:
+        print(f"Error: {source}", file=sys.stderr)
         sys.exit(1)
 
-    # --- Enhance-only mode: skip AutoFigure, just enhance an existing image ---
-    if args.enhance_only:
-        image_path = args.enhance_only
-        if not os.path.exists(image_path):
-            print(f"Error: image not found: {image_path}", file=sys.stderr)
-            sys.exit(1)
+    results = []
+    languages = ['en', 'zh'] if args.lang == 'both' else [args.lang]
 
-        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
-        output_path = os.path.join(args.output_dir,
-                                   f'{safe_pid}.poster.enhanced.png')
-        enh_model = args.enhancement_model or 'qwen-image-2.0-pro'
-        enh_base = args.enhancement_base_url or args.base_url or ''
+    for lang in languages:
+        # ── One-shot SVG ──
+        svg = generate_oneshot_svg(paper_text, lang, api_key, meth_model, meth_base)
+        if svg:
+            svg_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.svg')
+            with open(svg_path, 'w', encoding='utf-8') as f:
+                f.write(svg)
+            print(f"  Saved: {svg_path} ({len(svg):,} chars)")
+            results.append(svg_path)
 
-        print(f"Enhance-only mode: {image_path} -> {output_path}")
-        print(f"  Model: {enh_model}")
-
-        if 'dashscope' in enh_base.lower():
-            prompt = ("You are a world-class scientific illustrator. Transform this black-and-white "
-                      "diagram into a professional, publication-ready scientific illustration with "
-                      "vibrant colors, clean typography, and polished visual hierarchy. Preserve all "
-                      "structural elements, labels, and spatial relationships exactly.")
-            result_path = _enhance_via_dashscope(image_path, output_path, prompt,
-                                                 api_key, enh_model, enh_base)
+            # Render to PNG
+            try:
+                import cairosvg
+                png_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.png')
+                cairosvg.svg2png(bytestring=svg.encode('utf-8'), write_to=png_path)
+                print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
+                results.append(png_path)
+            except Exception as e:
+                print(f"  Render failed: {e}")
         else:
-            from autofigure.enhancer import ImageEnhancer
-            from autofigure import Config as AFConfig
-            af_config = AFConfig(
-                enhancement_api_key=api_key,
-                enhancement_model=enh_model,
-                enhancement_provider=args.enhancement_provider,
-                enhancement_base_url=enh_base,
-            )
-            enhancer = ImageEnhancer(af_config)
-            result_path = enhancer.enhance(image_path, output_path)
+            print(f"  FAILED: SVG generation ({lang})")
 
-        if result_path:
-            print(f"Enhanced poster saved: {result_path}")
+        # ── Direct PNG ──
+        direct_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.direct.{lang}.png')
+        result = generate_direct_png(paper_text, lang, api_key, meth_model, meth_base, enh_model, direct_path)
+        if result and os.path.exists(result):
+            # Rename to canonical path if needed
+            if result != direct_path:
+                os.rename(result, direct_path)
+            print(f"  Saved: {direct_path} ({os.path.getsize(direct_path):,} bytes)")
+            results.append(direct_path)
+        elif result:
+            print(f"  Saved: {result}")
+            results.append(result)
         else:
-            print("Enhancement failed", file=sys.stderr)
-            sys.exit(1)
-        return
+            print(f"  FAILED: Direct generation ({lang})")
 
-    # --- Direct text-to-image mode ---
-    if args.direct:
-        safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
-        output_path = os.path.join(args.output_dir, f'{safe_pid}.poster.direct.png')
-        pdf_path = args.pdf_path
+    _print_usage_summary()
 
-        # Extract text from PDF
-        print(f"Direct mode: extracting text from {pdf_path}")
-        try:
-            import fitz
-            doc = fitz.open(pdf_path)
-            pdf_text = ''
-            for page in doc:
-                pdf_text += page.get_text()
-            doc.close()
-        except Exception as e:
-            print(f"Error reading PDF: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        if len(pdf_text) < 500:
-            print(f"Error: insufficient text ({len(pdf_text)} chars)", file=sys.stderr)
-            sys.exit(1)
-
-        # Truncate to first 15K chars for the figure description prompt
-        paper_excerpt = pdf_text[:15000]
-        print(f"  PDF text: {len(pdf_text)} chars, using first {len(paper_excerpt)}")
-
-        # Build figure description via text LLM
-        meth_model = args.methodology_model or 'deepseek-v4-pro'
-        meth_base = args.methodology_base_url or args.base_url or ''
-
-        figure_prompt = f"""You are a scientific figure designer. Read the paper excerpt below and create a detailed visual description for a single poster figure that summarizes the paper's core methodology and key findings.
-
-**Requirements:**
-- Describe a SINGLE cohesive figure with clear panel layout (A, B, C...)
-- Include specific data types, algorithm names, performance metrics from the paper
-- Specify color scheme, arrows, labels, chart types
-- Use the paper's ACTUAL methods and results — do NOT invent generic content
-- Under 500 words, output ONLY the visual description
-
-**Paper Excerpt:**
-{paper_excerpt}"""
-
-        print(f"  Generating figure description via {meth_model}...")
-        try:
-            description = _call_text_llm(figure_prompt, api_key, meth_model, meth_base)
-        except Exception as e:
-            print(f"Error generating description: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        print(f"  Figure description: {len(description)} chars")
-        print(f"  Generating image via qwen-image-2.0-pro...")
-
-        enh_model = args.enhancement_model or 'qwen-image-2.0-pro'
-        try:
-            result_path = _enhance_via_dashscope(
-                None, output_path,
-                f"Create a professional scientific poster figure based on this description:\n\n{description}",
-                api_key, enh_model, '')
-        except Exception as e:
-            print(f"Error generating image: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        if result_path:
-            print(f"Direct poster saved: {result_path}")
-        else:
-            print("Direct generation failed", file=sys.stderr)
-            sys.exit(1)
-        return
-
-    # --- Normal mode: full AutoFigure pipeline ---
-    config = {
-        'api_key': api_key,
-        'provider': args.provider,
-        'model': args.model,
-        'base_url': args.base_url,
-        'max_iterations': args.max_iterations,
-        'enable_enhancement': args.enable_enhancement,
-        'methodology_model': args.methodology_model,
-        'methodology_base_url': args.methodology_base_url,
-        'enhancement_model': args.enhancement_model,
-        'enhancement_provider': args.enhancement_provider,
-        'enhancement_base_url': args.enhancement_base_url or '',
-        'repair_model': args.repair_model,
-        'repair_base_url': args.repair_base_url,
-    }
-
-    result = generate_poster(args.pdf_path, args.output_dir, args.paper_id, config)
-    if result['success']:
-        print(f"Poster saved: {result['svg_path']}")
-    else:
-        print(f"Error: {result['error']}", file=sys.stderr)
-        sys.exit(1)
+    print(f"\n{'='*60}")
+    print(f"Results: {len(results)} files generated")
+    for p in results:
+        print(f"  {p}")
+    print(f"{'='*60}")
 
 
 if __name__ == '__main__':
