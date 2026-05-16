@@ -154,7 +154,31 @@ def cmd_list(args, config):
     cnsp_w = 4
     j_w = 20
 
-    cnsp_map = {'nature': 'N', 'science': 'S', 'cell': 'C', 'plos': 'P'}
+    def _load_cnsp_map():
+        cnsp_cfg = config.get('cnsp', {})
+        flagships = {'Nature', 'Science', 'Cell'}
+        journal_map = {}
+        for key, letter in [('nature_journals', 'n'), ('science_journals', 's'),
+                            ('cell_journals', 'c'), ('plos_journals', 'p')]:
+            rel = cnsp_cfg.get(key, '')
+            if not rel:
+                continue
+            jpath = rel if os.path.isabs(rel) else os.path.join(
+                os.path.dirname(os.path.abspath(args.config)), rel)
+            if not os.path.exists(jpath):
+                continue
+            for j in json.load(open(jpath)):
+                name = (j.get('name', '') or '').replace(' (partner)', '')
+                if name:
+                    journal_map[name.lower()] = letter.upper() if name in flagships else letter
+        return journal_map
+
+    cnsp_map = _load_cnsp_map()
+
+    def _get_cnsp(journal_name):
+        if not journal_name:
+            return ''
+        return cnsp_map.get(journal_name.lower(), '')
 
     header = f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
     sep = f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
@@ -169,7 +193,6 @@ def cmd_list(args, config):
         if len(title) > 58:
             title = title[:57] + '...'
         source = r['source'] or ''
-        cnsp = cnsp_map.get(source, '')
         if len(source) > src_w:
             source = source[:src_w - 1]
         status = r['status'] or ''
@@ -177,6 +200,7 @@ def cmd_list(args, config):
         if len(date_str) > date_w:
             date_str = date_str[:date_w]
         journal = _get_journal(r['metadata_json'])
+        cnsp = _get_cnsp(journal)
         if len(journal) > j_w:
             journal = journal[:j_w - 2] + '..'
 
