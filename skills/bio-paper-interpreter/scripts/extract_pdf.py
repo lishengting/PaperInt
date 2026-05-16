@@ -142,7 +142,7 @@ def select_representative_image(image_dir, images_rel_prefix, min_area=40000):
     if not candidates:
         return None
 
-    candidates.sort(key=lambda c: (-int(math.log(c['area'])), c['page']))
+    candidates.sort(key=lambda c: (-int(math.log10(c['area'])), c['page']))
     return images_rel_prefix + candidates[0]['filename']
 
 
