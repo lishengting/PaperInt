@@ -440,19 +440,16 @@ def _download_direct_pdf(pdf_url, config, use_browser=False):
                 '--timeout', '180']
     if use_browser:
         base_cmd.append('--headed-fallback')
-    for attempt in range(3):
-        if attempt > 0:
-            time.sleep(5 * attempt)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cmd = base_cmd + ['-o', tmpdir]
-            r = subprocess.run(
-                cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
-            if r.returncode == 0:
-                for f in os.listdir(tmpdir):
-                    if f.endswith('.pdf'):
-                        pdf_path = os.path.join(tmpdir, f)
-                        with open(pdf_path, 'rb') as fh:
-                            return fh.read()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = base_cmd + ['-o', tmpdir]
+        r = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
+        if r.returncode == 0:
+            for f in os.listdir(tmpdir):
+                if f.endswith('.pdf'):
+                    pdf_path = os.path.join(tmpdir, f)
+                    with open(pdf_path, 'rb') as fh:
+                        return fh.read()
     return None
 
 
