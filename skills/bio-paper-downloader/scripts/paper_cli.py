@@ -808,8 +808,23 @@ def cmd_pdf(args, config):
 
 
 def cmd_get(args, config):
-    """Download a paper by URL."""
-    paper = detect_url(args.url, config)
+    """Download a paper by URL or paper ID."""
+    url = args.url
+    if args.paper_id:
+        conn = get_conn(config)
+        row = conn.execute(
+            "SELECT source_url FROM papers WHERE paper_id = ?", (args.paper_id,)
+        ).fetchone()
+        if not row or not row['source_url']:
+            print(f"Paper not found or has no source_url: {args.paper_id}", file=sys.stderr)
+            return 1
+        url = row['source_url']
+        print(f"Resolved: {args.paper_id} -> {url}")
+    elif not url:
+        print("Error: either --url or --paper-id is required", file=sys.stderr)
+        return 1
+
+    paper = detect_url(url, config)
     if not paper:
         print("Could not parse URL.", file=sys.stderr)
         return 1
@@ -944,8 +959,10 @@ def main():
         description='URL download: auto-detect the source from the URL pattern.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    gp.add_argument('-u', '--url', required=True,
+    gp.add_argument('-u', '--url',
                     help='Paper URL (arXiv, bioRxiv, medRxiv, PubMed, PMC, or direct PDF)')
+    gp.add_argument('-p', '--paper-id', default=None,
+                    help='Paper ID from database (resolves URL automatically)')
     gp.add_argument('-l', '--list', action='store_true',
                     help='Parse and show paper info from the URL without downloading')
 
