@@ -151,6 +151,9 @@ class ChromeInstance:
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid, env=env)
         time.sleep(2)
+        # Verify Chrome is alive — if it crashed, poll() will be non-None
+        if self.process.poll() is not None:
+            raise RuntimeError(f'Chrome exited immediately (code {self.process.returncode})')
 
     @property
     def cdp_url(self):
@@ -457,7 +460,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
 
     fallback_level:
       0 — not applicable (should not be called without browser)
-      1 — headless Chrome only (3 retries)
+      1 — headless Chrome only (2 attempts)
       2 — headless → Xvfb headed Chrome (default)
       3 — headless → Xvfb headed → system display headed
 
@@ -486,12 +489,15 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
 
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
-    # Try headless first (3 attempts, but skip retries on anti-bot)
-    for attempt in range(3):
+    def _is_fatal(msg):
+        """Chrome startup failures — retrying won't help."""
+        return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
+
+    # Try headless first (2 attempts)
+    for attempt in range(2):
         if attempt > 0:
-            delay = 5 * attempt
-            print(f"  [publisher] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-            time.sleep(delay)
+            print(f"  [publisher] headless retry 2/2 after 5s...", file=sys.stderr)
+            time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
@@ -501,19 +507,20 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
+        if _is_fatal(result.get('message', '')):
+            return result
         if 'Anti-bot' in result.get('message', ''):
             break
 
     if fallback_level < 2:
         return result
 
-    # Fallback to Xvfb headed (3 attempts)
+    # Fallback to Xvfb headed (2 attempts)
     print(f"  [publisher] falling back to headed Chrome (Xvfb)...", file=sys.stderr)
-    for attempt in range(3):
+    for attempt in range(2):
         if attempt > 0:
-            delay = 5 * attempt
-            print(f"  [publisher] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-            time.sleep(delay)
+            print(f"  [publisher] headed retry 2/2 after 5s...", file=sys.stderr)
+            time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
@@ -521,20 +528,23 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=True)
         if result['success']:
-            result['message'] = result['message'].replace('(headed)', '(headed xvfb)')
             return result
-        print(f"  [publisher] headed (xvfb) failed: {result['message']}", file=sys.stderr)
+        msg = result.get('message', '')
+        print(f"  [publisher] headed (xvfb) failed: {msg}", file=sys.stderr)
+        if _is_fatal(msg):
+            return result
+        if 'Anti-bot' in msg or 'No PDF links' in msg:
+            break
 
     if fallback_level < 3:
         return result
 
-    # Fallback to system display headed (3 attempts)
+    # Fallback to system display headed (2 attempts)
     print(f"  [publisher] falling back to headed Chrome (system display)...", file=sys.stderr)
-    for attempt in range(3):
+    for attempt in range(2):
         if attempt > 0:
-            delay = 5 * attempt
-            print(f"  [publisher] headed (system) retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-            time.sleep(delay)
+            print(f"  [publisher] headed (system) retry 2/2 after 5s...", file=sys.stderr)
+            time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
@@ -542,9 +552,11 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=False)
         if result['success']:
-            result['message'] = result['message'].replace('(headed)', '(headed system)')
             return result
-        print(f"  [publisher] headed (system) failed: {result['message']}", file=sys.stderr)
+        msg = result.get('message', '')
+        print(f"  [publisher] headed (system) failed: {msg}", file=sys.stderr)
+        if _is_fatal(msg):
+            return result
     return result
 
 
