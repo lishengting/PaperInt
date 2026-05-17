@@ -388,29 +388,25 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 
-            # Step 3: navigate to PDF
+            # Step 3: fetch PDF (JS fetch from page context — works for both
+            # inline display and Content-Disposition:attachment responses)
             print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
+
+            # Navigate to the PDF URL first, so the page session has access
             try:
                 await page.goto(pdf_url, wait_until='domcontentloaded',
                                 timeout=timeout * 1000)
-            except Exception as e:
-                msg = str(e)
-                if 'Download is starting' in msg:
-                    result['message'] = 'PDF URL triggered download (not a PDF)'
-                else:
-                    result['message'] = f'Navigation failed: {msg[:200]}'
-                return result
-            await asyncio.sleep(wait)
+                await asyncio.sleep(wait)
+            except Exception:
+                # "Download is starting" or timeout — page may not have loaded,
+                # but the session is still valid for fetching the PDF URL
+                pass
 
-            ct = await page.evaluate('() => document.contentType')
-            if ct != 'application/pdf':
-                result['message'] = f'Expected PDF but got Content-Type: {ct}'
-                return result
-
-            # Step 4: fetch PDF bytes
+            # Fetch PDF bytes via JS, using the explicit PDF URL (not
+            # window.location.href, which may be wrong after navigation failure)
             js_result = await page.evaluate("""
-                async () => {
-                    const r = await fetch(window.location.href, {credentials: 'include'});
+                async ([url]) => {
+                    const r = await fetch(url, {credentials: 'include'});
                     if (!r.ok) return {error: 'HTTP ' + r.status};
                     const blob = await r.blob();
                     return new Promise(resolve => {
@@ -420,7 +416,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         reader.readAsDataURL(blob);
                     });
                 }
-            """)
+            """, [pdf_url])
 
             if isinstance(js_result, dict) and 'error' in js_result:
                 result['message'] = f"PDF fetch failed: {js_result['error']}"
