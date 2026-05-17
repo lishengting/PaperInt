@@ -877,7 +877,7 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False, cnsp_only=False):
+def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False, cnsp_only=False, headed_fallback=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
@@ -907,7 +907,8 @@ def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False
     skipped = 0
     for i, p in enumerate(papers, 1):
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
-        result = download_paper(p, config, data_dir, conn, use_browser=use_browser)
+        result = download_paper(p, config, data_dir, conn, use_browser=use_browser,
+                               headed_fallback=headed_fallback)
         if result is True:
             ok += 1
         elif result is False:
@@ -975,6 +976,8 @@ def main():
                    help='Retry downloading papers with download_failed status')
     p.add_argument('--cnsp', action='store_true',
                    help='Only download papers published in C/N/S/P journals')
+    p.add_argument('--headed-fallback', action='store_true',
+                   help='Fall back to headed Chrome (via Xvfb) if headless fails')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -1024,7 +1027,8 @@ def main():
     elif args.cmd is None:
         # Auto-mode: download all searched papers
         return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit,
-                        retry_failed=args.retry_failed, cnsp_only=args.cnsp)
+                        retry_failed=args.retry_failed, cnsp_only=args.cnsp,
+                        headed_fallback=args.headed_fallback)
     return 1
 
 
