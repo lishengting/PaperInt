@@ -30,6 +30,12 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+try:
+    from playwright_stealth import Stealth
+    _STEALTH_AVAILABLE = True
+except ImportError:
+    _STEALTH_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -106,6 +112,8 @@ class ChromeInstance:
         ]
         if self.headless:
             args.insert(1, '--headless=new')
+            # Hide automation flags from detection
+            args.insert(2, '--disable-blink-features=AutomationControlled')
         args.append('about:blank')
 
         self.process = subprocess.Popen(
@@ -361,6 +369,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 await cdp_tmp.detach()
 
                 page = await ctx.new_page()
+                if _STEALTH_AVAILABLE:
+                    await Stealth().apply_stealth_async(page)
                 sub_result = await _download_generic_pdf(page, url_or_doi,
                                                          output_path, timeout,
                                                          wait=wait)
@@ -416,6 +426,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             # Step 1 — navigate to homepage, pass Cloudflare challenge
             print(f"  [browser:{mode}] Passing Cloudflare...", file=sys.stderr)
             page = await ctx.new_page()
+            if _STEALTH_AVAILABLE:
+                await Stealth().apply_stealth_async(page)
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             if not await _wait_cloudflare(page, 120):
@@ -443,6 +455,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             await cdp_tmp.detach()
 
             pdf_page = await ctx.new_page()
+
+            if _STEALTH_AVAILABLE:
+                await Stealth().apply_stealth_async(pdf_page)
 
             # Try download capture first (in case server sends attachment)
             pdf_bytes = None

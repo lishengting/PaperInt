@@ -27,6 +27,12 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+try:
+    from playwright_stealth import Stealth
+    _STEALTH_AVAILABLE = True
+except ImportError:
+    _STEALTH_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Chrome launcher
@@ -57,6 +63,8 @@ class ChromeInstance:
         ]
         if self.headless:
             args.insert(1, '--headless=new')
+            # Hide automation flags from detection
+            args.insert(2, '--disable-blink-features=AutomationControlled')
         args.append('about:blank')
         self.process = subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -194,6 +202,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
             page = await ctx.new_page()
+            if _STEALTH_AVAILABLE:
+                await Stealth().apply_stealth_async(page)
 
             # Step 1: follow DOI to publisher page
             print(f"  [publisher:{mode}] Following DOI...", file=sys.stderr)
