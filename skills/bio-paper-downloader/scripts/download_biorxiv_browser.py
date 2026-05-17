@@ -638,6 +638,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                     pass
                 await asyncio.sleep(wait)
 
+                # The PDF page may trigger its own Cloudflare challenge
+                await _wait_cloudflare(pdf_page, 30)
+
             if not pdf_bytes:
                 ct = await pdf_page.evaluate('() => document.contentType')
                 if ct != 'application/pdf':
