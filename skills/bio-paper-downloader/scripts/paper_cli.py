@@ -634,10 +634,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level)
         if not pdf_data:
-            pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
-            if not pmc_has_pdf:
-                print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
-            # Always try PMC download (with Europe PMC fallback) even if API
+            # Try PMC download (with Europe PMC fallback) even if API
             # says has_pdf=False — the API may be wrong, and Europe PMC often
             # has PDFs that NCBI's PMC gates behind PoW challenges.
             pmc_id = paper.get('pmc_id')
@@ -645,11 +642,9 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
                 pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
             if pmc_id:
                 pdf_data = _download_pmc_pdf(pmc_id, config)
-            if not pdf_data:
-                if paper.get('pdf_url'):
-                    pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level)
-                if not pdf_data and paper.get('doi'):
-                    pdf_data = _publisher_download(paper['doi'], paper.get('pmid'), config, fallback_level=fallback_level)
+            pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
+            if not pdf_data and not pmc_has_pdf:
+                print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level)
     elif src in ('nature', 'science', 'cell', 'plos'):
