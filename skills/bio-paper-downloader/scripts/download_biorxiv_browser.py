@@ -302,6 +302,22 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
     if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
         print(f"{log_prefix} 2Captcha: watching for Turnstile widget (max {timeout}s)",
               file=sys.stderr)
+
+    # Dump full page HTML once for diagnosis
+    try:
+        import base64 as _b64
+        html = await page.evaluate('() => document.documentElement.outerHTML')
+        html_path = '/tmp/cf_page_debug.html'
+        with open(html_path, 'w') as f:
+            f.write(html)
+        # Also list all script srcs
+        scripts = await page.evaluate('() => Array.from(document.querySelectorAll("script[src]")).map(s => s.src)')
+        print(f"{log_prefix} Cloudflare page HTML saved to {html_path} ({len(html)} bytes)",
+              file=sys.stderr)
+        print(f"{log_prefix}   script srcs: {scripts}", file=sys.stderr)
+    except Exception as e:
+        print(f"{log_prefix} Failed to dump HTML: {e}", file=sys.stderr)
+
     for i in range(timeout // 2):
         await asyncio.sleep(2)
         try:
@@ -311,29 +327,20 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
-        # Periodic debug: log page state every 10s; dump HTML structure once
+        # Periodic debug: log page state every 10s
         if i % 5 == 0 and i > 0:
             try:
                 info = await page.evaluate("""() => {
                     const iframes = document.querySelectorAll('iframe');
-                    const buttons = document.querySelectorAll('button, input[type=submit], input[type=checkbox]');
                     return {
                         title: document.title,
                         url: window.location.href,
                         iframeCount: iframes.length,
                         iframeSrcs: Array.from(iframes).map(f => f.src.substring(0, 150)),
-                        buttonCount: buttons.length,
-                        buttonTexts: Array.from(buttons).map(b => (b.value||b.innerText||b.type||'').substring(0, 60)),
-                        bodyHTML: (document.body ? document.body.innerHTML : '').substring(0, 2000),
+                        awWzG3HTML: (document.querySelector('#AwWzG3')||{}).innerHTML||'not found',
                     };
                 }""")
-                print(f"{log_prefix} Cloudflare debug: title={info['title']!r}, url={info['url'][:120]!r}",
-                      file=sys.stderr)
-                print(f"{log_prefix}   iframes={info['iframeCount']} srcs={info['iframeSrcs']}",
-                      file=sys.stderr)
-                print(f"{log_prefix}   buttons={info['buttonCount']} texts={info['buttonTexts']}",
-                      file=sys.stderr)
-                print(f"{log_prefix}   bodyHTML={info['bodyHTML'][:2000]!r}",
+                print(f"{log_prefix} t={i*2}s: title={info['title']!r}, url={info['url'][:100]!r}, iframes={info['iframeCount']}, AwWzG3={info['awWzG3HTML'][:200]!r}",
                       file=sys.stderr)
             except Exception:
                 pass
