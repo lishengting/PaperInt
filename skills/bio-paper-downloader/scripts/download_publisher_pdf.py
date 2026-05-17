@@ -15,6 +15,7 @@ Requirements: google-chrome, pip install playwright
 
 import argparse
 import asyncio
+import atexit
 import base64
 import os
 import re
@@ -43,14 +44,27 @@ _XVFB_DISPLAY = None
 
 
 def _xvfb_start():
-    """Start an Xvfb virtual display on :99, reusing or replacing any existing one."""
+    """Start an Xvfb virtual display, reusing the one found for this process.
+
+    Scans for a free display number on first call, then reuses it.
+    Registers atexit cleanup so Xvfb is killed when the process exits.
+    """
     global _XVFB_PROC, _XVFB_DISPLAY
     if _XVFB_PROC is not None and _XVFB_PROC.poll() is None:
         return True
-    _XVFB_DISPLAY = ':99'
-    # Kill any stale Xvfb on :99
-    subprocess.run(['pkill', '-f', 'Xvfb :99'], capture_output=True)
-    time.sleep(0.3)
+
+    if _XVFB_DISPLAY is None:
+        import socket
+        for d in range(99, 110):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(f'/tmp/.X11-unix/X{d}')
+                sock.close()
+            except (socket.error, FileNotFoundError):
+                _XVFB_DISPLAY = f':{d}'
+                break
+        if _XVFB_DISPLAY is None:
+            _XVFB_DISPLAY = ':99'
 
     try:
         _XVFB_PROC = subprocess.Popen(
@@ -58,10 +72,30 @@ def _xvfb_start():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid)
         os.environ['DISPLAY'] = _XVFB_DISPLAY
+        atexit.register(_xvfb_stop)
         time.sleep(0.5)
         return True
     except FileNotFoundError:
         return False
+
+
+def _xvfb_stop():
+    """Stop the Xvfb virtual display started by this process."""
+    global _XVFB_PROC, _XVFB_DISPLAY
+    if _XVFB_PROC is not None:
+        try:
+            os.killpg(os.getpgid(_XVFB_PROC.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            _XVFB_PROC.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(_XVFB_PROC.pid), signal.SIGKILL)
+            except Exception:
+                pass
+        _XVFB_PROC = None
+        _XVFB_DISPLAY = None
 
 
 # ---------------------------------------------------------------------------
