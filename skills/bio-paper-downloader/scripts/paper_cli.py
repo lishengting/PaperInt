@@ -372,7 +372,7 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
             twocap_api = api_key_env
         if twocap_api:
             cmd.extend(['--twocap-api', twocap_api])
-    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -500,7 +500,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
     r = subprocess.run(
-        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
+        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
     if r.returncode == 0:
         for f in os.listdir(tmpdir):
             if f.endswith('.pdf'):

@@ -255,6 +255,7 @@ async def try_solve_captcha(page, captcha_enabled: bool, api_key: str = '',
         return False
 
     if not api_key:
+        print(f"{log_prefix} 2Captcha: API key not set, skipping", file=sys.stderr)
         return False
 
     # Detect captcha type
@@ -264,9 +265,10 @@ async def try_solve_captcha(page, captcha_enabled: bool, api_key: str = '',
         return False
 
     if not captcha_type:
+        print(f"{log_prefix} 2Captcha: no captcha widget detected on page", file=sys.stderr)
         return False
 
-    print(f"{log_prefix} Captcha detected: {captcha_type}", file=sys.stderr)
+    print(f"{log_prefix} 2Captcha: {captcha_type} detected, solving via 2Captcha API...", file=sys.stderr)
 
     try:
         if captcha_type == 'turnstile':

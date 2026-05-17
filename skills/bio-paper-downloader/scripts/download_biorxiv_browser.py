@@ -721,27 +721,33 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         """Chrome startup failures — retrying won't help."""
         return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
 
-    # Try headless first (2 attempts)
-    for attempt in range(2):
-        if attempt > 0:
-            print(f"  [browser] headless retry 2/2 after 5s...", file=sys.stderr)
-            time.sleep(5)
+    # When captcha is enabled, skip headless — headless won't show captcha widgets
+    # and Cloudflare fingerprinting makes JS challenges harder to pass.
+    if captcha_enabled:
+        print(f"  [browser] 2Captcha enabled, skipping headless mode",
+              file=sys.stderr)
+    else:
+        # Try headless first (2 attempts)
+        for attempt in range(2):
+            if attempt > 0:
+                print(f"  [browser] headless retry 2/2 after 5s...", file=sys.stderr)
+                time.sleep(5)
 
-        result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                chrome_bin, timeout,
-                                                headless=True,
-                                                profile_dir=profile_dir,
-                                                wait=wait,
-                                                captcha_enabled=captcha_enabled,
-                                                captcha_api_key=captcha_api_key)
-        if result['success']:
-            return result
-        msg = result.get('message', '')
-        print(f"  [browser] headless failed: {msg}", file=sys.stderr)
-        if _is_fatal(msg):
-            return result
-        if 'Cloudflare' in msg:
-            break
+            result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                    chrome_bin, timeout,
+                                                    headless=True,
+                                                    profile_dir=profile_dir,
+                                                    wait=wait,
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key)
+            if result['success']:
+                return result
+            msg = result.get('message', '')
+            print(f"  [browser] headless failed: {msg}", file=sys.stderr)
+            if _is_fatal(msg):
+                return result
+            if 'Cloudflare' in msg:
+                break
 
     if fallback_level < 2:
         return result
