@@ -560,8 +560,26 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         """Chrome startup failures — retrying won't help."""
         return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
 
-    print(f"  [publisher] Cloudflare-protected site, going straight to headed",
-              file=sys.stderr)
+    # Try headless first (up to 2 attempts), break immediately on anti-bot
+    for attempt in range(2):
+        if attempt > 0:
+            print(f"  [publisher] headless retry 2/2 after 5s...", file=sys.stderr)
+            time.sleep(5)
+
+        result = await _do_download_via_publisher(doi_url, output_path,
+                                                    chrome_bin, timeout,
+                                                    headless=True,
+                                                    profile_dir=profile_dir,
+                                                    wait=wait,
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key)
+        if result['success']:
+            return result
+        print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
+        if _is_fatal(result.get('message', '')):
+            return result
+        if 'Anti-bot' in result.get('message', ''):
+            break
 
     if fallback_level < 2:
         return result
