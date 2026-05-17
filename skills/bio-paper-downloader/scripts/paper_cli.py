@@ -299,7 +299,7 @@ def download_arxiv(arxiv_id, config):
         return None
 
 
-def download_preprint(doi, server, config, use_browser=False, headed_fallback=False):
+def download_preprint(doi, server, config, fallback_level=2):
     if not doi:
         return None
     headers = {
@@ -322,10 +322,10 @@ def download_preprint(doi, server, config, use_browser=False, headed_fallback=Fa
             pass
         time.sleep(1)
 
-    if use_browser or headed_fallback:
+    if fallback_level >= 1:
         print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
         try:
-            data = _browser_download(doi, server, config, headed_fallback=headed_fallback)
+            data = _browser_download(doi, server, config, fallback_level=fallback_level)
             if data:
                 return data
         except Exception as e:
@@ -334,7 +334,7 @@ def download_preprint(doi, server, config, use_browser=False, headed_fallback=Fa
     return None
 
 
-def _browser_download(doi, server, config, headed_fallback=False):
+def _browser_download(doi, server, config, fallback_level=2):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -345,9 +345,8 @@ def _browser_download(doi, server, config, headed_fallback=False):
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = [sys.executable, script, doi, '-o', tmpdir,
-           '--timeout', '180', '--wait', str(browser_wait)]
-    if headed_fallback:
-        cmd.append('--headed-fallback')
+           '--timeout', '180', '--wait', str(browser_wait),
+           '--fallback-level', str(fallback_level)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -405,13 +404,12 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
     return None
 
 
-def _publisher_download(doi, pmid, config, use_browser=False, headed_fallback=False):
+def _publisher_download(doi, pmid, config, fallback_level=2):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     base_cmd = [sys.executable, script, '--doi', doi,
-                '--timeout', '60']
-    if use_browser or headed_fallback:
-        base_cmd.append('--headed-fallback')
+                '--timeout', '60',
+                '--fallback-level', str(fallback_level)]
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -432,7 +430,7 @@ def _is_pdf(data: bytes) -> bool:
     return data[:5] == b'%PDF-'
 
 
-def _download_direct_pdf(pdf_url, config, use_browser=False, headed_fallback=False):
+def _download_direct_pdf(pdf_url, config, fallback_level=2):
     if not pdf_url:
         return None
     # Direct HTTP attempt
@@ -445,13 +443,14 @@ def _download_direct_pdf(pdf_url, config, use_browser=False, headed_fallback=Fal
     except Exception:
         pass
 
-    # Browser fallback (headless, +headed if use_browser or headed_fallback)
+    # Browser fallback (if fallback_level >= 1)
+    if fallback_level < 1:
+        return None
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
     base_cmd = [sys.executable, script, pdf_url,
-                '--timeout', '180']
-    if use_browser or headed_fallback:
-        base_cmd.append('--headed-fallback')
+                '--timeout', '180',
+                '--fallback-level', str(fallback_level)]
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -584,7 +583,7 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
 SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
 
 
-def download_paper(paper, config, data_dir, conn, use_browser=False, force=False, headed_fallback=False):
+def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
@@ -621,20 +620,19 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
         pdf_data = download_arxiv(paper.get('arxiv_id', pid), config)
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi') or pid, src, config,
-                                     use_browser=use_browser,
-                                     headed_fallback=headed_fallback)
+                                     fallback_level=fallback_level)
     elif src == 'scholar':
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
-        if pdf_url and use_browser:
-            pdf_data = _download_direct_pdf(pdf_url, config, use_browser=use_browser, headed_fallback=headed_fallback)
-        if not pdf_data and doi and use_browser:
-            pdf_data = _publisher_download(doi, paper.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+        if pdf_url and fallback_level >= 1:
+            pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level)
+        if not pdf_data and doi and fallback_level >= 1:
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
-        if use_browser and paper.get('doi'):
-            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+        if fallback_level >= 1 and paper.get('doi'):
+            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level)
         if not pdf_data:
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
             if not pmc_has_pdf:
@@ -649,11 +647,11 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
                 pdf_data = _download_pmc_pdf(pmc_id, config)
             if not pdf_data:
                 if paper.get('pdf_url'):
-                    pdf_data = _download_direct_pdf(paper['pdf_url'], config, use_browser=use_browser, headed_fallback=headed_fallback)
+                    pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level)
                 if not pdf_data and paper.get('doi'):
-                    pdf_data = _publisher_download(paper['doi'], paper.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+                    pdf_data = _publisher_download(paper['doi'], paper.get('pmid'), config, fallback_level=fallback_level)
     elif src == 'generic':
-        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, use_browser=use_browser, headed_fallback=headed_fallback)
+        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -679,7 +677,7 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
 
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
-            pdf_data = _download_direct_pdf(paper['pdf_url'], config, use_browser=use_browser, headed_fallback=headed_fallback)
+            pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
@@ -687,7 +685,7 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
         # Step 2: if direct failed, use publisher download via DOI
         if not pdf_data and doi:
             print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
-            pdf_data = _publisher_download(doi, paper.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
@@ -704,15 +702,15 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
                     pdf_data = download_arxiv(aid, config)
             elif alt_src in ('biorxiv', 'medrxiv'):
                 adoi = alt.get('doi') or paper.get('doi') or pid
-                pdf_data = download_preprint(adoi, alt_src, config, use_browser=use_browser, headed_fallback=headed_fallback)
+                pdf_data = download_preprint(adoi, alt_src, config, fallback_level=fallback_level)
             elif alt_src == 'scholar':
-                if alt.get('pdf_url') and use_browser:
-                    pdf_data = _download_direct_pdf(alt['pdf_url'], config, use_browser=use_browser, headed_fallback=headed_fallback)
-                if not pdf_data and alt.get('doi') and use_browser:
-                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+                if alt.get("pdf_url") and fallback_level >= 1:
+                    pdf_data = _download_direct_pdf(alt['pdf_url'], config, fallback_level=fallback_level)
+                if not pdf_data and alt.get("doi") and fallback_level >= 1:
+                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level)
             elif alt_src == 'pubmed':
-                if use_browser and alt.get('doi'):
-                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, use_browser=use_browser, headed_fallback=headed_fallback)
+                if fallback_level >= 1 and alt.get('doi'):
+                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:
@@ -866,8 +864,7 @@ def cmd_get(args, config):
 
     conn = get_conn(config)
     ok = download_paper(paper, config, args.data_dir, conn,
-                        use_browser=args.browser, force=args.force,
-                        headed_fallback=args.headed_fallback)
+                        force=args.force, fallback_level=args.fallback_level)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -877,7 +874,7 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False, cnsp_only=False, headed_fallback=False):
+def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False, fallback_level=2):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
@@ -907,8 +904,8 @@ def cmd_auto(config, data_dir, use_browser=False, limit=None, retry_failed=False
     skipped = 0
     for i, p in enumerate(papers, 1):
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
-        result = download_paper(p, config, data_dir, conn, use_browser=use_browser,
-                               headed_fallback=headed_fallback)
+        result = download_paper(p, config, data_dir, conn,
+                               fallback_level=fallback_level)
         if result is True:
             ok += 1
         elif result is False:
@@ -945,8 +942,8 @@ examples:
   # Auto-mode — download all searched papers from database
   paper_cli.py
 
-  # Auto-mode with browser (for bioRxiv/medRxiv/PubMed publisher PDFs)
-  paper_cli.py --browser
+  # Auto-mode with headed fallback (for bioRxiv/medRxiv/PubMed publisher PDFs)
+  paper_cli.py --fallback-level 2
 
   # Preview URL without downloading
   paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -l"""
@@ -968,16 +965,14 @@ def main():
                    help='Path to SQLite database (default: from config.yaml)')
     p.add_argument('--data-dir', default='data',
                    help='Directory for paper data (default: data)')
-    p.add_argument('--browser', action='store_true',
-                   help='Use Chrome browser for PDF downloads (bioRxiv/medRxiv/PubMed)')
+    p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
+                   help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to download in auto-mode')
     p.add_argument('--retry-failed', action='store_true',
                    help='Retry downloading papers with download_failed status')
     p.add_argument('--cnsp', action='store_true',
                    help='Only download papers published in C/N/S/P journals')
-    p.add_argument('--headed-fallback', action='store_true',
-                   help='Fall back to headed Chrome (via Xvfb) if headless fails')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -998,8 +993,8 @@ def main():
                     help='Parse and show paper info from the URL without downloading')
     gp.add_argument('-f', '--force', action='store_true',
                     help='Force re-download even if already downloaded')
-    gp.add_argument('--headed-fallback', action='store_true',
-                    help='Fall back to headed Chrome (via Xvfb) if headless fails')
+    gp.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
+                    help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
 
     # ---- pdf ----
     pp = sub.add_parser(
@@ -1026,9 +1021,9 @@ def main():
         return cmd_pdf(args, config)
     elif args.cmd is None:
         # Auto-mode: download all searched papers
-        return cmd_auto(config, args.data_dir, use_browser=args.browser, limit=args.limit,
+        return cmd_auto(config, args.data_dir, limit=args.limit,
                         retry_failed=args.retry_failed, cnsp_only=args.cnsp,
-                        headed_fallback=args.headed_fallback)
+                        fallback_level=args.fallback_level)
     return 1
 
 

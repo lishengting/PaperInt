@@ -153,12 +153,13 @@ class ChromeInstance:
     _xvfb_display = None   # shared across instances for display reuse
 
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
-                 headless=True):
+                 headless=True, xvfb=True):
         self.chrome_bin = chrome_bin
         self.profile_dir = profile_dir or tempfile.mkdtemp(prefix='paper_cli_chrome_')
         self.port = port or _find_free_port()
         self.process = None
         self.headless = headless
+        self.xvfb = xvfb
 
     def start(self):
         os.makedirs(self.profile_dir, exist_ok=True)
@@ -184,13 +185,16 @@ class ChromeInstance:
             # Hide automation flags from detection
             args.insert(2, '--disable-blink-features=AutomationControlled')
         else:
-            # Headed mode: start a virtual X display so Chrome can render
-            # without a physical screen. This is essential for passing
-            # Cloudflare JS Challenges and other anti-bot rendering checks.
-            if not _xvfb_start():
-                raise RuntimeError('Xvfb is required for headed Chrome on headless servers')
-            env['DISPLAY'] = os.environ.get('DISPLAY', ':99')
-            print(f"  [browser] Virtual display: {env['DISPLAY']}", file=sys.stderr)
+            # Headed mode: need a display for Chrome to render.
+            if self.xvfb:
+                if not _xvfb_start():
+                    raise RuntimeError('Xvfb is required for headed Chrome on headless servers')
+                env['DISPLAY'] = os.environ.get('DISPLAY', ':99')
+            else:
+                # Level 3: use system display (must be pre-set)
+                if 'DISPLAY' not in env:
+                    raise RuntimeError('No DISPLAY available for headed Chrome (level 3 requires a real display)')
+            print(f"  [browser] Virtual display: {env.get('DISPLAY', 'system')}", file=sys.stderr)
 
         args.append('about:blank')
 
@@ -387,7 +391,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10)
 
 
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
-                                     headless, profile_dir=None, wait=10):
+                                     headless, profile_dir=None, wait=10, xvfb=True):
     """
     Core download logic. Returns dict result.
     """
@@ -413,7 +417,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
         print(f"  [browser:{mode}] Generic URL: {url_or_doi}", file=sys.stderr)
         chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
                                 headless=headless,
-                                profile_dir=profile_dir)
+                                profile_dir=profile_dir,
+                                xvfb=xvfb)
 
         # Suppress TargetClosedError from Playwright's internal waiters
         # that fire after the browser connection is closed.
@@ -477,7 +482,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
     chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
                             headless=headless,
-                            profile_dir=profile_dir)
+                            profile_dir=profile_dir,
+                            xvfb=xvfb)
 
     # Suppress TargetClosedError from Playwright's internal waiters
     loop = asyncio.get_event_loop()
@@ -615,11 +621,16 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
 
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
-                               headed_fallback=False, wait=10):
+                               fallback_level=2, wait=10):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
-    Tries headless Chrome first (3 attempts), then falls back to headed if headed_fallback=True.
+    fallback_level:
+      0 — not applicable (should not be called without browser)
+      1 — headless Chrome only (3 retries)
+      2 — headless → Xvfb headed Chrome (default)
+      3 — headless → Xvfb headed → system display headed
+
     Shares a single Chrome profile across retries so cookies persist.
 
     Returns dict: {success, file_path, file_size, message}
@@ -648,11 +659,11 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         if 'Cloudflare' in result.get('message', ''):
             break
 
-    if not headed_fallback:
+    if fallback_level < 2:
         return result
 
-    # Fallback to headed (3 attempts)
-    print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
+    # Fallback to Xvfb headed (3 attempts)
+    print(f"  [browser] falling back to headed Chrome (Xvfb)...", file=sys.stderr)
     for attempt in range(3):
         if attempt > 0:
             delay = 5 * attempt
@@ -663,11 +674,32 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 chrome_bin, timeout,
                                                 headless=False,
                                                 profile_dir=profile_dir,
-                                                wait=wait)
+                                                wait=wait, xvfb=True)
         if result['success']:
-            result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+            result['message'] = result['message'].replace('(headed)', '(headed xvfb)')
             return result
-        print(f"  [browser] headed failed: {result['message']}", file=sys.stderr)
+        print(f"  [browser] headed (xvfb) failed: {result['message']}", file=sys.stderr)
+
+    if fallback_level < 3:
+        return result
+
+    # Fallback to system display headed (3 attempts)
+    print(f"  [browser] falling back to headed Chrome (system display)...", file=sys.stderr)
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [browser] headed (system) retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                chrome_bin, timeout,
+                                                headless=False,
+                                                profile_dir=profile_dir,
+                                                wait=wait, xvfb=False)
+        if result['success']:
+            result['message'] = result['message'].replace('(headed)', '(headed system)')
+            return result
+        print(f"  [browser] headed (system) failed: {result['message']}", file=sys.stderr)
     return result
 
 
@@ -687,13 +719,13 @@ def main():
                    help='Page load timeout in seconds (default: 60)')
     p.add_argument('--wait', type=int, default=10,
                    help='Post-navigation wait in seconds (default: 10)')
-    p.add_argument('--headed-fallback', action='store_true',
-                   help='Allow falling back to headed Chrome if headless fails')
+    p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
+                   help='Browser fallback level (0=no-browser, 1=headless, 2=+xvfb, 3=+system-display)')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
         args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout,
-        headed_fallback=args.headed_fallback, wait=args.wait))
+        fallback_level=args.fallback_level, wait=args.wait))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
