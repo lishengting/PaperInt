@@ -91,25 +91,14 @@ _XVFB_DISPLAY = None
 
 
 def _xvfb_start():
-    """Start an Xvfb virtual display if not already running."""
+    """Start an Xvfb virtual display on :99, reusing or replacing any existing one."""
     global _XVFB_PROC, _XVFB_DISPLAY
     if _XVFB_PROC is not None and _XVFB_PROC.poll() is None:
         return True
-    import socket
-    try:
-        # Find a free display number
-        for d in range(99, 110):
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                sock.connect(f'/tmp/.X11-unix/X{d}')
-                sock.close()
-            except (socket.error, FileNotFoundError):
-                _XVFB_DISPLAY = f':{d}'
-                break
-        if _XVFB_DISPLAY is None:
-            _XVFB_DISPLAY = ':99'
-    except Exception:
-        _XVFB_DISPLAY = ':99'
+    _XVFB_DISPLAY = ':99'
+    # Kill any stale Xvfb on :99
+    subprocess.run(['pkill', '-f', 'Xvfb :99'], capture_output=True)
+    time.sleep(0.3)
 
     try:
         _XVFB_PROC = subprocess.Popen(
