@@ -285,6 +285,9 @@ async def _wait_for_page(page, timeout=30, captcha_enabled=False,
     If the page stays blocked, periodically check if a Turnstile/reCAPTCHA
     widget has appeared in the DOM and solve it via 2Captcha.
     """
+    if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
+        print(f"{log_prefix} 2Captcha: watching for captcha widget (max {timeout}s)",
+              file=sys.stderr)
     for i in range(timeout // 2):
         await asyncio.sleep(2)
         try:
@@ -305,7 +308,7 @@ async def _wait_for_page(page, timeout=30, captcha_enabled=False,
                                               log_prefix=log_prefix,
                                               quiet=True)
             if solved:
-                print(f"{log_prefix} 2Captcha: widget appeared and solved",
+                print(f"{log_prefix} 2Captcha: captcha solved, waiting for redirect...",
                       file=sys.stderr)
     return False
 

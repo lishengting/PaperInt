@@ -299,6 +299,9 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
     This function polls for both — title change means JS challenge passed,
     and Turnstile detection means we should solve via 2Captcha.
     """
+    if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
+        print(f"{log_prefix} 2Captcha: watching for Turnstile widget (max {timeout}s)",
+              file=sys.stderr)
     for _ in range(timeout // 2):
         await asyncio.sleep(2)
         try:
@@ -315,7 +318,7 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
                                               log_prefix=log_prefix,
                                               quiet=True)
             if solved:
-                print(f"{log_prefix} 2Captcha: Turnstile widget appeared and solved",
+                print(f"{log_prefix} 2Captcha: Turnstile solved, waiting for redirect...",
                       file=sys.stderr)
     return False
 
