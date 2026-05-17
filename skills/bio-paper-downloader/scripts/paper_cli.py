@@ -353,7 +353,9 @@ def _browser_download(doi, server, config, fallback_level=2):
         pdf_path = os.path.join(tmpdir, safe_name)
         if os.path.exists(pdf_path):
             with open(pdf_path, 'rb') as f:
-                return f.read()
+                data = f.read()
+            os.unlink(pdf_path)
+            return data
     return None
 
 
@@ -421,7 +423,9 @@ def _publisher_download(doi, pmid, config, fallback_level=2):
         pdf_path = os.path.join(tmpdir, safe_name)
         if os.path.exists(pdf_path):
             with open(pdf_path, 'rb') as f:
-                return f.read()
+                data = f.read()
+            os.unlink(pdf_path)
+            return data
     return None
 
 
@@ -461,7 +465,9 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2):
             if f.endswith('.pdf'):
                 pdf_path = os.path.join(tmpdir, f)
                 with open(pdf_path, 'rb') as fh:
-                    return fh.read()
+                    data = fh.read()
+                os.unlink(pdf_path)
+                return data
     return None
 
 
