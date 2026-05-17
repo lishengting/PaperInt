@@ -311,12 +311,15 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
-        # Periodic debug: log page state every 10s
+        # Periodic debug: log page state every 10s; dump body HTML once at t=10s
         if i % 5 == 0 and i > 0:
             try:
                 n_iframes = await page.evaluate('() => document.querySelectorAll("iframe").length')
-                print(f"{log_prefix} Cloudflare page state: title={title!r}, url={page.url[:100]!r}, iframes={n_iframes}",
+                print(f"{log_prefix} Cloudflare page state: title={title!r}, url={page.url[:120]!r}, iframes={n_iframes}",
                       file=sys.stderr)
+                if n_iframes == 0:
+                    body = await page.evaluate('() => (document.body ? document.body.innerText : "").substring(0, 500)')
+                    print(f"{log_prefix} Cloudflare body text: {body!r}", file=sys.stderr)
             except Exception:
                 pass
         # Still on Cloudflare — check if Turnstile widget has appeared
