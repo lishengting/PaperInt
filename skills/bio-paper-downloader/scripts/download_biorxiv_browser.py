@@ -311,15 +311,30 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
-        # Periodic debug: log page state every 10s; dump body HTML once at t=10s
+        # Periodic debug: log page state every 10s; dump HTML structure once
         if i % 5 == 0 and i > 0:
             try:
-                n_iframes = await page.evaluate('() => document.querySelectorAll("iframe").length')
-                print(f"{log_prefix} Cloudflare page state: title={title!r}, url={page.url[:120]!r}, iframes={n_iframes}",
+                info = await page.evaluate("""() => {
+                    const iframes = document.querySelectorAll('iframe');
+                    const buttons = document.querySelectorAll('button, input[type=submit], input[type=checkbox]');
+                    return {
+                        title: document.title,
+                        url: window.location.href,
+                        iframeCount: iframes.length,
+                        iframeSrcs: Array.from(iframes).map(f => f.src.substring(0, 150)),
+                        buttonCount: buttons.length,
+                        buttonTexts: Array.from(buttons).map(b => (b.value||b.innerText||b.type||'').substring(0, 60)),
+                        bodyHTML: (document.body ? document.body.innerHTML : '').substring(0, 2000),
+                    };
+                }""")
+                print(f"{log_prefix} Cloudflare debug: title={info['title']!r}, url={info['url'][:120]!r}",
                       file=sys.stderr)
-                if n_iframes == 0:
-                    body = await page.evaluate('() => (document.body ? document.body.innerText : "").substring(0, 500)')
-                    print(f"{log_prefix} Cloudflare body text: {body!r}", file=sys.stderr)
+                print(f"{log_prefix}   iframes={info['iframeCount']} srcs={info['iframeSrcs']}",
+                      file=sys.stderr)
+                print(f"{log_prefix}   buttons={info['buttonCount']} texts={info['buttonTexts']}",
+                      file=sys.stderr)
+                print(f"{log_prefix}   bodyHTML={info['bodyHTML'][:2000]!r}",
+                      file=sys.stderr)
             except Exception:
                 pass
         # Still on Cloudflare — check if Turnstile widget has appeared
