@@ -796,7 +796,26 @@ def detect_url(url, config):
     if m:
         server = m.group(1)
         doi = m.group(2)
-        return make_paper(server, doi, f'{server}:{doi}', '', '', '', '',
+        title = f'{server}:{doi}'
+        authors = ''
+        abstract = ''
+        date = ''
+        # Fetch real metadata from bioRxiv/medRxiv API
+        try:
+            api_url = f"https://api.{server}.org/details/{server}/{doi}"
+            req = urllib.request.Request(api_url, headers={'User-Agent': ua(config)})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                api_data = json.loads(resp.read())
+                coll = api_data.get('collection', [])
+                if coll:
+                    rec = coll[0]
+                    title = rec.get('title', title)
+                    authors = rec.get('authors', '')
+                    abstract = rec.get('abstract', '')
+                    date = rec.get('date', '')
+        except Exception:
+            pass
+        return make_paper(server, doi, title, authors, abstract, date, '',
                           f"https://www.{server}.org/content/{doi}.full.pdf",
                           f"https://www.{server}.org/content/{doi}", doi=doi)
 
