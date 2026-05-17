@@ -478,12 +478,27 @@ def _pubmed_lookup_pmc(pmid, config):
 
 
 def _download_pmc_pdf(pmc_id, config):
+    # Normalize to include PMC prefix
+    if not pmc_id.upper().startswith('PMC'):
+        pmc_id = f'PMC{pmc_id}'
     url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
         with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
-            if len(data) > 10000 and not data[:4] == b'<!DO':
+            if data[:5] == b'%PDF-' and len(data) > 10000:
+                return data
+    except Exception:
+        pass
+
+    # Fallback: Europe PMC (no Cloudflare/PoW anti-bot wall)
+    try:
+        epmc_url = f"https://europepmc.org/articles/{pmc_id}?pdf=render"
+        req2 = urllib.request.Request(epmc_url, headers={'User-Agent': ua(config)})
+        with _urlopen_with_retry(req2, config, attempts=2) as r:
+            data = r.read()
+            if data[:5] == b'%PDF-' and len(data) > 10000:
+                print(f"  Downloaded from Europe PMC", file=sys.stderr)
                 return data
     except Exception:
         pass
@@ -620,16 +635,17 @@ def download_paper(paper, config, data_dir, conn, use_browser=False, force=False
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, use_browser=use_browser)
         if not pdf_data:
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
-            if pmc_has_pdf:
-                pmc_id = paper.get('pmc_id')
-                if not pmc_id:
-                    pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
-                if pmc_id:
-                    pdf_data = _download_pmc_pdf(pmc_id, config)
+            if not pmc_has_pdf:
+                print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
+            # Always try PMC download (with Europe PMC fallback) even if API
+            # says has_pdf=False — the API may be wrong, and Europe PMC often
+            # has PDFs that NCBI's PMC gates behind PoW challenges.
+            pmc_id = paper.get('pmc_id')
+            if not pmc_id:
+                pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
+            if pmc_id:
+                pdf_data = _download_pmc_pdf(pmc_id, config)
             if not pdf_data:
-                # Not OA, try direct PDF and publisher fallback
-                if not pmc_has_pdf:
-                    print(f"  [info] not OA via PMC, trying direct PDF / publisher", file=sys.stderr)
                 if paper.get('pdf_url'):
                     pdf_data = _download_direct_pdf(paper['pdf_url'], config, use_browser=use_browser)
                 if not pdf_data and paper.get('doi'):

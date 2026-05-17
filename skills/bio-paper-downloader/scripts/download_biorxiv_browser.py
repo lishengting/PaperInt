@@ -150,26 +150,6 @@ async def _wait_cloudflare(page, timeout=60):
     return False
 
 
-async def _handle_cors_route(route):
-    """Inject Access-Control-Allow-Origin header for CDN resources.
-
-    PMC's PoW scripts are loaded with crossorigin="" (anonymous CORS mode).
-    CDN hosts like cdn.ncbi.nlm.nih.gov don't return the required header,
-    so headless Chrome blocks the module load. This route handler patches
-    the response to add the missing CORS header.
-    """
-    try:
-        response = await route.fetch()
-        headers = dict(response.headers)
-        headers['Access-Control-Allow-Origin'] = '*'
-        await route.fulfill(
-            status=response.status,
-            headers=headers,
-            body=await response.body())
-    except Exception:
-        await route.continue_()
-
-
 async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10):
     """Download a PDF that Chrome displays with its built-in viewer.
 
@@ -371,10 +351,6 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
                 ctx = browser.contexts[0]
 
-                # Inject CORS headers for PMC PoW scripts in headless Chrome
-                await ctx.route('**/cdn.ncbi.nlm.nih.gov/**', _handle_cors_route)
-
-                # Set download path so captures go to output dir
                 about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 cdp_tmp = await ctx.new_cdp_session(about_page)
                 await cdp_tmp.send('Page.setDownloadBehavior', {
