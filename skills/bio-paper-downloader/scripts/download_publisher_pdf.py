@@ -329,7 +329,7 @@ async def _safe_eval(page, js, retries=3):
 
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
-                                       captcha_enabled=False):
+                                       captcha_enabled=False, captcha_api_key=''):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -363,6 +363,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             # Attempt captcha solving before passive wait
             if _CAPTCHA_AVAILABLE:
                 solved = await try_solve_captcha(page, captcha_enabled,
+                                                  api_key=captcha_api_key,
                                                   log_prefix=f'  [publisher:{mode}]')
                 if solved:
                     print(f"  [publisher:{mode}] Captcha solved", file=sys.stderr)
@@ -520,7 +521,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
-                                  captcha_enabled=False):
+                                  captcha_enabled=False, captcha_api_key=''):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -570,7 +571,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     headless=True,
                                                     profile_dir=profile_dir,
                                                     wait=wait,
-                                                    captcha_enabled=captcha_enabled)
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
@@ -594,7 +596,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     headless=False,
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=True,
-                                                    captcha_enabled=captcha_enabled)
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -619,7 +622,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     headless=False,
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=False,
-                                                    captcha_enabled=captcha_enabled)
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -650,6 +654,8 @@ def main():
                    help='Browser fallback level (0=no-browser, 1=headless, 2=+xvfb, 3=+system-display)')
     p.add_argument('--captcha', action='store_true', default=False,
                    help='Enable 2Captcha solving for anti-bot challenges (default: off)')
+    p.add_argument('--twocap-api', default='',
+                   help='2Captcha API key (from config.yaml download.twocaptcha_api_key)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -659,7 +665,8 @@ def main():
         doi=args.doi, pmid=args.pmid, output_dir=args.output_dir,
         chrome_bin=args.chrome_bin, timeout=args.timeout,
         fallback_level=args.fallback_level, wait=args.wait,
-        captcha_enabled=args.captcha))
+        captcha_enabled=args.captcha,
+        captcha_api_key=args.twocap_api))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

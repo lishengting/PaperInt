@@ -366,6 +366,9 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
            '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         cmd.append('--captcha')
+        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        if twocap_api:
+            cmd.extend(['--twocap-api', twocap_api])
     r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -433,6 +436,9 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
                 '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         base_cmd.append('--captcha')
+        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        if twocap_api:
+            base_cmd.extend(['--twocap-api', twocap_api])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -478,6 +484,9 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                 '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         base_cmd.append('--captcha')
+        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        if twocap_api:
+            base_cmd.extend(['--twocap-api', twocap_api])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]

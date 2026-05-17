@@ -454,7 +454,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10)
 
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                                      headless, profile_dir=None, wait=10, xvfb=True,
-                                     captcha_enabled=False):
+                                     captcha_enabled=False, captcha_api_key=''):
     """
     Core download logic. Returns dict result.
     """
@@ -581,6 +581,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             # Attempt captcha solving before passive wait
             if _CAPTCHA_AVAILABLE:
                 solved = await try_solve_captcha(page, captcha_enabled,
+                                                  api_key=captcha_api_key,
                                                   log_prefix=f'  [browser:{mode}]')
                 if solved:
                     print(f"  [browser:{mode}] Captcha solved", file=sys.stderr)
@@ -692,7 +693,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
 
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
-                               fallback_level=2, wait=10, captcha_enabled=False):
+                               fallback_level=2, wait=10, captcha_enabled=False,
+                               captcha_api_key=''):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -727,7 +729,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 headless=True,
                                                 profile_dir=profile_dir,
                                                 wait=wait,
-                                                captcha_enabled=captcha_enabled)
+                                                captcha_enabled=captcha_enabled,
+                                                captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -752,7 +755,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 headless=False,
                                                 profile_dir=profile_dir,
                                                 wait=wait, xvfb=True,
-                                                captcha_enabled=captcha_enabled)
+                                                captcha_enabled=captcha_enabled,
+                                                captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -775,7 +779,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 headless=False,
                                                 profile_dir=profile_dir,
                                                 wait=wait, xvfb=False,
-                                                captcha_enabled=captcha_enabled)
+                                                captcha_enabled=captcha_enabled,
+                                                captcha_api_key=captcha_api_key)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -805,12 +810,15 @@ def main():
                    help='Browser fallback level (0=no-browser, 1=headless, 2=+xvfb, 3=+system-display)')
     p.add_argument('--captcha', action='store_true', default=False,
                    help='Enable 2Captcha solving for Cloudflare challenges (default: off)')
+    p.add_argument('--twocap-api', default='',
+                   help='2Captcha API key (from config.yaml download.twocaptcha_api_key)')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
         args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout,
         fallback_level=args.fallback_level, wait=args.wait,
-        captcha_enabled=args.captcha))
+        captcha_enabled=args.captcha,
+        captcha_api_key=args.twocap_api))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
