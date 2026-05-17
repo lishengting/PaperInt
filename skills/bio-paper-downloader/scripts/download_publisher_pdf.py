@@ -176,7 +176,7 @@ async def _safe_eval(page, js, retries=3):
 
 
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
-                                       headless, profile_dir=None):
+                                       headless, profile_dir=None, wait=10):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -305,7 +305,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 else:
                     result['message'] = f'Navigation failed: {msg[:200]}'
                 return result
-            await asyncio.sleep(3)
+            await asyncio.sleep(wait)
 
             ct = await page.evaluate('() => document.contentType')
             if ct != 'application/pdf':
@@ -359,7 +359,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
-                                  headed_fallback=False):
+                                  headed_fallback=False, wait=10):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -401,7 +401,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
                                                     headless=True,
-                                                    profile_dir=profile_dir)
+                                                    profile_dir=profile_dir,
+                                                    wait=wait)
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
@@ -422,7 +423,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
                                                     headless=False,
-                                                    profile_dir=profile_dir)
+                                                    profile_dir=profile_dir,
+                                                    wait=wait)
         if result['success']:
             result['message'] = result['message'].replace('(headed)', '(headed fallback)')
             return result
@@ -445,6 +447,8 @@ def main():
                    help='Path to Chrome binary (auto-detect if omitted)')
     p.add_argument('--timeout', type=int, default=60,
                    help='Page load timeout in seconds (default: 60)')
+    p.add_argument('--wait', type=int, default=10,
+                   help='Post-navigation wait in seconds (default: 10)')
     p.add_argument('--headed-fallback', action='store_true',
                    help='Allow falling back to headed Chrome if headless fails')
     args = p.parse_args()
@@ -455,7 +459,7 @@ def main():
     result = asyncio.run(download_via_publisher(
         doi=args.doi, pmid=args.pmid, output_dir=args.output_dir,
         chrome_bin=args.chrome_bin, timeout=args.timeout,
-        headed_fallback=args.headed_fallback))
+        headed_fallback=args.headed_fallback, wait=args.wait))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
