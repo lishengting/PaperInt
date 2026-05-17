@@ -162,6 +162,9 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
     print(f"  [browser] Navigating to PDF...", file=sys.stderr)
+    # Collect console errors for debugging
+    console_errors = []
+    page.on('console', lambda msg: console_errors.append(f'[{msg.type}] {msg.text}') if msg.type in ('error', 'warning') else None)
     await page.goto(url_or_doi, wait_until='networkidle',
                     timeout=timeout * 1000)
     # Some servers (PMC) serve a PoW challenge page ("Preparing to download...")
@@ -181,6 +184,19 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
         # PoW may have completed - try a reload to trigger the redirect
         await page.reload(wait_until='networkidle', timeout=timeout * 1000)
         await asyncio.sleep(3)
+
+    # Debug: diagnose why PoW didn't resolve
+    try:
+        has_pow = await page.evaluate('() => !!(window.ncbi && window.ncbi.pmc && window.ncbi.pmc.pow)')
+        print(f"  [browser] window.ncbi.pmc.pow exists: {has_pow}", file=sys.stderr)
+        cookies = await page.context.cookies()
+        pow_cookie = [c for c in cookies if 'pow' in c.get('name', '').lower()]
+        print(f"  [browser] PoW cookies: {len(pow_cookie)}", file=sys.stderr)
+    except Exception:
+        pass
+    if console_errors:
+        for e in console_errors[:5]:
+            print(f"  [browser] console: {e[:200]}", file=sys.stderr)
 
     final_url = page.url
     ct = await page.evaluate('() => document.contentType')
