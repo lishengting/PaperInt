@@ -347,7 +347,7 @@ def _browser_download(doi, server, config, fallback_level=2):
     cmd = [sys.executable, script, doi, '-o', tmpdir,
            '--timeout', '180', '--wait', str(browser_wait),
            '--fallback-level', str(fallback_level)]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
