@@ -586,7 +586,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 if solved:
                     print(f"  [browser:{mode}] Captcha solved", file=sys.stderr)
 
-            if not await _wait_cloudflare(page, 120):
+            # Headless rarely passes Cloudflare JS challenges — give it a short leash
+            cf_timeout = 15 if headless else 120
+            if not await _wait_cloudflare(page, cf_timeout):
                 result['message'] = 'Cloudflare challenge did not resolve'
                 return result
             print(f"  [browser:{mode}] Cloudflare passed", file=sys.stderr)
