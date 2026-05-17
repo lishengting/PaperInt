@@ -296,77 +296,14 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
 
     Cloudflare first shows a spinning JS challenge ("Just a moment...").
     If that fails, a Turnstile checkbox widget appears in the DOM.
-    This function uses wait_for_selector to actively wait for the Turnstile iframe
-    to appear, then tries to solve it via 2Captcha.
+    This function polls for both — title change means JS challenge passed,
+    and Turnstile detection means we should solve via 2Captcha.
     """
     if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
         print(f"{log_prefix} 2Captcha: watching for Turnstile widget (max {timeout}s)",
               file=sys.stderr)
-
-    # Check shadow DOM too — Turnstile may render inside a shadow root
-    check_js = """() => {
-        // Check regular DOM
-        const regular = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-        if (regular) return {found: true, inShadow: false};
-
-        // Check shadow roots recursively
-        function searchShadow(el) {
-            if (!el || !el.shadowRoot) return null;
-            const ifr = el.shadowRoot.querySelector('iframe[src*="challenges.cloudflare.com"]');
-            if (ifr) return ifr;
-            for (const child of el.shadowRoot.children) {
-                const r = searchShadow(child);
-                if (r) return r;
-            }
-            return null;
-        }
-        // Search from known container and body
-        for (const sel of ['#AwWzG3', '#challenge-stage', 'body']) {
-            const el = document.querySelector(sel);
-            if (el) {
-                const r = searchShadow(el);
-                if (r) return {found: true, inShadow: true};
-            }
-        }
-        return {found: false};
-    }"""
-
-    # Allow time for the orchestrate script to execute
-    await asyncio.sleep(5)
-
-    for i in range(max(1, (timeout - 5) // 2)):
-        # Check every 2 seconds for Turnstile widget (regular DOM + shadow DOM)
-        try:
-            info = await page.evaluate(check_js)
-        except Exception:
-            info = {'found': False}
-
-        if info.get('found'):
-            print(f"{log_prefix} 2Captcha: Turnstile iframe found" +
-                  (" (shadow DOM)" if info.get('inShadow') else ""),
-                  file=sys.stderr)
-            if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
-                solved = await try_solve_captcha(page, captcha_enabled,
-                                                  api_key=captcha_api_key,
-                                                  log_prefix=log_prefix)
-                if solved:
-                    print(f"{log_prefix} 2Captcha: Turnstile solved, waiting for redirect...",
-                          file=sys.stderr)
-                    # Wait for redirect after solving
-                    for _ in range(15):
-                        await asyncio.sleep(2)
-                        try:
-                            t = await page.title()
-                            if 'moment' not in t.lower():
-                                return True
-                        except Exception:
-                            if 'cloudflare' not in page.url.lower():
-                                return True
-            return False  # iframe appeared but captcha not solved/enabled
-
+    for _ in range(timeout // 2):
         await asyncio.sleep(2)
-
-        # Also check if Cloudflare already passed
         try:
             title = await page.title()
             if 'moment' not in title.lower():
@@ -374,22 +311,16 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
-
-        # Debug every 10s
-        if i % 5 == 0 and i > 0:
-            try:
-                debug_info = await page.evaluate("""() => ({
-                    title: document.title,
-                    url: window.location.href.substring(0, 100),
-                    hasTurnstile: typeof turnstile !== 'undefined',
-                    hasCfParams: window.__cfTurnstileParams !== undefined,
-                    awWzG3HTML: (document.querySelector('#AwWzG3')||{}).innerHTML||'',
-                    allIframes: document.querySelectorAll('iframe').length,
-                    bodyIframes: document.body ? document.body.querySelectorAll('iframe').length : 0,
-                })""")
-                print(f"{log_prefix} t={5+i*2}s: {debug_info}", file=sys.stderr)
-            except Exception:
-                pass
+        # Still on Cloudflare — check if Turnstile widget has appeared
+        if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
+            solved = await try_solve_captcha(page, captcha_enabled,
+                                              api_key=captcha_api_key,
+                                              log_prefix=log_prefix,
+                                              quiet=True)
+            if solved:
+                print(f"{log_prefix} 2Captcha: Turnstile solved, waiting for redirect...",
+                      file=sys.stderr)
+    return False
 
 
 async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10):
