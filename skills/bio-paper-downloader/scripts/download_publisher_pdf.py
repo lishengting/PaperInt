@@ -98,6 +98,56 @@ def _xvfb_stop():
         _XVFB_DISPLAY = None
 
 
+def _cleanup_orphan_chrome_and_xvfb():
+    """Kill orphan Chrome/Xvfb processes left by dead parent processes.
+
+    Checks all Chrome processes with our temp-profile pattern and Xvfb
+    processes on display 99-110. If the parent process no longer exists,
+    the browser/display is an orphan and we kill it to free resources.
+    """
+    try:
+        for pid_str in os.listdir('/proc'):
+            if not pid_str.isdigit():
+                continue
+            pid = int(pid_str)
+            try:
+                with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                    cmdline = f.read().decode('utf-8', errors='replace')
+            except (FileNotFoundError, PermissionError):
+                continue
+
+            # Check if this is a Chrome with our temp profile or an Xvfb
+            is_ours = ('paper_cli_chrome_' in cmdline or
+                       'paper_cli_pub_chrome_' in cmdline or
+                       'paper_cli_scholar_chrome' in cmdline)
+            is_xvfb = cmdline.startswith('Xvfb') and any(
+                f':{d}' in cmdline for d in range(99, 111))
+
+            if not is_ours and not is_xvfb:
+                continue
+
+            # Check if parent still exists
+            try:
+                with open(f'/proc/{pid}/stat', 'rb') as f:
+                    stat = f.read().decode('utf-8', errors='replace')
+                ppid = int(stat.split(') ')[1].split()[0])
+                if ppid == 1:
+                    # Reparented to init — definitely orphaned
+                    pass
+                elif ppid > 1:
+                    os.kill(ppid, 0)
+                    continue  # Parent exists, skip
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                pass  # Parent gone, kill the orphan
+
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    except (FileNotFoundError, PermissionError):
+        pass  # /proc not available, skip cleanup
+
+
 # ---------------------------------------------------------------------------
 # Chrome launcher
 # ---------------------------------------------------------------------------
@@ -120,6 +170,10 @@ class ChromeInstance:
 
     def start(self):
         os.makedirs(self.profile_dir, exist_ok=True)
+
+        # Clean up orphan Chrome/Xvfb from previous crashed runs
+        _cleanup_orphan_chrome_and_xvfb()
+
         subprocess.run(['pkill', '-f', f'remote-debugging-port={self.port}'],
                        capture_output=True)
         time.sleep(1)

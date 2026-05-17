@@ -254,7 +254,23 @@ def _get_or_start_chrome():
         r2 = subprocess.run(['pgrep', '-a', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
         m = re.search(r'--remote-debugging-port=(\d+)', r2.stdout)
         if m:
-            return int(m.group(1))
+            port = int(m.group(1))
+            # Verify the Chrome process is still alive and has a valid parent
+            pids = r.stdout.strip().split()
+            for pid_str in pids:
+                try:
+                    ppid = int(open(f'/proc/{int(pid_str)}/stat').read().split(') ')[1].split()[0])
+                    if ppid == 1:
+                        # Orphaned — kill it and restart
+                        os.kill(int(pid_str), signal.SIGKILL)
+                        break
+                    os.kill(int(pid_str), 0)
+                except (FileNotFoundError, PermissionError, OSError, ValueError):
+                    # Process is dead or inaccessible
+                    break
+            else:
+                # All found processes are alive with valid parents — reuse
+                return port
     port = None
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
