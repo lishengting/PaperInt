@@ -655,7 +655,7 @@ def main():
     p.add_argument('--captcha', action='store_true', default=False,
                    help='Enable 2Captcha solving for anti-bot challenges (default: off)')
     p.add_argument('--twocap-api', default='',
-                   help='2Captcha API key (from config.yaml download.twocaptcha_api_key)')
+                   help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:

@@ -4,7 +4,7 @@ Shared captcha solver using 2Captcha service.
 Handles Cloudflare Turnstile (simple + challenge page) and reCAPTCHA v2/v3.
 All solving calls are synchronous and run via asyncio.to_thread().
 
-The 2Captcha API key is passed as a parameter from config.yaml (download.twocaptcha_api_key).
+The 2Captcha API key is resolved via config.yaml (download.twocaptcha_api_key_env).
 """
 
 import asyncio
@@ -43,7 +43,7 @@ const _cfPoll = setInterval(() => {
 def _get_solver(api_key):
     """Return a TwoCaptcha solver instance, or None if API key is missing."""
     if not api_key:
-        print("  [captcha] twocaptcha_api_key not set, skipping captcha solving",
+        print("  [captcha] twocaptcha_api_key_env not set, skipping captcha solving",
               file=sys.stderr)
         return None
     try:

@@ -366,7 +366,10 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
            '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         cmd.append('--captcha')
-        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+        twocap_api = os.environ.get(api_key_env, '')
+        if not twocap_api and len(api_key_env) > 20:
+            twocap_api = api_key_env
         if twocap_api:
             cmd.extend(['--twocap-api', twocap_api])
     r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
@@ -436,7 +439,10 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
                 '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         base_cmd.append('--captcha')
-        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+        twocap_api = os.environ.get(api_key_env, '')
+        if not twocap_api and len(api_key_env) > 20:
+            twocap_api = api_key_env
         if twocap_api:
             base_cmd.extend(['--twocap-api', twocap_api])
     tmpdir = _data_tmp(config)
@@ -484,7 +490,10 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                 '--fallback-level', str(fallback_level)]
     if captcha_enabled:
         base_cmd.append('--captcha')
-        twocap_api = cfg(config, 'download.twocaptcha_api_key', '')
+        api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+        twocap_api = os.environ.get(api_key_env, '')
+        if not twocap_api and len(api_key_env) > 20:
+            twocap_api = api_key_env
         if twocap_api:
             base_cmd.extend(['--twocap-api', twocap_api])
     tmpdir = _data_tmp(config)

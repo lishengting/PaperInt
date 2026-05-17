@@ -73,7 +73,7 @@ download:
   user_agent: "PaperInt-Skills/1.0 (mailto:example@example.com)"
   timeout_seconds: 60
   browser_wait_seconds: 15
-  twocaptcha_api_key: "d428b50c148719ba19b64d5d2e39db9f"
+  twocaptcha_api_key_env: "TWOCAPTCHA_API_KEY"
 
 # --- Filtering Keywords ---
 keywords:
