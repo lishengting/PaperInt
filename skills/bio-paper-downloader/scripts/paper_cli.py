@@ -343,9 +343,10 @@ def _browser_download(doi, server, config):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
     tmpdir = _data_tmp(config)
+    browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     r = subprocess.run(
         [sys.executable, script, doi, '-o', tmpdir,
-         '--timeout', '180'],
+         '--timeout', '180', '--wait', str(browser_wait)],
         capture_output=True, text=True, timeout=300)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -411,7 +412,8 @@ def _publisher_download(doi, pmid, config, use_browser=False):
     if use_browser:
         base_cmd.append('--headed-fallback')
     tmpdir = _data_tmp(config)
-    cmd = base_cmd + ['-o', tmpdir]
+    browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
+    cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
     r = subprocess.run(
         cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
         timeout=600)
@@ -450,7 +452,8 @@ def _download_direct_pdf(pdf_url, config, use_browser=False):
     if use_browser:
         base_cmd.append('--headed-fallback')
     tmpdir = _data_tmp(config)
-    cmd = base_cmd + ['-o', tmpdir]
+    browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
+    cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
     r = subprocess.run(
         cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
     if r.returncode == 0:
