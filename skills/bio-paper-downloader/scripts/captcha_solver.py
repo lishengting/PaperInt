@@ -8,6 +8,7 @@ The 2Captcha API key is resolved via config.yaml (download.twocaptcha_api_key_en
 """
 
 import asyncio
+import json
 import os
 import sys
 
@@ -56,27 +57,35 @@ def _get_solver(api_key):
 
 async def _detect_captcha_type(page) -> str | None:
     """Detect what kind of captcha is present on the page. Returns type or None."""
-    result = await page.evaluate("""() => {
-        // Cloudflare Turnstile widget — .cf-turnstile wrapper (direct embed)
-        // or challenges.cloudflare.com iframe (Cloudflare challenge page).
-        // Both are in the main DOM; do NOT inspect inside the cross-origin iframe.
-        if (document.querySelector('.cf-turnstile') ||
-            document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
-            return 'turnstile';
+    raw = await page.evaluate("""() => {
+        const iframes = Array.from(document.querySelectorAll('iframe')).map(f => f.src);
+        const d = {
+            title: document.title,
+            url: window.location.href,
+            iframeCount: iframes.length,
+            iframeSrcs: iframes.map(s => s.substring(0, 120)),
+            hasCfTurnstile: !!document.querySelector('.cf-turnstile'),
+        };
+        if (d.hasCfTurnstile ||
+            document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+            document.querySelector('iframe[src*="turnstile"]')) {
+            d.type = 'turnstile'; return JSON.stringify(d);
         }
-        // reCAPTCHA v2 (checkbox)
         if (document.querySelector('.g-recaptcha') ||
             document.querySelector('iframe[src*="recaptcha/api2"]')) {
-            return 'recaptcha_v2';
+            d.type = 'recaptcha_v2'; return JSON.stringify(d);
         }
-        // reCAPTCHA v3 (invisible badge)
         if (document.querySelector('.grecaptcha-badge') ||
             document.querySelector('script[src*="recaptcha/api.js"]') ||
             document.querySelector('script[src*="recaptcha/enterprise.js"]')) {
-            return 'recaptcha_v3';
+            d.type = 'recaptcha_v3'; return JSON.stringify(d);
         }
-        return null;
+        d.type = null; return JSON.stringify(d);
     }""")
+    info = json.loads(raw)
+    if info.get('type'):
+        return info['type']
+    return None
 
 
 async def _extract_sitekey(page, captcha_type: str) -> str | None:

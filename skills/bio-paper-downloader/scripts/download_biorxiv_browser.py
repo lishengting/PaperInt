@@ -302,7 +302,7 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
     if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
         print(f"{log_prefix} 2Captcha: watching for Turnstile widget (max {timeout}s)",
               file=sys.stderr)
-    for _ in range(timeout // 2):
+    for i in range(timeout // 2):
         await asyncio.sleep(2)
         try:
             title = await page.title()
@@ -311,6 +311,14 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
+        # Periodic debug: log page state every 10s
+        if i % 5 == 0 and i > 0:
+            try:
+                n_iframes = await page.evaluate('() => document.querySelectorAll("iframe").length')
+                print(f"{log_prefix} Cloudflare page state: title={title!r}, url={page.url[:100]!r}, iframes={n_iframes}",
+                      file=sys.stderr)
+            except Exception:
+                pass
         # Still on Cloudflare — check if Turnstile widget has appeared
         if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
             solved = await try_solve_captcha(page, captcha_enabled,
