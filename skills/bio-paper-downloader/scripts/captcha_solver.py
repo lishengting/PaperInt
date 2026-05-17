@@ -40,9 +40,9 @@ const _cfPoll = setInterval(() => {
 
 def _get_solver():
     """Return a TwoCaptcha solver instance, or None if API key is missing."""
-    api_key = os.environ.get('TWOCAPTCHA_API')
+    api_key = os.environ.get('TWOCAP_API')
     if not api_key:
-        print("  [captcha] TWOCAPTCHA_API not set, skipping captcha solving",
+        print("  [captcha] TWOCAP_API not set, skipping captcha solving",
               file=sys.stderr)
         return None
     try:
@@ -129,7 +129,7 @@ async def _solve_turnstile(page, log_prefix: str) -> str | None:
         print(f"{log_prefix} Turnstile sitekey not found in DOM", file=sys.stderr)
         return None
 
-    api_key = os.environ.get('TWOCAPTCHA_API')
+    api_key = os.environ.get('TWOCAP_API')
     if not api_key:
         return None
 
@@ -161,7 +161,7 @@ async def _solve_turnstile(page, log_prefix: str) -> str | None:
 
 async def _solve_turnstile_challenge(page, log_prefix: str) -> str | None:
     """Turnstile Challenge Page: intercept render params, solve, call callback."""
-    api_key = os.environ.get('TWOCAPTCHA_API')
+    api_key = os.environ.get('TWOCAP_API')
     if not api_key:
         return None
 
@@ -206,7 +206,7 @@ async def _solve_recaptcha(page, captcha_type: str, log_prefix: str) -> str | No
         print(f"{log_prefix} reCAPTCHA sitekey not found in DOM", file=sys.stderr)
         return None
 
-    api_key = os.environ.get('TWOCAPTCHA_API')
+    api_key = os.environ.get('TWOCAP_API')
     if not api_key:
         return None
 
@@ -266,9 +266,9 @@ async def try_solve_captcha(page, captcha_enabled: bool, log_prefix: str = '') -
 
     print(f"{log_prefix} Captcha detected: {captcha_type}", file=sys.stderr)
 
-    api_key = os.environ.get('TWOCAPTCHA_API')
+    api_key = os.environ.get('TWOCAP_API')
     if not api_key:
-        print(f"{log_prefix} TWOCAPTCHA_API not set, skipping", file=sys.stderr)
+        print(f"{log_prefix} TWOCAP_API not set, skipping", file=sys.stderr)
         return False
 
     try:
