@@ -107,7 +107,7 @@ def cmd_stats(args, config):
 def cmd_list(args, config):
     conn = get_conn(config)
 
-    sql = 'SELECT paper_id, title, source, status, search_date, metadata_json FROM papers WHERE 1=1'
+    sql = 'SELECT paper_id, doi, title, source, status, search_date, metadata_json FROM papers WHERE 1=1'
     params: list = []
 
     if args.status:
@@ -120,22 +120,6 @@ def cmd_list(args, config):
         sql += ' AND title LIKE ?'
         params.append(f'%{args.keyword}%')
 
-    # Total matching count (before LIMIT/OFFSET)
-    count_sql = sql.replace(
-        'SELECT paper_id, title, source, status, search_date, metadata_json',
-        'SELECT COUNT(*) as cnt', 1
-    )
-    total = conn.execute(count_sql, params).fetchone()['cnt']
-
-    sql += ' ORDER BY search_date DESC LIMIT ? OFFSET ?'
-    params.extend([args.limit, args.offset])
-
-    rows = conn.execute(sql, params).fetchall()
-
-    if not rows:
-        print(f"No papers found{f' matching filters' if (args.status or args.source or args.keyword) else ''}.")
-        return 0
-
     # Parse journal from metadata_json for each row
     def _get_journal(metadata_json):
         if not metadata_json:
@@ -146,14 +130,7 @@ def cmd_list(args, config):
         except Exception:
             return ''
 
-    # Column widths
-    id_w = 36
-    src_w = 8
-    st_w = 17
-    date_w = 19
-    cnsp_w = 4
-    j_w = 20
-
+    # ---- CNSP helpers ----
     def _load_cnsp_map():
         cnsp_cfg = config.get('cnsp', {})
         flagships = {'Nature', 'Science', 'Cell', 'PLOS Biology', 'PLOS Medicine'}
@@ -180,18 +157,60 @@ def cmd_list(args, config):
             return ''
         return cnsp_map.get(journal_name.lower(), '')
 
-    header = f"{'Paper ID':<{id_w}} {'Title':<60} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
-    sep = f"{'─' * id_w} {'─' * 60} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
+    # If --cnsp flag, load all matching rows and post-filter
+    if args.cnsp:
+        all_rows = conn.execute(sql + ' ORDER BY search_date DESC', params).fetchall()
+        # Filter to CNSP papers only
+        filtered = []
+        for r in all_rows:
+            journal = _get_journal(r['metadata_json'])
+            cnsp = _get_cnsp(journal)
+            if cnsp:
+                filtered.append((r, cnsp, journal))
+        total = len(filtered)
+        # Apply pagination after filtering
+        page = filtered[args.offset:args.offset + args.limit]
+        rows = [r for r, cnsp, journal in page]
+    else:
+        count_sql = sql.replace(
+            'SELECT paper_id, doi, title, source, status, search_date, metadata_json',
+            'SELECT COUNT(*) as cnt', 1
+        )
+        total = conn.execute(count_sql, params).fetchone()['cnt']
+
+        sql += ' ORDER BY search_date DESC LIMIT ? OFFSET ?'
+        params.extend([args.limit, args.offset])
+        rows = conn.execute(sql, params).fetchall()
+
+    if not rows:
+        which = 'CNSP ' if args.cnsp else ''
+        print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword) else ''}.")
+        return 0
+
+    # Column widths
+    doi_w = 28
+    id_w = 36
+    src_w = 8
+    st_w = 17
+    date_w = 19
+    cnsp_w = 4
+    j_w = 20
+
+    header = f"{'DOI':<{doi_w}} {'Paper ID':<{id_w}} {'Title':<50} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
+    sep = f"{'─' * doi_w} {'─' * id_w} {'─' * 50} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
     print(header)
     print(sep)
 
     for r in rows:
+        doi = r['doi'] or ''
+        if len(doi) > doi_w - 2:
+            doi = doi[:doi_w - 5] + '...'
         pid = r['paper_id'] or ''
         if len(pid) > id_w - 2:
             pid = pid[:id_w - 5] + '...'
         title = r['title'] or ''
-        if len(title) > 58:
-            title = title[:57] + '...'
+        if len(title) > 48:
+            title = title[:47] + '...'
         source = r['source'] or ''
         if len(source) > src_w:
             source = source[:src_w - 1]
@@ -204,13 +223,15 @@ def cmd_list(args, config):
         if len(journal) > j_w:
             journal = journal[:j_w - 2] + '..'
 
-        print(f"{pid:<{id_w}} {title:<60} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
+        print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
 
     showing = min(args.limit, len(rows))
+    after = args.offset + showing
+    suffix = f" (CNSP)" if args.cnsp else ""
     if total > args.limit:
-        print(f"\nShowing {showing} of {total} papers (page {(args.offset // args.limit) + 1})")
+        print(f"\nShowing {showing} of {total}{suffix} papers (page {(args.offset // args.limit) + 1})")
     else:
-        print(f"\n{total} paper(s)")
+        print(f"\n{total}{suffix} paper(s)")
 
     return 0
 
@@ -327,6 +348,8 @@ def main():
                     help='Maximum results (default: 20)')
     lp.add_argument('--offset', type=int, default=0,
                     help='Pagination offset (default: 0)')
+    lp.add_argument('--cnsp', action='store_true',
+                    help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
 
     # ---- show ----
     sp = sub.add_parser('show', help='Show full details for a paper',
