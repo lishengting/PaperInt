@@ -150,7 +150,27 @@ async def _wait_cloudflare(page, timeout=60):
     return False
 
 
-async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
+async def _handle_cors_route(route):
+    """Inject Access-Control-Allow-Origin header for CDN resources.
+
+    PMC's PoW scripts are loaded with crossorigin="" (anonymous CORS mode).
+    CDN hosts like cdn.ncbi.nlm.nih.gov don't return the required header,
+    so headless Chrome blocks the module load. This route handler patches
+    the response to add the missing CORS header.
+    """
+    try:
+        response = await route.fetch()
+        headers = dict(response.headers)
+        headers['Access-Control-Allow-Origin'] = '*'
+        await route.fulfill(
+            status=response.status,
+            headers=headers,
+            body=await response.body())
+    except Exception:
+        await route.continue_()
+
+
+async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10):
     """Download a PDF that Chrome displays with its built-in viewer.
 
     Navigates to the PDF URL, lets Chrome render it, then clicks the
@@ -168,8 +188,9 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     # that computes a proof-of-work in JS, sets a cookie, then redirects.
     # Since PoW is CPU-bound, networkidle fires before it completes.
     # Wait for the page to resolve (redirect, or content-type change).
-    for _ in range(10):
-        await asyncio.sleep(3)
+    poll_interval = min(3, max(1, wait // 3))
+    for _ in range(max(1, wait // poll_interval)):
+        await asyncio.sleep(poll_interval)
         ct = await page.evaluate('() => document.contentType')
         if ct == 'application/pdf':
             break
@@ -180,7 +201,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
     else:
         # PoW may have completed - try a reload to trigger the redirect
         await page.reload(wait_until='networkidle', timeout=timeout * 1000)
-        await asyncio.sleep(3)
+        await asyncio.sleep(wait)
 
     final_url = page.url
     ct = await page.evaluate('() => document.contentType')
@@ -300,7 +321,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout):
 
 
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
-                                     headless, profile_dir=None):
+                                     headless, profile_dir=None, wait=10):
     """
     Core download logic. Returns dict result.
     """
@@ -350,6 +371,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
                 ctx = browser.contexts[0]
 
+                # Inject CORS headers for PMC PoW scripts in headless Chrome
+                await ctx.route('**/cdn.ncbi.nlm.nih.gov/**', _handle_cors_route)
+
                 # Set download path so captures go to output dir
                 about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 cdp_tmp = await ctx.new_cdp_session(about_page)
@@ -362,7 +386,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
                 page = await ctx.new_page()
                 sub_result = await _download_generic_pdf(page, url_or_doi,
-                                                         output_path, timeout)
+                                                         output_path, timeout,
+                                                         wait=wait)
                 await browser.close()
                 return sub_result
 
@@ -426,7 +451,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             print(f"  [browser:{mode}] Loading article page...", file=sys.stderr)
             await page.goto(article_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(wait)
 
             # Step 3 — load PDF page (may display inline or trigger download)
             print(f"  [browser:{mode}] Loading PDF page...", file=sys.stderr)
@@ -464,7 +489,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                                         timeout=timeout * 1000)
                 except Exception:
                     pass
-                await asyncio.sleep(3)
+                await asyncio.sleep(wait)
 
             if not pdf_bytes:
                 ct = await pdf_page.evaluate('() => document.contentType')
@@ -521,7 +546,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
 
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
-                               headed_fallback=False):
+                               headed_fallback=False, wait=10):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -546,7 +571,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         result = await _do_download_via_browser(url_or_doi, output_dir,
                                                 chrome_bin, timeout,
                                                 headless=True,
-                                                profile_dir=profile_dir)
+                                                profile_dir=profile_dir,
+                                                wait=wait)
         if result['success']:
             return result
         print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
@@ -567,7 +593,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         result = await _do_download_via_browser(url_or_doi, output_dir,
                                                 chrome_bin, timeout,
                                                 headless=False,
-                                                profile_dir=profile_dir)
+                                                profile_dir=profile_dir,
+                                                wait=wait)
         if result['success']:
             result['message'] = result['message'].replace('(headed)', '(headed fallback)')
             return result
@@ -589,13 +616,15 @@ def main():
                    help='Path to Chrome binary (auto-detect if omitted)')
     p.add_argument('--timeout', type=int, default=60,
                    help='Page load timeout in seconds (default: 60)')
+    p.add_argument('--wait', type=int, default=10,
+                   help='Post-navigation wait in seconds (default: 10)')
     p.add_argument('--headed-fallback', action='store_true',
                    help='Allow falling back to headed Chrome if headless fails')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
         args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout,
-        headed_fallback=args.headed_fallback))
+        headed_fallback=args.headed_fallback, wait=args.wait))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
