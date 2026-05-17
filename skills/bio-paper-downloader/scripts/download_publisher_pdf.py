@@ -35,11 +35,55 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Virtual display (Xvfb) — for headed Chrome on headless servers
+# ---------------------------------------------------------------------------
+
+_XVFB_PROC = None
+_XVFB_DISPLAY = None
+
+
+def _xvfb_start():
+    """Start an Xvfb virtual display if not already running."""
+    global _XVFB_PROC, _XVFB_DISPLAY
+    if _XVFB_PROC is not None and _XVFB_PROC.poll() is None:
+        return True
+    import socket
+    try:
+        for d in range(99, 110):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(f'/tmp/.X11-unix/X{d}')
+                sock.close()
+            except (socket.error, FileNotFoundError):
+                _XVFB_DISPLAY = f':{d}'
+                break
+        if _XVFB_DISPLAY is None:
+            _XVFB_DISPLAY = ':99'
+    except Exception:
+        _XVFB_DISPLAY = ':99'
+
+    try:
+        _XVFB_PROC = subprocess.Popen(
+            ['Xvfb', _XVFB_DISPLAY, '-screen', '0', '1920x1080x24', '-ac'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
+        os.environ['DISPLAY'] = _XVFB_DISPLAY
+        time.sleep(0.5)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Chrome launcher
 # ---------------------------------------------------------------------------
 
 class ChromeInstance:
-    """Manage a Chrome browser process with CDP enabled."""
+    """Manage a Chrome browser process with CDP enabled.
+
+    When headless=False, launches a virtual X display (Xvfb) so headed
+    Chrome can render without a physical screen.
+    """
 
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
                  headless=True):
@@ -61,14 +105,22 @@ class ChromeInstance:
             '--no-first-run', '--no-default-browser-check',
             '--no-sandbox', '--disable-gpu',
         ]
+        env = os.environ.copy()
+
         if self.headless:
             args.insert(1, '--headless=new')
             # Hide automation flags from detection
             args.insert(2, '--disable-blink-features=AutomationControlled')
+        else:
+            if not _xvfb_start():
+                raise RuntimeError('Xvfb is required for headed Chrome on headless servers')
+            env['DISPLAY'] = os.environ.get('DISPLAY', ':99')
+            print(f"  [publisher] Virtual display: {env['DISPLAY']}", file=sys.stderr)
+
         args.append('about:blank')
         self.process = subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid)
+            preexec_fn=os.setsid, env=env)
         time.sleep(2)
 
     @property

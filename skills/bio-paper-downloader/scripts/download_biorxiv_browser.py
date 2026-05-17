@@ -82,8 +82,75 @@ def extract_doi(url_or_doi):
 # Browser launcher
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Virtual display (Xvfb) — for headed Chrome on headless servers
+# ---------------------------------------------------------------------------
+
+_XVFB_PROC = None
+_XVFB_DISPLAY = None
+
+
+def _xvfb_start():
+    """Start an Xvfb virtual display if not already running."""
+    global _XVFB_PROC, _XVFB_DISPLAY
+    if _XVFB_PROC is not None and _XVFB_PROC.poll() is None:
+        return True
+    import socket
+    try:
+        # Find a free display number
+        for d in range(99, 110):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(f'/tmp/.X11-unix/X{d}')
+                sock.close()
+            except (socket.error, FileNotFoundError):
+                _XVFB_DISPLAY = f':{d}'
+                break
+        if _XVFB_DISPLAY is None:
+            _XVFB_DISPLAY = ':99'
+    except Exception:
+        _XVFB_DISPLAY = ':99'
+
+    try:
+        _XVFB_PROC = subprocess.Popen(
+            ['Xvfb', _XVFB_DISPLAY, '-screen', '0', '1920x1080x24', '-ac'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
+        os.environ['DISPLAY'] = _XVFB_DISPLAY
+        time.sleep(0.5)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _xvfb_stop():
+    """Stop the Xvfb virtual display."""
+    global _XVFB_PROC, _XVFB_DISPLAY
+    if _XVFB_PROC is not None:
+        try:
+            os.killpg(os.getpgid(_XVFB_PROC.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            _XVFB_PROC.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(_XVFB_PROC.pid), signal.SIGKILL)
+            except Exception:
+                pass
+        _XVFB_PROC = None
+        _XVFB_DISPLAY = None
+
+
 class ChromeInstance:
-    """Manage a Chrome browser process with CDP enabled."""
+    """Manage a Chrome browser process with CDP enabled.
+
+    When headless=False, launches a virtual X display (Xvfb) so headed
+    Chrome can render without a physical screen. This allows full browser
+    rendering (GPU, WebGL, canvas) that passes anti-bot checks on servers.
+    """
+
+    _xvfb_display = None   # shared across instances for display reuse
 
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
                  headless=True):
@@ -110,15 +177,26 @@ class ChromeInstance:
             '--no-sandbox',
             '--disable-gpu',
         ]
+        env = os.environ.copy()
+
         if self.headless:
             args.insert(1, '--headless=new')
             # Hide automation flags from detection
             args.insert(2, '--disable-blink-features=AutomationControlled')
+        else:
+            # Headed mode: start a virtual X display so Chrome can render
+            # without a physical screen. This is essential for passing
+            # Cloudflare JS Challenges and other anti-bot rendering checks.
+            if not _xvfb_start():
+                raise RuntimeError('Xvfb is required for headed Chrome on headless servers')
+            env['DISPLAY'] = os.environ.get('DISPLAY', ':99')
+            print(f"  [browser] Virtual display: {env['DISPLAY']}", file=sys.stderr)
+
         args.append('about:blank')
 
         self.process = subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid)
+            preexec_fn=os.setsid, env=env)
 
         time.sleep(2)
         print(f"  [browser] Chrome PID {self.process.pid} on port {self.port}",
