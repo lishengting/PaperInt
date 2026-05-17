@@ -565,11 +565,11 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     if fallback_level < 2:
         return result
 
-    # Fallback to Xvfb headed (2 attempts)
+    # Fallback to Xvfb headed (3 attempts)
     print(f"  [publisher] falling back to headed Chrome (Xvfb)...", file=sys.stderr)
-    for attempt in range(2):
+    for attempt in range(3):
         if attempt > 0:
-            print(f"  [publisher] headed retry 2/2 after 5s...", file=sys.stderr)
+            print(f"  [publisher] headed retry {attempt+1}/3 after 5s...", file=sys.stderr)
             time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
@@ -589,11 +589,11 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     if fallback_level < 3:
         return result
 
-    # Fallback to system display headed (2 attempts)
+    # Fallback to system display headed (3 attempts)
     print(f"  [publisher] falling back to headed Chrome (system display)...", file=sys.stderr)
-    for attempt in range(2):
+    for attempt in range(3):
         if attempt > 0:
-            print(f"  [publisher] headed (system) retry 2/2 after 5s...", file=sys.stderr)
+            print(f"  [publisher] headed (system) retry {attempt+1}/3 after 5s...", file=sys.stderr)
             time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
