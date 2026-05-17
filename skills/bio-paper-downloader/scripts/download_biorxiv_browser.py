@@ -597,7 +597,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                             timeout=timeout * 1000)
 
             # Headless rarely passes Cloudflare JS challenges — give it a short leash
-            cf_timeout = 15 if headless else 120
+            cf_timeout = 15 if headless else 60
             if not await _wait_cloudflare(page, cf_timeout,
                                            captcha_enabled=captcha_enabled,
                                            captcha_api_key=captcha_api_key,
