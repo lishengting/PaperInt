@@ -243,13 +243,13 @@ async def _solve_recaptcha(page, api_key, captcha_type: str, log_prefix: str) ->
 
 
 async def try_solve_captcha(page, captcha_enabled: bool, api_key: str = '',
-                            log_prefix: str = '') -> bool:
+                            log_prefix: str = '', quiet: bool = False) -> bool:
     """Attempt to detect and solve a captcha on the current page.
 
     Returns True if a captcha was found AND successfully solved.
     Returns False if captcha is disabled, no captcha found, or solving failed.
 
-    This function never raises — all errors are caught and logged.
+    When quiet=True, suppresses the "no widget detected" message (for polling loops).
     """
     if not captcha_enabled:
         return False
@@ -265,7 +265,8 @@ async def try_solve_captcha(page, captcha_enabled: bool, api_key: str = '',
         return False
 
     if not captcha_type:
-        print(f"{log_prefix} 2Captcha: no captcha widget detected on page", file=sys.stderr)
+        if not quiet:
+            print(f"{log_prefix} 2Captcha: no captcha widget detected on page", file=sys.stderr)
         return False
 
     print(f"{log_prefix} 2Captcha: {captcha_type} detected, solving via 2Captcha API...", file=sys.stderr)

@@ -302,9 +302,10 @@ async def _wait_for_page(page, timeout=30, captcha_enabled=False,
         if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
             solved = await try_solve_captcha(page, captcha_enabled,
                                               api_key=captcha_api_key,
-                                              log_prefix=log_prefix)
+                                              log_prefix=log_prefix,
+                                              quiet=True)
             if solved:
-                print(f"{log_prefix} Captcha solved, waiting for redirect...",
+                print(f"{log_prefix} 2Captcha: widget appeared and solved",
                       file=sys.stderr)
     return False
 

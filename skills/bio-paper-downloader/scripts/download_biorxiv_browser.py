@@ -312,9 +312,10 @@ async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
         if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
             solved = await try_solve_captcha(page, captcha_enabled,
                                               api_key=captcha_api_key,
-                                              log_prefix=log_prefix)
+                                              log_prefix=log_prefix,
+                                              quiet=True)
             if solved:
-                print(f"{log_prefix} Turnstile solved, waiting for redirect...",
+                print(f"{log_prefix} 2Captcha: Turnstile widget appeared and solved",
                       file=sys.stderr)
     return False
 
