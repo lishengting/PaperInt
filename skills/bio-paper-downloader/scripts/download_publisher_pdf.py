@@ -34,6 +34,12 @@ try:
 except ImportError:
     _STEALTH_AVAILABLE = False
 
+try:
+    from captcha_solver import try_solve_captcha
+    _CAPTCHA_AVAILABLE = True
+except ImportError:
+    _CAPTCHA_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Virtual display (Xvfb) — for headed Chrome on headless servers
@@ -322,7 +328,8 @@ async def _safe_eval(page, js, retries=3):
 
 
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
-                                       headless, profile_dir=None, wait=10, xvfb=True):
+                                       headless, profile_dir=None, wait=10, xvfb=True,
+                                       captcha_enabled=False):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -352,6 +359,14 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             # wait for JS-driven navigations to settle before touching the page
             final_url = await _wait_for_url_stable(page)
             print(f"  [publisher:{mode}] Landed on: {final_url}", file=sys.stderr)
+
+            # Attempt captcha solving before passive wait
+            if _CAPTCHA_AVAILABLE:
+                solved = await try_solve_captcha(page, captcha_enabled,
+                                                  log_prefix=f'  [publisher:{mode}]')
+                if solved:
+                    print(f"  [publisher:{mode}] Captcha solved", file=sys.stderr)
+
             if not await _wait_for_page(page, 30):
                 result['message'] = 'Anti-bot challenge did not resolve'
                 return result
@@ -504,7 +519,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
-                                  fallback_level=2, wait=10):
+                                  fallback_level=2, wait=10,
+                                  captcha_enabled=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -553,7 +569,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     chrome_bin, timeout,
                                                     headless=True,
                                                     profile_dir=profile_dir,
-                                                    wait=wait)
+                                                    wait=wait,
+                                                    captcha_enabled=captcha_enabled)
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
@@ -576,7 +593,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     chrome_bin, timeout,
                                                     headless=False,
                                                     profile_dir=profile_dir,
-                                                    wait=wait, xvfb=True)
+                                                    wait=wait, xvfb=True,
+                                                    captcha_enabled=captcha_enabled)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -600,7 +618,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     chrome_bin, timeout,
                                                     headless=False,
                                                     profile_dir=profile_dir,
-                                                    wait=wait, xvfb=False)
+                                                    wait=wait, xvfb=False,
+                                                    captcha_enabled=captcha_enabled)
         if result['success']:
             return result
         msg = result.get('message', '')
@@ -629,6 +648,8 @@ def main():
                    help='Post-navigation wait in seconds (default: 10)')
     p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                    help='Browser fallback level (0=no-browser, 1=headless, 2=+xvfb, 3=+system-display)')
+    p.add_argument('--captcha', action='store_true', default=False,
+                   help='Enable 2Captcha solving for anti-bot challenges (default: off)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -637,7 +658,8 @@ def main():
     result = asyncio.run(download_via_publisher(
         doi=args.doi, pmid=args.pmid, output_dir=args.output_dir,
         chrome_bin=args.chrome_bin, timeout=args.timeout,
-        fallback_level=args.fallback_level, wait=args.wait))
+        fallback_level=args.fallback_level, wait=args.wait,
+        captcha_enabled=args.captcha))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

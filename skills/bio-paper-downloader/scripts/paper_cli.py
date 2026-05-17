@@ -315,7 +315,7 @@ def download_arxiv(arxiv_id, config):
         return None
 
 
-def download_preprint(doi, server, config, fallback_level=2):
+def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=False):
     if not doi:
         return None
     headers = {
@@ -341,7 +341,8 @@ def download_preprint(doi, server, config, fallback_level=2):
     if fallback_level >= 1:
         print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
         try:
-            data = _browser_download(doi, server, config, fallback_level=fallback_level)
+            data = _browser_download(doi, server, config, fallback_level=fallback_level,
+                                         captcha_enabled=captcha_enabled)
             if data:
                 return data
         except Exception as e:
@@ -350,7 +351,7 @@ def download_preprint(doi, server, config, fallback_level=2):
     return None
 
 
-def _browser_download(doi, server, config, fallback_level=2):
+def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=False):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -363,6 +364,8 @@ def _browser_download(doi, server, config, fallback_level=2):
     cmd = [sys.executable, script, doi, '-o', tmpdir,
            '--timeout', '180', '--wait', str(browser_wait),
            '--fallback-level', str(fallback_level)]
+    if captcha_enabled:
+        cmd.append('--captcha')
     r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -422,12 +425,14 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
     return None
 
 
-def _publisher_download(doi, pmid, config, fallback_level=2):
+def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     base_cmd = [sys.executable, script, '--doi', doi,
                 '--timeout', '60',
                 '--fallback-level', str(fallback_level)]
+    if captcha_enabled:
+        base_cmd.append('--captcha')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -450,7 +455,7 @@ def _is_pdf(data: bytes) -> bool:
     return data[:5] == b'%PDF-'
 
 
-def _download_direct_pdf(pdf_url, config, fallback_level=2):
+def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False):
     if not pdf_url:
         return None
     # Direct HTTP attempt
@@ -471,6 +476,8 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2):
     base_cmd = [sys.executable, script, pdf_url,
                 '--timeout', '180',
                 '--fallback-level', str(fallback_level)]
+    if captcha_enabled:
+        base_cmd.append('--captcha')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -605,7 +612,8 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
 SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
 
 
-def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2):
+def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
+                   captcha_enabled=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
@@ -642,19 +650,19 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
         pdf_data = download_arxiv(paper.get('arxiv_id', pid), config)
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi') or pid, src, config,
-                                     fallback_level=fallback_level)
+                                     fallback_level=fallback_level, captcha_enabled=captcha_enabled)
     elif src == 'scholar':
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
         if pdf_url and fallback_level >= 1:
-            pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level)
+            pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
         if not pdf_data and doi and fallback_level >= 1:
-            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level)
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         if fallback_level >= 1 and paper.get('doi'):
-            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level)
+            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
         if not pdf_data:
             # Try PMC download (with Europe PMC fallback) even if API
             # says has_pdf=False — the API may be wrong, and Europe PMC often
@@ -668,7 +676,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
             if not pdf_data and not pmc_has_pdf:
                 print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
     elif src == 'generic':
-        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level)
+        pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -694,7 +702,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
 
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
-            pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level)
+            pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
@@ -702,7 +710,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
         # Step 2: if direct failed, use publisher download via DOI
         if not pdf_data and doi:
             print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
-            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level)
+            pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
 
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
@@ -719,15 +727,15 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2)
                     pdf_data = download_arxiv(aid, config)
             elif alt_src in ('biorxiv', 'medrxiv'):
                 adoi = alt.get('doi') or paper.get('doi') or pid
-                pdf_data = download_preprint(adoi, alt_src, config, fallback_level=fallback_level)
+                pdf_data = download_preprint(adoi, alt_src, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
             elif alt_src == 'scholar':
                 if alt.get("pdf_url") and fallback_level >= 1:
-                    pdf_data = _download_direct_pdf(alt['pdf_url'], config, fallback_level=fallback_level)
+                    pdf_data = _download_direct_pdf(alt['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
                 if not pdf_data and alt.get("doi") and fallback_level >= 1:
-                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level)
+                    pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
             elif alt_src == 'pubmed':
                 if fallback_level >= 1 and alt.get('doi'):
-                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level)
+                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:
@@ -881,7 +889,8 @@ def cmd_get(args, config):
 
     conn = get_conn(config)
     ok = download_paper(paper, config, args.data_dir, conn,
-                        force=args.force, fallback_level=args.fallback_level)
+                        force=args.force, fallback_level=args.fallback_level,
+                        captcha_enabled=args.captcha)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -891,7 +900,8 @@ def cmd_get(args, config):
     return 0
 
 
-def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False, fallback_level=2):
+def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
+             fallback_level=2, captcha_enabled=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
@@ -922,7 +932,7 @@ def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False, 
     for i, p in enumerate(papers, 1):
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
         result = download_paper(p, config, data_dir, conn,
-                               fallback_level=fallback_level)
+                               fallback_level=fallback_level, captcha_enabled=captcha_enabled)
         if result is True:
             ok += 1
         elif result is False:
@@ -984,6 +994,8 @@ def main():
                    help='Directory for paper data (default: data)')
     p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                    help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
+    p.add_argument('--captcha', action='store_true', default=False,
+                   help='Enable 2Captcha solving for Cloudflare/reCAPTCHA (default: off, costs money)')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to download in auto-mode')
     p.add_argument('--retry-failed', action='store_true',
@@ -1012,6 +1024,8 @@ def main():
                     help='Force re-download even if already downloaded')
     gp.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                     help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
+    gp.add_argument('--captcha', action='store_true', default=False,
+                    help='Enable 2Captcha solving (default: off)')
 
     # ---- pdf ----
     pp = sub.add_parser(
@@ -1040,7 +1054,8 @@ def main():
         # Auto-mode: download all searched papers
         return cmd_auto(config, args.data_dir, limit=args.limit,
                         retry_failed=args.retry_failed, cnsp_only=args.cnsp,
-                        fallback_level=args.fallback_level)
+                        fallback_level=args.fallback_level,
+                        captcha_enabled=args.captcha)
     return 1
 
 
