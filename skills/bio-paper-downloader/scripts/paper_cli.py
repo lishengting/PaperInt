@@ -41,6 +41,15 @@ try:
 except ImportError:
     _PI_AVAILABLE = False
 
+
+def _data_tmp(config):
+    """Persistent tmp dir under data/ for shared state (Chrome profiles, etc.)."""
+    db_path = config.get('db', {}).get('path', 'data/papers.db')
+    tmp_dir = os.path.join(os.path.dirname(db_path) or 'data', 'tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+    return tmp_dir
+
+
 # ---------------------------------------------------------------------------
 # SSL workaround for older servers (bioRxiv, etc.)
 # ---------------------------------------------------------------------------
@@ -333,17 +342,17 @@ def _browser_download(doi, server, config):
         return _asyncio.run(_browser_download_cdp(doi, server, config, _shared_chrome_port))
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
-    with tempfile.TemporaryDirectory() as tmpdir:
-        r = subprocess.run(
-            [sys.executable, script, doi, '-o', tmpdir,
-             '--timeout', '180'],
-            capture_output=True, text=True, timeout=300)
-        if r.returncode == 0:
-            safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
-            pdf_path = os.path.join(tmpdir, safe_name)
-            if os.path.exists(pdf_path):
-                with open(pdf_path, 'rb') as f:
-                    return f.read()
+    tmpdir = _data_tmp(config)
+    r = subprocess.run(
+        [sys.executable, script, doi, '-o', tmpdir,
+         '--timeout', '180'],
+        capture_output=True, text=True, timeout=300)
+    if r.returncode == 0:
+        safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+        pdf_path = os.path.join(tmpdir, safe_name)
+        if os.path.exists(pdf_path):
+            with open(pdf_path, 'rb') as f:
+                return f.read()
     return None
 
 
@@ -401,17 +410,17 @@ def _publisher_download(doi, pmid, config, use_browser=False):
                 '--timeout', '60']
     if use_browser:
         base_cmd.append('--headed-fallback')
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cmd = base_cmd + ['-o', tmpdir]
-        r = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
-            timeout=600)
-        if r.returncode == 0:
-            safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
-            pdf_path = os.path.join(tmpdir, safe_name)
-            if os.path.exists(pdf_path):
-                with open(pdf_path, 'rb') as f:
-                    return f.read()
+    tmpdir = _data_tmp(config)
+    cmd = base_cmd + ['-o', tmpdir]
+    r = subprocess.run(
+        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
+        timeout=600)
+    if r.returncode == 0:
+        safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+        pdf_path = os.path.join(tmpdir, safe_name)
+        if os.path.exists(pdf_path):
+            with open(pdf_path, 'rb') as f:
+                return f.read()
     return None
 
 
@@ -440,16 +449,16 @@ def _download_direct_pdf(pdf_url, config, use_browser=False):
                 '--timeout', '180']
     if use_browser:
         base_cmd.append('--headed-fallback')
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cmd = base_cmd + ['-o', tmpdir]
-        r = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
-        if r.returncode == 0:
-            for f in os.listdir(tmpdir):
-                if f.endswith('.pdf'):
-                    pdf_path = os.path.join(tmpdir, f)
-                    with open(pdf_path, 'rb') as fh:
-                        return fh.read()
+    tmpdir = _data_tmp(config)
+    cmd = base_cmd + ['-o', tmpdir]
+    r = subprocess.run(
+        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=300)
+    if r.returncode == 0:
+        for f in os.listdir(tmpdir):
+            if f.endswith('.pdf'):
+                pdf_path = os.path.join(tmpdir, f)
+                with open(pdf_path, 'rb') as fh:
+                    return fh.read()
     return None
 
 

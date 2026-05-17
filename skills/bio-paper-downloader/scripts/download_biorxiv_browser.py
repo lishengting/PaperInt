@@ -22,7 +22,6 @@ import asyncio
 import base64
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -533,54 +532,49 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
 
     Returns dict: {success, file_path, file_size, message}
     """
-    # Shared profile dir so retries share cookies
-    profile_dir = os.path.join(output_dir, 'tmp', 'chrome_profile')
+    # Shared profile dir so retries share cookies (persists across downloads)
+    profile_dir = os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
 
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
-    try:
-        # Try headless first (3 attempts, but skip retries on Cloudflare failure)
-        for attempt in range(3):
-            if attempt > 0:
-                delay = 5 * attempt
-                print(f"  [browser] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-                time.sleep(delay)
+    # Try headless first (3 attempts, but skip retries on Cloudflare failure)
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [browser] headless retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
 
-            result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                    chrome_bin, timeout,
-                                                    headless=True,
-                                                    profile_dir=profile_dir)
-            if result['success']:
-                return result
-            print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
-            if 'Cloudflare' in result.get('message', ''):
-                break
-
-        if not headed_fallback:
+        result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                chrome_bin, timeout,
+                                                headless=True,
+                                                profile_dir=profile_dir)
+        if result['success']:
             return result
+        print(f"  [browser] headless failed: {result['message']}", file=sys.stderr)
+        if 'Cloudflare' in result.get('message', ''):
+            break
 
-        # Fallback to headed (3 attempts)
-        print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
-        for attempt in range(3):
-            if attempt > 0:
-                delay = 5 * attempt
-                print(f"  [browser] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
-                time.sleep(delay)
-
-            result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                    chrome_bin, timeout,
-                                                    headless=False,
-                                                    profile_dir=profile_dir)
-            if result['success']:
-                result['message'] = result['message'].replace('(headed)', '(headed fallback)')
-                return result
-            print(f"  [browser] headed failed: {result['message']}", file=sys.stderr)
+    if not headed_fallback:
         return result
-    finally:
-        # Clean up shared profile
-        if os.path.isdir(profile_dir):
-            shutil.rmtree(profile_dir, ignore_errors=True)
+
+    # Fallback to headed (3 attempts)
+    print(f"  [browser] falling back to headed Chrome...", file=sys.stderr)
+    for attempt in range(3):
+        if attempt > 0:
+            delay = 5 * attempt
+            print(f"  [browser] headed retry {attempt+1}/3 after {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+
+        result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                chrome_bin, timeout,
+                                                headless=False,
+                                                profile_dir=profile_dir)
+        if result['success']:
+            result['message'] = result['message'].replace('(headed)', '(headed fallback)')
+            return result
+        print(f"  [browser] headed failed: {result['message']}", file=sys.stderr)
+    return result
 
 
 # ---------------------------------------------------------------------------

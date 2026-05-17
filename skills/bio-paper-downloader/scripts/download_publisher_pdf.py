@@ -176,7 +176,7 @@ async def _safe_eval(page, js, retries=3):
 
 
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
-                                       headless):
+                                       headless, profile_dir=None):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -184,7 +184,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
     mode = 'headless' if headless else 'headed'
 
     chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
-                            headless=headless)
+                            headless=headless,
+                            profile_dir=profile_dir)
 
     try:
         chrome.start()
@@ -363,6 +364,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     Download a paper PDF via DOI → publisher page → PDF link.
 
     Tries headless Chrome first (3 attempts), then falls back to headed if headed_fallback=True.
+    Shares a single Chrome profile across retries so cookies persist.
 
     Returns dict: {success, file_path, file_size, message}
     """
@@ -383,6 +385,12 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] DOI: {doi}", file=sys.stderr)
     print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
 
+    # Shared profile dir so retries share cookies
+    profile_dir = os.path.join(output_dir, 'chrome_profile')
+    os.makedirs(profile_dir, exist_ok=True)
+
+    result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
+
     # Try headless first (3 attempts, but skip retries on anti-bot)
     for attempt in range(3):
         if attempt > 0:
@@ -392,7 +400,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
 
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
-                                                    headless=True)
+                                                    headless=True,
+                                                    profile_dir=profile_dir)
         if result['success']:
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
@@ -412,7 +421,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
 
         result = await _do_download_via_publisher(doi_url, output_path,
                                                     chrome_bin, timeout,
-                                                    headless=False)
+                                                    headless=False,
+                                                    profile_dir=profile_dir)
         if result['success']:
             result['message'] = result['message'].replace('(headed)', '(headed fallback)')
             return result
