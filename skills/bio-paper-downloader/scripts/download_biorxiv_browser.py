@@ -733,6 +733,9 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
     profile_dir = os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
 
+    # Save original DISPLAY — _xvfb_start() overwrites it globally
+    _orig_display = os.environ.get('DISPLAY')
+
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
     def _is_fatal(msg):
@@ -787,6 +790,13 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
 
     if fallback_level < 3:
         return result
+
+    # Restore original DISPLAY before system display fallback.
+    # _xvfb_start() polluted os.environ with its virtual display (:99).
+    if _orig_display:
+        os.environ['DISPLAY'] = _orig_display
+    else:
+        os.environ.pop('DISPLAY', None)
 
     # Fallback to system display headed (3 attempts)
     print(f"  [browser] falling back to headed Chrome (system display)...", file=sys.stderr)
