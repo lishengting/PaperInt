@@ -57,9 +57,10 @@ def _get_solver(api_key):
 async def _detect_captcha_type(page) -> str | None:
     """Detect what kind of captcha is present on the page. Returns type or None."""
     result = await page.evaluate("""() => {
-        // Cloudflare Turnstile widget
+        // Cloudflare Turnstile widget — .cf-turnstile wrapper (direct embed)
+        // or challenges.cloudflare.com iframe (Cloudflare challenge page).
+        // Both are in the main DOM; do NOT inspect inside the cross-origin iframe.
         if (document.querySelector('.cf-turnstile') ||
-            document.querySelector('div[data-sitekey]') &&
             document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
             return 'turnstile';
         }
