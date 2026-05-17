@@ -290,8 +290,15 @@ class ChromeInstance:
 # Main download logic
 # ---------------------------------------------------------------------------
 
-async def _wait_cloudflare(page, timeout=60):
-    """Wait for a Cloudflare JS challenge to resolve."""
+async def _wait_cloudflare(page, timeout=60, captcha_enabled=False,
+                           captcha_api_key='', log_prefix=''):
+    """Wait for a Cloudflare JS challenge to resolve, watching for Turnstile widgets.
+
+    Cloudflare first shows a spinning JS challenge ("Just a moment...").
+    If that fails, a Turnstile checkbox widget appears in the DOM.
+    This function polls for both — title change means JS challenge passed,
+    and Turnstile detection means we should solve via 2Captcha.
+    """
     for _ in range(timeout // 2):
         await asyncio.sleep(2)
         try:
@@ -301,6 +308,14 @@ async def _wait_cloudflare(page, timeout=60):
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
+        # Still on Cloudflare — check if Turnstile widget has appeared
+        if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
+            solved = await try_solve_captcha(page, captcha_enabled,
+                                              api_key=captcha_api_key,
+                                              log_prefix=log_prefix)
+            if solved:
+                print(f"{log_prefix} Turnstile solved, waiting for redirect...",
+                      file=sys.stderr)
     return False
 
 
@@ -580,17 +595,12 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
 
-            # Attempt captcha solving before passive wait
-            if _CAPTCHA_AVAILABLE:
-                solved = await try_solve_captcha(page, captcha_enabled,
-                                                  api_key=captcha_api_key,
-                                                  log_prefix=f'  [browser:{mode}]')
-                if solved:
-                    print(f"  [browser:{mode}] Captcha solved", file=sys.stderr)
-
             # Headless rarely passes Cloudflare JS challenges — give it a short leash
             cf_timeout = 15 if headless else 120
-            if not await _wait_cloudflare(page, cf_timeout):
+            if not await _wait_cloudflare(page, cf_timeout,
+                                           captcha_enabled=captcha_enabled,
+                                           captcha_api_key=captcha_api_key,
+                                           log_prefix=f'  [browser:{mode}]'):
                 result['message'] = 'Cloudflare challenge did not resolve'
                 return result
             print(f"  [browser:{mode}] Cloudflare passed", file=sys.stderr)

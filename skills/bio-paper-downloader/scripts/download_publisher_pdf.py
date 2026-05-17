@@ -278,14 +278,18 @@ def doi_from_pmid(pmid):
 # PDF download
 # ---------------------------------------------------------------------------
 
-async def _wait_for_page(page, timeout=30):
-    """Wait for anti-bot challenges (Cloudflare/reCAPTCHA) to resolve."""
+async def _wait_for_page(page, timeout=30, captcha_enabled=False,
+                         captcha_api_key='', log_prefix=''):
+    """Wait for anti-bot challenges to resolve, watching for captcha widgets.
+
+    If the page stays blocked, periodically check if a Turnstile/reCAPTCHA
+    widget has appeared in the DOM and solve it via 2Captcha.
+    """
     for i in range(timeout // 2):
         await asyncio.sleep(2)
         try:
             t = (await page.title()).lower()
             u = page.url.lower()
-            # Common anti-bot page indicators
             blocked = ('moment' in t or 'recaptcha' in t or 'checking' in t or
                       'challenge' in t or 'captcha' in t or 'attention required' in t or
                       'cloudflare' in u or 'challenge' in u or 'access denied' in t)
@@ -294,6 +298,14 @@ async def _wait_for_page(page, timeout=30):
         except Exception:
             if 'cloudflare' not in page.url.lower():
                 return True
+        # Still blocked — check if a captcha widget has appeared
+        if captcha_enabled and captcha_api_key and _CAPTCHA_AVAILABLE:
+            solved = await try_solve_captcha(page, captcha_enabled,
+                                              api_key=captcha_api_key,
+                                              log_prefix=log_prefix)
+            if solved:
+                print(f"{log_prefix} Captcha solved, waiting for redirect...",
+                      file=sys.stderr)
     return False
 
 
@@ -362,15 +374,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             final_url = await _wait_for_url_stable(page)
             print(f"  [publisher:{mode}] Landed on: {final_url}", file=sys.stderr)
 
-            # Attempt captcha solving before passive wait
-            if _CAPTCHA_AVAILABLE:
-                solved = await try_solve_captcha(page, captcha_enabled,
-                                                  api_key=captcha_api_key,
-                                                  log_prefix=f'  [publisher:{mode}]')
-                if solved:
-                    print(f"  [publisher:{mode}] Captcha solved", file=sys.stderr)
-
-            if not await _wait_for_page(page, 30):
+            if not await _wait_for_page(page, 30,
+                                         captcha_enabled=captcha_enabled,
+                                         captcha_api_key=captcha_api_key,
+                                         log_prefix=f'  [publisher:{mode}]'):
                 result['message'] = 'Anti-bot challenge did not resolve'
                 return result
 
