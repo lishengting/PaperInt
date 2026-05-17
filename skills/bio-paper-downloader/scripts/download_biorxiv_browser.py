@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+import log_utils; log_utils.install()
+
 try:
     from playwright_stealth import Stealth
     _STEALTH_AVAILABLE = True

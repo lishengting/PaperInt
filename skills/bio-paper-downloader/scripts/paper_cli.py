@@ -28,6 +28,8 @@ from datetime import datetime, timedelta
 
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
 
+import log_utils; log_utils.install()
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
 from paper_db import (get_conn, get_db_path, get_papers_by_status,
                       is_downloaded, mark_downloaded, mark_download_failed,
