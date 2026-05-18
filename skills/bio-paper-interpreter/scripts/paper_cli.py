@@ -38,10 +38,9 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'scripts'))
 sys.path.insert(0, SKILL_DIR)
 
 from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
-                      mark_interpreted, mark_skipped, update_relevance, update_tags,
+                      mark_interpreted, update_tags,
                       load_cnsp_journal_set, filter_cnsp_papers)
 
-from filter_relevance import check_relevance
 from match_tags import match_tags
 from build_prompt import build_full_text_prompt, build_brief_prompt, build_abstract_only_prompt, load_config
 
@@ -109,10 +108,10 @@ def _call_llm(config, system_prompt, user_prompt):
 
 
 def run_phase1(paper_path, paper, config, log_file):
+    """Assign topic tags to paper. Always passes — keywords are for search only."""
     paper_id = paper['paper_id']
-    safe_pid = sanitize(paper_id)
 
-    metadata_path = os.path.join(paper_path, f'{safe_pid}.metadata.json')
+    metadata_path = os.path.join(paper_path, f'{sanitize(paper_id)}.metadata.json')
     metadata = {}
     if os.path.exists(metadata_path):
         with open(metadata_path) as f:
@@ -120,30 +119,8 @@ def run_phase1(paper_path, paper, config, log_file):
 
     combined = {**metadata, **paper}
 
-    relevance = check_relevance(combined, config)
-    passed = relevance.get('passed', False)
-
-    if not passed:
-        skipped = {
-            'paper_id': paper_id,
-            'title': combined.get('title', ''),
-            'skipped_at': datetime.now().isoformat(),
-            'reason': relevance.get('reason', ''),
-            'include_matches': relevance.get('include_matches', []),
-            'exclude_matches': relevance.get('exclude_matches', []),
-        }
-        skip_path = os.path.join(paper_path, f'{safe_pid}.skipped.json')
-        with open(skip_path, 'w') as f:
-            json.dump(skipped, f, ensure_ascii=False, indent=2)
-        conn = get_conn(config)
-        update_relevance(conn, paper_id, relevance)
-        mark_skipped(conn, paper_id)
-        log_phase(log_file, paper_id, 1, 'REJECTED', relevance.get('reason', ''))
-        return False
-
     tags = match_tags(combined, config)
     conn = get_conn(config)
-    update_relevance(conn, paper_id, relevance)
     update_tags(conn, paper_id, tags)
     n_tags = len(tags.get('tag_ids', []))
     labels = ', '.join(tags.get('matched_labels', []))
@@ -159,7 +136,7 @@ def run_phase2(paper_path, paper, config, log_file):
     # Step 1: Extract PDF content (now uses pymupdf4llm with pdftotext fallback)
     pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
-        log_phase(log_file, paper_id, 2, 'FAILED', 'no PDF file — skipping per abstract-only rule')
+        log_phase(log_file, paper_id, 2, 'FAILED', f'no PDF file at {pdf_path}')
         return False
 
     max_chars = cfg(config, 'download.pdf_text_max_chars', 100000)
@@ -316,7 +293,9 @@ def run_phase3(paper_path, paper, config, log_file):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
-                print(f"  md_to_html error ({name}): {result.stderr}", file=sys.stderr)
+                err_msg = result.stderr.strip() or f'exit code {result.returncode}'
+                print(f"  md_to_html error ({name}): {err_msg}", file=sys.stderr)
+                log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {err_msg[:100]}')
                 all_ok = False
         except Exception as e:
             log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {str(e)[:100]}')
@@ -406,10 +385,7 @@ def process_paper(paper, config, phases, log_file):
         if ok:
             print('OK')
         else:
-            print('FAILED/REJECTED')
-            if phase == 1:
-                break   # rejected — stop this paper
-            # For phase 2/3 failures, continue to next phase anyway
+            print('FAILED')
 
 
 def cmd_run(args, config):
