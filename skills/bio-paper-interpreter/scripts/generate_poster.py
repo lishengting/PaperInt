@@ -25,11 +25,18 @@ import re
 import sys
 import time
 import urllib.request
+from datetime import datetime
 
 # --- Token usage tracking ---
 _token_usage = {}
 _enhancement_calls = 0
 _enhancement_model = None
+
+
+def ts_print(*args, file=None, end='\n', flush=False):
+    """Print with [HH:MM:SS] timestamp prefix."""
+    ts = datetime.now().strftime('[%H:%M:%S]')
+    print(ts, *args, file=file, end=end, flush=flush)
 
 
 def _record_usage(model, prompt_tokens, completion_tokens):
@@ -41,28 +48,28 @@ def _record_usage(model, prompt_tokens, completion_tokens):
 
 
 def _print_usage_summary():
-    print()
-    print("=" * 60)
-    print("Token Usage Summary")
-    print("=" * 60)
+    ts_print()
+    ts_print("=" * 60)
+    ts_print("Token Usage Summary")
+    ts_print("=" * 60)
     grand = 0
     for model, u in sorted(_token_usage.items()):
         t = u['prompt_tokens'] + u['completion_tokens']
         grand += t
-        print(f"  [{model}]")
-        print(f"    Calls:            {u['calls']}")
-        print(f"    Prompt tokens:    {u['prompt_tokens']:,}")
-        print(f"    Completion tokens:{u['completion_tokens']:,}")
-        print(f"    Subtotal:         {t:,}")
+        ts_print(f"  [{model}]")
+        ts_print(f"    Calls:            {u['calls']}")
+        ts_print(f"    Prompt tokens:    {u['prompt_tokens']:,}")
+        ts_print(f"    Completion tokens:{u['completion_tokens']:,}")
+        ts_print(f"    Subtotal:         {t:,}")
     if _enhancement_calls > 0:
-        print(f"  [{_enhancement_model or 'enhancement'}]")
-        print(f"    Calls:            {_enhancement_calls}")
-        print(f"    (image generation — token count not available)")
-    print(f"  ---")
-    print(f"  Grand total (text models): {grand:,} tokens")
+        ts_print(f"  [{_enhancement_model or 'enhancement'}]")
+        ts_print(f"    Calls:            {_enhancement_calls}")
+        ts_print(f"    (image generation — token count not available)")
+    ts_print(f"  ---")
+    ts_print(f"  Grand total (text models): {grand:,} tokens")
     if _enhancement_calls > 0:
-        print(f"  Enhancement calls: {_enhancement_calls}")
-    print("=" * 60)
+        ts_print(f"  Enhancement calls: {_enhancement_calls}")
+    ts_print("=" * 60)
 
 
 # ── Text LLM call (streaming) ────────────────────────────────────────────────
@@ -103,7 +110,7 @@ def _call_text_llm(prompt, api_key, model, base_url):
                 now = time.time()
                 if now - last_report >= 5:
                     elapsed = now - t_start
-                    print(f'  [stream] {char_count:,} chars, {char_count/elapsed:.0f} chars/s, '
+                    ts_print(f'  [stream] {char_count:,} chars, {char_count/elapsed:.0f} chars/s, '
                           f'{elapsed:.0f}s elapsed')
                     last_report = now
             if 'usage' in data:
@@ -113,7 +120,7 @@ def _call_text_llm(prompt, api_key, model, base_url):
 
     elapsed = time.time() - t_start
     full_text = ''.join(chunks)
-    print(f'  [stream] done: {char_count:,} chars in {elapsed:.1f}s '
+    ts_print(f'  [stream] done: {char_count:,} chars in {elapsed:.1f}s '
           f'({char_count/elapsed:.0f} chars/s)')
 
     if stream_usage:
@@ -124,7 +131,7 @@ def _call_text_llm(prompt, api_key, model, base_url):
         est_prompt = len(prompt) // 4
         est_completion = char_count // 3
         _record_usage(model, est_prompt, est_completion)
-        print(f'  [stream] usage estimated: ~{est_prompt:,}p + ~{est_completion:,}c')
+        ts_print(f'  [stream] usage estimated: ~{est_prompt:,}p + ~{est_completion:,}c')
 
     return full_text
 
@@ -141,14 +148,14 @@ def _enhance_via_dashscope(output_path, prompt, api_key, model):
         "model": model,
         "input": {"messages": [{"role": "user", "content": content}]}
     }
-    print(f"  [DashScope] Calling {model}...")
+    ts_print(f"  [DashScope] Calling {model}...")
     resp = _requests.post(url, headers={
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }, json=body, timeout=300)
 
     if resp.status_code != 200:
-        print(f"  [DashScope] API error: {resp.status_code} - {resp.text[:500]}")
+        ts_print(f"  [DashScope] API error: {resp.status_code} - {resp.text[:500]}")
         return None
 
     result = resp.json()
@@ -158,10 +165,10 @@ def _enhance_via_dashscope(output_path, prompt, api_key, model):
         debug_path = output_path.replace(".png", "_dashscope_response.json")
         with open(debug_path, "w") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
-        print(f"  [DashScope] Unexpected response, debug: {debug_path}")
+        ts_print(f"  [DashScope] Unexpected response, debug: {debug_path}")
         return None
 
-    print(f"  [DashScope] Downloading image...")
+    ts_print(f"  [DashScope] Downloading image...")
     img_resp = _requests.get(image_url, timeout=60)
     if img_resp.status_code == 200:
         with open(output_path, "wb") as f:
@@ -170,11 +177,11 @@ def _enhance_via_dashscope(output_path, prompt, api_key, model):
         _enhancement_calls += 1
         _enhancement_model = _enhancement_model or model
         usage = result.get("usage", {})
-        print(f"  [DashScope] {usage.get('width')}x{usage.get('height')}, "
+        ts_print(f"  [DashScope] {usage.get('width')}x{usage.get('height')}, "
               f"{usage.get('image_count', 1)} image(s)")
         return output_path
 
-    print(f"  [DashScope] Download failed: {img_resp.status_code}")
+    ts_print(f"  [DashScope] Download failed: {img_resp.status_code}")
     return None
 
 
@@ -199,7 +206,7 @@ def _svg_to_png(svg_code, output_path):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        print(f"  playwright not available, trying cairosvg...")
+        ts_print(f"  playwright not available, trying cairosvg...")
         import cairosvg
         cairosvg.svg2png(bytestring=svg_code.encode('utf-8'), write_to=output_path)
         return
@@ -239,7 +246,7 @@ SVG to repair:
 {svg_code}"""
 
     for attempt in range(3):
-        print(f"  [repair] Attempt {attempt + 1}/3...")
+        ts_print(f"  [repair] Attempt {attempt + 1}/3...")
         try:
             repaired = _call_text_llm(prompt, api_key, model, base_url)
             if not repaired:
@@ -249,14 +256,14 @@ SVG to repair:
                 continue
             ok, err = _validate_svg(fixed)
             if ok:
-                print(f"  [repair] Fixed!")
+                ts_print(f"  [repair] Fixed!")
                 return fixed
             else:
                 prompt = prompt.replace(f"Error: {error_msg}", f"Error: {err}")
         except Exception as e:
-            print(f"  [repair] Attempt {attempt + 1} failed: {e}")
+            ts_print(f"  [repair] Attempt {attempt + 1} failed: {e}")
             prompt = prompt.replace(f"Error: {error_msg}", f"Error: {e}")
-    print(f"  [repair] All attempts failed")
+    ts_print(f"  [repair] All attempts failed")
     return None
 
 
@@ -273,7 +280,7 @@ def _read_paper_text(paper_dir):
                 with open(path, 'r', encoding='utf-8') as f:
                     text = f.read()
                 if len(text) >= 500:
-                    print(f"  Text source: {item} ({len(text):,} chars)")
+                    ts_print(f"  Text source: {item} ({len(text):,} chars)")
                     return text, item
 
     # Fallback: PDF
@@ -288,10 +295,10 @@ def _read_paper_text(paper_dir):
                     text += page.get_text()
                 doc.close()
                 if len(text) >= 500:
-                    print(f"  Text source: {item} via PyMuPDF ({len(text):,} chars)")
+                    ts_print(f"  Text source: {item} via PyMuPDF ({len(text):,} chars)")
                     return text, item
             except Exception as e:
-                print(f"  PDF extraction failed: {e}")
+                ts_print(f"  PDF extraction failed: {e}")
 
     return None, "no usable text source found"
 
@@ -368,30 +375,30 @@ def generate_oneshot_svg(paper_text, language, api_key, model, base_url):
     prompt_template = _SVG_PROMPT_EN if language == 'en' else _SVG_PROMPT_ZH
     prompt = prompt_template.format(paper_text=paper_text[:15000])
 
-    print(f"\n{'─'*50}")
-    print(f"  One-shot SVG [{label}] — {model}")
-    print(f"  Prompt: {len(prompt):,} chars")
-    print(f"{'─'*50}")
+    ts_print(f"\n{'─'*50}")
+    ts_print(f"  One-shot SVG [{label}] — {model}")
+    ts_print(f"  Prompt: {len(prompt):,} chars")
+    ts_print(f"{'─'*50}")
 
     t0 = time.time()
     response = _call_text_llm(prompt, api_key, model, base_url)
     svg = _extract_svg(response)
     if not svg:
-        print(f"  ERROR: No SVG in response!")
+        ts_print(f"  ERROR: No SVG in response!")
         return None
 
-    print(f"  SVG: {len(svg):,} chars in {time.time()-t0:.1f}s")
+    ts_print(f"  SVG: {len(svg):,} chars in {time.time()-t0:.1f}s")
 
     ok, err = _validate_svg(svg)
     if not ok:
-        print(f"  SVG syntax error: {err}")
+        ts_print(f"  SVG syntax error: {err}")
         fixed = _repair_svg(svg, err, api_key, model, base_url)
         if fixed:
             svg = fixed
         else:
-            print(f"  Repair failed, using original (may not render as PNG)")
+            ts_print(f"  Repair failed, using original (may not render as PNG)")
     else:
-        print(f"  SVG validates OK")
+        ts_print(f"  SVG validates OK")
 
     return svg
 
@@ -402,19 +409,19 @@ def generate_direct_png(paper_text, language, api_key, text_model, text_base, en
     label = 'EN' if language == 'en' else 'ZH'
     desc_template = _DESC_PROMPT_EN if language == 'en' else _DESC_PROMPT_ZH
 
-    print(f"\n{'─'*50}")
-    print(f"  Direct PNG [{label}] — {text_model} → {enh_model}")
-    print(f"{'─'*50}")
+    ts_print(f"\n{'─'*50}")
+    ts_print(f"  Direct PNG [{label}] — {text_model} → {enh_model}")
+    ts_print(f"{'─'*50}")
 
     # Step 1: Generate figure description
     desc_prompt = desc_template.format(paper_text=paper_text[:15000])
-    print(f"  Step 1: Generating figure description...")
+    ts_print(f"  Step 1: Generating figure description...")
     t0 = time.time()
     description = _call_text_llm(desc_prompt, api_key, text_model, text_base)
-    print(f"  Description: {len(description):,} chars in {time.time()-t0:.1f}s")
+    ts_print(f"  Description: {len(description):,} chars in {time.time()-t0:.1f}s")
 
     # Step 2: Generate image from description
-    print(f"  Step 2: Generating image...")
+    ts_print(f"  Step 2: Generating image...")
     if language == 'zh':
         enh_prompt = f"请根据以下描述创建一张专业科学海报图。图中所有文字必须是中文：\n\n{description}"
     else:
@@ -449,7 +456,7 @@ def main():
     # Read paper text
     paper_text, source = _read_paper_text(args.paper_dir)
     if not paper_text:
-        print(f"Error: {source}", file=sys.stderr)
+        ts_print(f"Error: {source}", file=sys.stderr)
         sys.exit(1)
 
     results = []
@@ -462,42 +469,49 @@ def main():
             svg_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.svg')
             with open(svg_path, 'w', encoding='utf-8') as f:
                 f.write(svg)
-            print(f"  Saved: {svg_path} ({len(svg):,} chars)")
+            ts_print(f"  Saved: {svg_path} ({len(svg):,} chars)")
             results.append(svg_path)
 
             # Render to PNG via headless Chrome (supports CJK)
             try:
                 png_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.png')
                 _svg_to_png(svg, png_path)
-                print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
+                ts_print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
                 results.append(png_path)
             except Exception as e:
-                print(f"  Render failed: {e}")
+                ts_print(f"  Render failed: {e}")
         else:
-            print(f"  FAILED: SVG generation ({lang})")
+            ts_print(f"  FAILED: SVG generation ({lang})")
 
         # ── Direct PNG ──
         direct_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.direct.{lang}.png')
-        result = generate_direct_png(paper_text, lang, api_key, meth_model, meth_base, enh_model, direct_path)
+        DIRECT_MAX_RETRIES = 3
+        result = None
+        for attempt in range(DIRECT_MAX_RETRIES):
+            result = generate_direct_png(paper_text, lang, api_key, meth_model, meth_base, enh_model, direct_path)
+            if result and os.path.exists(result):
+                break
+            if attempt < DIRECT_MAX_RETRIES - 1:
+                ts_print(f"  Direct PNG [{lang}] attempt {attempt+1} failed, retrying...")
         if result and os.path.exists(result):
             # Rename to canonical path if needed
             if result != direct_path:
                 os.rename(result, direct_path)
-            print(f"  Saved: {direct_path} ({os.path.getsize(direct_path):,} bytes)")
+            ts_print(f"  Saved: {direct_path} ({os.path.getsize(direct_path):,} bytes)")
             results.append(direct_path)
         elif result:
-            print(f"  Saved: {result}")
+            ts_print(f"  Saved: {result}")
             results.append(result)
         else:
-            print(f"  FAILED: Direct generation ({lang})")
+            ts_print(f"  FAILED: Direct generation ({lang}) after {DIRECT_MAX_RETRIES} attempts")
 
     _print_usage_summary()
 
-    print(f"\n{'='*60}")
-    print(f"Results: {len(results)} files generated")
+    ts_print(f"\n{'='*60}")
+    ts_print(f"Results: {len(results)} files generated")
     for p in results:
-        print(f"  {p}")
-    print(f"{'='*60}")
+        ts_print(f"  {p}")
+    ts_print(f"{'='*60}")
 
 
 if __name__ == '__main__':

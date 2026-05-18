@@ -70,6 +70,12 @@ def log_phase(log_file, paper_id, phase, status, msg=''):
         f.write(line + '\n')
 
 
+def ts_print(*args, file=None, end='\n', flush=False):
+    """Print with [HH:MM:SS] timestamp prefix."""
+    ts = datetime.now().strftime('[%H:%M:%S]')
+    print(ts, *args, file=file, end=end, flush=flush)
+
+
 def _call_llm(config, system_prompt, user_prompt):
     """Call the configured LLM and return the response text."""
     api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
@@ -83,7 +89,7 @@ def _call_llm(config, system_prompt, user_prompt):
         if api_key_cfg and ' ' not in api_key_cfg and len(api_key_cfg) > 20:
             api_key = api_key_cfg
         else:
-            print(f"  Warning: LLM API key not found (checked env var ${api_key_cfg})", file=sys.stderr)
+            ts_print(f"  Warning: LLM API key not found (checked env var ${api_key_cfg})", file=sys.stderr)
 
     body = json.dumps({
         'model': model,
@@ -101,7 +107,7 @@ def _call_llm(config, system_prompt, user_prompt):
         'Authorization': f'Bearer {api_key}',
     })
 
-    print(f"  Calling LLM: {model} ({url})...")
+    ts_print(f"  Calling LLM: {model} ({url})...")
     resp = urllib.request.urlopen(req, timeout=timeout)
     resp_data = json.loads(resp.read().decode('utf-8'))
     return resp_data['choices'][0]['message']['content']
@@ -145,19 +151,31 @@ def run_phase2(paper_path, paper, config, log_file):
     image_dir_full = os.path.join(paper_path, image_subdir)
 
     extract_script = os.path.join(SKILL_DIR, 'extract_pdf.py')
-    try:
-        result = subprocess.run(
-            [sys.executable, extract_script, pdf_path,
-             '--max-chars', str(max_chars),
-             '--image-path', image_dir_full,
-             '--extractor', extractor_mode,
-             '--json'],
-            capture_output=True, text=True, timeout=120,
-        )
-        extract_data = json.loads(result.stdout)
-    except Exception as e:
-        print(f"  PDF extract failed: {e}", file=sys.stderr)
-        log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {str(e)[:100]}')
+    extract_timeouts = cfg(config, 'interpreter.pdf_extract_timeouts', [300, 600, 1200])
+    extract_data = None
+    last_error = None
+    for attempt, timeout_val in enumerate(extract_timeouts):
+        try:
+            result = subprocess.run(
+                [sys.executable, extract_script, pdf_path,
+                 '--max-chars', str(max_chars),
+                 '--image-path', image_dir_full,
+                 '--extractor', extractor_mode,
+                 '--json'],
+                capture_output=True, text=True, timeout=timeout_val,
+            )
+            extract_data = json.loads(result.stdout)
+            break
+        except subprocess.TimeoutExpired:
+            last_error = f'timed out after {timeout_val}s (attempt {attempt+1}/{len(extract_timeouts)})'
+            ts_print(f"  {last_error}", file=sys.stderr)
+        except Exception as e:
+            last_error = str(e)[:100]
+            break
+
+    if extract_data is None:
+        ts_print(f"  PDF extract failed: {last_error}", file=sys.stderr)
+        log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {last_error}')
         return False
 
     pdf_text = extract_data.get('markdown', '')
@@ -171,7 +189,7 @@ def run_phase2(paper_path, paper, config, log_file):
         return False
 
     mode = 'full_text'
-    print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")
+    ts_print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")
 
     # Step 2: Build prompts and call LLM for both interpret and brief
     metadata_path = os.path.join(paper_path, f'{safe_pid}.metadata.json')
@@ -195,7 +213,7 @@ def run_phase2(paper_path, paper, config, log_file):
             f.write(interpret_content)
         interpret_ok = True
     except Exception as e:
-        print(f"  LLM call failed (interpret): {e}", file=sys.stderr)
+        ts_print(f"  LLM call failed (interpret): {e}", file=sys.stderr)
         interpret_content = None
         interpret_ok = False
 
@@ -209,7 +227,7 @@ def run_phase2(paper_path, paper, config, log_file):
             f.write(brief_content)
         brief_ok = True
     except Exception as e:
-        print(f"  LLM call failed (brief): {e}", file=sys.stderr)
+        ts_print(f"  LLM call failed (brief): {e}", file=sys.stderr)
         brief_content = None
         brief_ok = False
 
@@ -294,7 +312,7 @@ def run_phase3(paper_path, paper, config, log_file):
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 err_msg = result.stderr.strip() or f'exit code {result.returncode}'
-                print(f"  md_to_html error ({name}): {err_msg}", file=sys.stderr)
+                ts_print(f"  md_to_html error ({name}): {err_msg}", file=sys.stderr)
                 log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {err_msg[:100]}')
                 all_ok = False
         except Exception as e:
@@ -334,7 +352,7 @@ def run_phase4(paper_path, paper, config, log_file):
            '--enhancement-model', enh_model]
 
     try:
-        result = subprocess.run(cmd, timeout=1200,
+        result = subprocess.run(cmd, timeout=3600,
                                 env={**os.environ, 'PYTHONUNBUFFERED': '1'})
         if result.returncode != 0:
             log_phase(log_file, paper_id, 4, 'FAILED', f'exit code {result.returncode}')
@@ -354,21 +372,21 @@ def process_paper(paper, config, phases, log_file):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
-        print(f"  No dir_name for {paper_id}, skipping", file=sys.stderr)
+        ts_print(f"  No dir_name for {paper_id}, skipping", file=sys.stderr)
         return
 
     paper_path = os.path.join(REPO_ROOT, 'data', paper_dir)
 
-    print(f"\n{'='*60}")
-    print(f"Paper: {paper_id}")
-    print(f"Title: {(paper.get('title', '') or '')[:80]}")
-    print(f"Dir: {paper_dir}")
+    ts_print(f"\n{'='*60}")
+    ts_print(f"Paper: {paper_id}")
+    ts_print(f"Title: {(paper.get('title', '') or '')[:80]}")
+    ts_print(f"Dir: {paper_dir}")
 
     for phase in [1, 2, 3, 4]:
         if str(phase) not in phases:
             continue
 
-        print(f"  Phase {phase}...", end=' ', flush=True)
+        ts_print(f"  Phase {phase}...", end=' ', flush=True)
         log_phase(log_file, paper_id, phase, 'START')
 
         if phase == 1:
@@ -383,9 +401,9 @@ def process_paper(paper, config, phases, log_file):
                 run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
         if ok:
-            print('OK')
+            ts_print('OK')
         else:
-            print('FAILED')
+            ts_print('FAILED')
 
 
 def cmd_run(args, config):
@@ -395,7 +413,7 @@ def cmd_run(args, config):
     if paper_id:
         paper = get_paper(conn, paper_id)
         if not paper:
-            print(f"Paper not found: {paper_id}", file=sys.stderr)
+            ts_print(f"Paper not found: {paper_id}", file=sys.stderr)
             return 1
         papers = [paper]
     else:
@@ -408,23 +426,23 @@ def cmd_run(args, config):
             cnsp_names = load_cnsp_journal_set(config)
             before = len(papers)
             papers = filter_cnsp_papers(papers, cnsp_names)
-            print(f"CNSP filter: {before} -> {len(papers)} papers")
+            ts_print(f"CNSP filter: {before} -> {len(papers)} papers")
 
         if limit:
             papers = papers[:limit]
 
     if not papers:
-        print("No downloaded papers to interpret.")
+        ts_print("No downloaded papers to interpret.")
         return 0
 
     phase_str = getattr(args, 'phase', None)
     phases = set(phase_str.split(',')) if phase_str else {'1', '2', '3', '4'}
     log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
 
-    print(f"Papers to interpret: {len(papers)}")
-    print(f"Phases: {sorted(phases)}")
+    ts_print(f"Papers to interpret: {len(papers)}")
+    ts_print(f"Phases: {sorted(phases)}")
     for i, paper in enumerate(papers):
-        print(f"\n[{i+1}/{len(papers)}]", end='')
+        ts_print(f"\n[{i+1}/{len(papers)}]", end='')
         process_paper(paper, config, phases, log_file)
         if i < len(papers) - 1:
             time.sleep(1)
@@ -474,9 +492,9 @@ def main():
             papers = filter_cnsp_papers(papers, cnsp_names)
         if args.limit:
             papers = papers[:args.limit]
-        print(f"Would process {len(papers)} paper(s):")
+        ts_print(f"Would process {len(papers)} paper(s):")
         for p in papers:
-            print(f"  {p['paper_id']}  {(p.get('title', '') or '')[:70]}")
+            ts_print(f"  {p['paper_id']}  {(p.get('title', '') or '')[:70]}")
         return 0
 
     return cmd_run(args, config)
