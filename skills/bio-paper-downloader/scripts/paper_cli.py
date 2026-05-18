@@ -24,6 +24,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
+import asyncio
 from datetime import datetime, timedelta
 
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
@@ -431,6 +432,149 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
         import base64
         return base64.b64decode(js_result['data'])
     return None
+
+
+def _download_browser_only(paper, config, data_dir, conn, force=False):
+    """Download biorxiv/medrxiv via headed Chrome with real GUI display.
+
+    Clean side path: no fallback levels, no captcha, no Xvfb, no headless.
+    Returns True on success, False on failure, None if skipped.
+    """
+    pid = paper.get('paper_id', '')
+
+    if not force and is_downloaded(conn, pid):
+        print(f"  [skip] already downloaded")
+        return None
+
+    safe_pid = sanitize(pid)
+    dirname = title_to_dirname(paper.get('title', ''))
+    paper_dir = os.path.join(data_dir, dirname)
+    if os.path.isdir(paper_dir):
+        meta_file = os.path.join(paper_dir, f"{safe_pid}.metadata.json")
+        if not os.path.exists(meta_file):
+            dirname = f"{dirname}_{safe_pid}"[:256]
+            paper_dir = os.path.join(data_dir, dirname)
+    os.makedirs(paper_dir, exist_ok=True)
+
+    with open(os.path.join(paper_dir, f"{safe_pid}.metadata.json"), 'w') as f:
+        json.dump(paper, f, indent=2, ensure_ascii=False, default=str)
+    _generate_info_md(paper, paper_dir, safe_pid)
+
+    doi = paper.get('doi') or pid
+    server = paper.get('source', 'biorxiv')
+    homepage = f'https://www.{server}.org/'
+    article_url = f'https://www.{server}.org/content/{doi}'
+    pdf_url = f'https://www.{server}.org/content/{doi}.full.pdf'
+
+    print(f"  [browser-only] Headed Chrome on real display", file=sys.stderr)
+    print(f"  [browser-only] DOI: {doi}  server: {server}", file=sys.stderr)
+    print(f"  [browser-only] homepage: {homepage}", file=sys.stderr)
+
+    try:
+        pdf_data = _run_browser_only_download(homepage, article_url, pdf_url)
+    except Exception as e:
+        print(f"  [browser-only] FAILED: {e}", file=sys.stderr)
+        mark_download_failed(conn, pid, f"Browser-only failed: {e}", dirname)
+        return False
+
+    if not pdf_data or not pdf_data.startswith(b'%PDF'):
+        msg = 'Browser-only returned non-PDF data'
+        print(f"  [browser-only] FAILED: {msg}", file=sys.stderr)
+        mark_download_failed(conn, pid, msg, dirname)
+        return False
+
+    pdf_path = os.path.join(paper_dir, f"{safe_pid}.pdf")
+    with open(pdf_path, 'wb') as f:
+        f.write(pdf_data)
+
+    paper['_downloaded_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    mark_downloaded(conn, pid, dirname, paper)
+    print(f"  [browser-only] OK: {len(pdf_data)} bytes -> {pdf_path}", file=sys.stderr)
+    return True
+
+
+def _run_browser_only_download(homepage, article_url, pdf_url):
+    """Launch headed Chrome, navigate and fetch PDF via JS. Returns PDF bytes."""
+    from download_biorxiv_browser import ChromeInstance, _pick_chrome
+
+    if 'DISPLAY' not in os.environ or not os.environ['DISPLAY']:
+        raise RuntimeError(
+            '--browser-only requires a real display. Set DISPLAY before running '
+            '(e.g. DISPLAY=:0 or run from a GUI terminal).')
+
+    try:
+        from playwright_stealth import Stealth
+        _stealth = Stealth()
+    except ImportError:
+        _stealth = None
+
+    async def _do():
+        from playwright.async_api import async_playwright
+
+        chrome = ChromeInstance(chrome_bin=_pick_chrome() or 'google-chrome',
+                                headless=False, xvfb=False)
+        chrome.start()
+
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
+                ctx = browser.contexts[0]
+
+                # Step 1 — homepage
+                page = await ctx.new_page()
+                if _stealth:
+                    await _stealth.apply_stealth_async(page)
+                print(f"  [browser-only] Navigating to homepage...", file=sys.stderr)
+                await page.goto(homepage, wait_until='domcontentloaded', timeout=60000)
+                await asyncio.sleep(3)
+
+                # Step 2 — article page
+                print(f"  [browser-only] Navigating to article page...", file=sys.stderr)
+                await page.goto(article_url, wait_until='domcontentloaded', timeout=60000)
+                await asyncio.sleep(3)
+
+                # Step 3 — PDF page
+                pdf_page = await ctx.new_page()
+                if _stealth:
+                    await _stealth.apply_stealth_async(pdf_page)
+                print(f"  [browser-only] Loading PDF page...", file=sys.stderr)
+                await pdf_page.goto(pdf_url, wait_until='domcontentloaded', timeout=60000)
+                await asyncio.sleep(3)
+
+                # Step 4 — JS fetch
+                print(f"  [browser-only] Fetching PDF via JS...", file=sys.stderr)
+                js_result = await pdf_page.evaluate("""
+                    async () => {
+                        const r = await fetch(window.location.href,
+                            {credentials: 'include'});
+                        if (!r.ok) return {error: 'HTTP ' + r.status};
+                        const blob = await r.blob();
+                        return new Promise(resolve => {
+                            const reader = new FileReader();
+                            reader.onloadend = () =>
+                                resolve({data: reader.result.split(',')[1],
+                                         size: blob.size});
+                            reader.onerror = () =>
+                                resolve({error: 'FileReader failed'});
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                """)
+
+                await pdf_page.close()
+                await page.close()
+
+        finally:
+            chrome.stop()
+
+        if isinstance(js_result, dict) and 'data' in js_result:
+            import base64
+            return base64.b64decode(js_result['data'])
+        if isinstance(js_result, dict) and 'error' in js_result:
+            raise RuntimeError(f"JS fetch failed: {js_result['error']}")
+        raise RuntimeError(f"Unexpected JS result: {js_result}")
+
+    return asyncio.run(_do())
 
 
 def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False):
@@ -927,9 +1071,17 @@ def cmd_get(args, config):
         return 0
 
     conn = get_conn(config)
-    ok = download_paper(paper, config, args.data_dir, conn,
-                        force=args.force, fallback_level=args.fallback_level,
-                        captcha_enabled=args.captcha)
+    if getattr(args, 'browser_only', False):
+        if paper['source'] not in ('biorxiv', 'medrxiv'):
+            print("Error: --browser-only only supports biorxiv/medrxiv URLs",
+                  file=sys.stderr)
+            return 1
+        ok = _download_browser_only(paper, config, args.data_dir, conn,
+                                    force=args.force)
+    else:
+        ok = download_paper(paper, config, args.data_dir, conn,
+                            force=args.force, fallback_level=args.fallback_level,
+                            captcha_enabled=args.captcha)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -1065,6 +1217,9 @@ def main():
                     help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
     gp.add_argument('--captcha', action='store_true', default=False,
                     help='Enable 2Captcha solving (default: off)')
+    gp.add_argument('--browser-only', action='store_true',
+                    help='Bypass all fallback logic: headed Chrome with real GUI display, '
+                         'no Xvfb, no captcha. Only for biorxiv/medrxiv.')
 
     # ---- pdf ----
     pp = sub.add_parser(
