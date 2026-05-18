@@ -475,7 +475,8 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10)
 
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                                      headless, profile_dir=None, wait=10, xvfb=True,
-                                     captcha_enabled=False, captcha_api_key=''):
+                                     captcha_enabled=False, captcha_api_key='',
+                                     stealth_enabled=False):
     """
     Core download logic. Returns dict result.
     """
@@ -536,7 +537,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 await cdp_tmp.detach()
 
                 page = await ctx.new_page()
-                if _STEALTH_AVAILABLE:
+                if _STEALTH_AVAILABLE and stealth_enabled:
                     await Stealth().apply_stealth_async(page)
                 sub_result = await _download_generic_pdf(page, url_or_doi,
                                                          output_path, timeout,
@@ -594,7 +595,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             # Step 1 — navigate to homepage, pass Cloudflare challenge
             print(f"  [browser:{mode}] Passing Cloudflare...", file=sys.stderr)
             page = await ctx.new_page()
-            if _STEALTH_AVAILABLE:
+            if _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(page)
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
@@ -630,7 +631,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
             pdf_page = await ctx.new_page()
 
-            if _STEALTH_AVAILABLE:
+            if _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(pdf_page)
 
             # Try download capture first (in case server sends attachment)
@@ -715,7 +716,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
                                fallback_level=2, wait=10, captcha_enabled=False,
-                               captcha_api_key=''):
+                               captcha_api_key='', stealth_enabled=False):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -754,8 +755,10 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 profile_dir=profile_dir,
                                                 wait=wait,
                                                 captcha_enabled=captcha_enabled,
-                                                captcha_api_key=captcha_api_key)
+                                                captcha_api_key=captcha_api_key,
+                                                stealth_enabled=stealth_enabled)
         if result['success']:
+            # ... (headless success)
             return result
         msg = result.get('message', '')
         print(f"  [browser] headless failed: {msg}", file=sys.stderr)
@@ -780,8 +783,10 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 profile_dir=profile_dir,
                                                 wait=wait, xvfb=True,
                                                 captcha_enabled=captcha_enabled,
-                                                captcha_api_key=captcha_api_key)
+                                                captcha_api_key=captcha_api_key,
+                                                stealth_enabled=stealth_enabled)
         if result['success']:
+            # ... (headless success)
             return result
         msg = result.get('message', '')
         print(f"  [browser] headed (xvfb) failed: {msg}", file=sys.stderr)
@@ -811,8 +816,10 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 profile_dir=profile_dir,
                                                 wait=wait, xvfb=False,
                                                 captcha_enabled=captcha_enabled,
-                                                captcha_api_key=captcha_api_key)
+                                                captcha_api_key=captcha_api_key,
+                                                stealth_enabled=stealth_enabled)
         if result['success']:
+            # ... (headless success)
             return result
         msg = result.get('message', '')
         print(f"  [browser] headed (system) failed: {msg}", file=sys.stderr)
@@ -843,13 +850,16 @@ def main():
                    help='Enable 2Captcha solving for Cloudflare challenges (default: off)')
     p.add_argument('--twocap-api', default='',
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
+    p.add_argument('--stealth', action='store_true', default=False,
+                   help='Enable playwright-stealth (default: off)')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
         args.url_or_doi, args.output_dir, args.chrome_bin, args.timeout,
         fallback_level=args.fallback_level, wait=args.wait,
         captcha_enabled=args.captcha,
-        captcha_api_key=args.twocap_api))
+        captcha_api_key=args.twocap_api,
+        stealth_enabled=args.stealth))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

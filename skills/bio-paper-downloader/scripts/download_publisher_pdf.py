@@ -347,7 +347,8 @@ async def _safe_eval(page, js, retries=3):
 
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
-                                       captcha_enabled=False, captcha_api_key=''):
+                                       captcha_enabled=False, captcha_api_key='',
+                                       stealth_enabled=False):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -366,7 +367,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
             page = await ctx.new_page()
-            if _STEALTH_AVAILABLE:
+            if _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(page)
 
             # Step 1: follow DOI to publisher page
@@ -534,7 +535,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
-                                  captcha_enabled=False, captcha_api_key=''):
+                                  captcha_enabled=False, captcha_api_key='',
+                                  stealth_enabled=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -588,8 +590,10 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     profile_dir=profile_dir,
                                                     wait=wait,
                                                     captcha_enabled=captcha_enabled,
-                                                    captcha_api_key=captcha_api_key)
+                                                    captcha_api_key=captcha_api_key,
+                                                    stealth_enabled=stealth_enabled)
         if result['success']:
+            # ...
             return result
         print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
         if _is_fatal(result.get('message', '')):
@@ -613,8 +617,10 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=True,
                                                     captcha_enabled=captcha_enabled,
-                                                    captcha_api_key=captcha_api_key)
+                                                    captcha_api_key=captcha_api_key,
+                                                    stealth_enabled=stealth_enabled)
         if result['success']:
+            # ...
             return result
         msg = result.get('message', '')
         print(f"  [publisher] headed (xvfb) failed: {msg}", file=sys.stderr)
@@ -646,8 +652,10 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     profile_dir=profile_dir,
                                                     wait=wait, xvfb=False,
                                                     captcha_enabled=captcha_enabled,
-                                                    captcha_api_key=captcha_api_key)
+                                                    captcha_api_key=captcha_api_key,
+                                                    stealth_enabled=stealth_enabled)
         if result['success']:
+            # ...
             return result
         msg = result.get('message', '')
         print(f"  [publisher] headed (system) failed: {msg}", file=sys.stderr)
@@ -679,6 +687,8 @@ def main():
                    help='Enable 2Captcha solving for anti-bot challenges (default: off)')
     p.add_argument('--twocap-api', default='',
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
+    p.add_argument('--stealth', action='store_true', default=False,
+                   help='Enable playwright-stealth (default: off)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -689,7 +699,8 @@ def main():
         chrome_bin=args.chrome_bin, timeout=args.timeout,
         fallback_level=args.fallback_level, wait=args.wait,
         captcha_enabled=args.captcha,
-        captcha_api_key=args.twocap_api))
+        captcha_api_key=args.twocap_api,
+        stealth_enabled=args.stealth))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
