@@ -4,13 +4,16 @@ Bio Paper Interpreter CLI — batch interpret downloaded papers via LLM.
 
 Usage:
   paper_cli.py                          # auto-mode: process all 'downloaded' papers
-  paper_cli.py run <paper_id>           # process a single paper
+  paper_cli.py --retry-failed           # retry papers with interpret_failed status
+  paper_cli.py run <paper_id>           # interpret a single paper (skips if already done)
+  paper_cli.py run <paper_id> --force   # force re-interpret even if already interpreted
   paper_cli.py run <paper_id> --phase 1 # run only specified phases (1, 2, 3, or 1,2,3)
 
-Three-phase pipeline:
-  Phase 1: Relevance filter + tag matching
+Four-phase pipeline:
+  Phase 1: Tag matching
   Phase 2: PDF extraction + LLM interpretation (requires LLM_API_KEY)
   Phase 3: Markdown → styled HTML conversion
+  Phase 4: Poster generation (6 posters per paper)
 """
 
 import argparse
@@ -27,7 +30,9 @@ from datetime import datetime
 EXAMPLES = """
 Examples:
   paper_cli.py                          # Auto-mode: interpret all downloaded papers
+  paper_cli.py --retry-failed           # Retry papers with interpret_failed status
   paper_cli.py run s41467-026-70776-7   # Interpret a single paper (all phases)
+  paper_cli.py run s41467-026-70776-7 --force    # Force re-interpret
   paper_cli.py run s41467-026-70776-7 --phase 1,2  # Only run phases 1 and 2
   paper_cli.py --dry-run                # List papers without processing
 """
@@ -38,7 +43,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'scripts'))
 sys.path.insert(0, SKILL_DIR)
 
 from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
-                      mark_interpreted, update_tags,
+                      mark_interpreted, mark_interpret_failed, update_tags,
                       load_cnsp_journal_set, filter_cnsp_papers)
 
 from match_tags import match_tags
@@ -143,6 +148,7 @@ def run_phase2(paper_path, paper, config, log_file):
     pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', f'no PDF file at {pdf_path}')
+        mark_interpret_failed(get_conn(config), paper_id, f'no PDF file at {pdf_path}')
         return False
 
     max_chars = cfg(config, 'download.pdf_text_max_chars', 100000)
@@ -178,6 +184,7 @@ def run_phase2(paper_path, paper, config, log_file):
     if extract_data is None:
         ts_print(f"  PDF extract failed: {last_error}", file=sys.stderr)
         log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {last_error}')
+        mark_interpret_failed(get_conn(config), paper_id, f'PDF extract: {last_error}')
         return False
 
     pdf_text = extract_data.get('markdown', '')
@@ -188,6 +195,8 @@ def run_phase2(paper_path, paper, config, log_file):
     if len(pdf_text) < 1000:
         log_phase(log_file, paper_id, 2, 'FAILED',
                   f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
+        mark_interpret_failed(get_conn(config), paper_id,
+                              f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
         return False
 
     mode = 'full_text'
@@ -235,6 +244,7 @@ def run_phase2(paper_path, paper, config, log_file):
 
     if not interpret_ok and not brief_ok:
         log_phase(log_file, paper_id, 2, 'FAILED', 'both interpret and brief LLM calls failed')
+        mark_interpret_failed(get_conn(config), paper_id, 'both interpret and brief LLM calls failed')
         return False
 
     # Save interpret.json
@@ -417,9 +427,15 @@ def cmd_run(args, config):
         if not paper:
             ts_print(f"Paper not found: {paper_id}", file=sys.stderr)
             return 1
+        if not args.force and paper.get('status') == 'interpreted':
+            ts_print(f"  [skip] already interpreted (use --force to re-interpret)")
+            return 0
         papers = [paper]
     else:
-        papers = get_papers_by_status(conn, 'downloaded')
+        if args.retry_failed:
+            papers = get_papers_by_status(conn, 'interpret_failed')
+        else:
+            papers = get_papers_by_status(conn, 'downloaded')
         limit = getattr(args, 'limit', None)
 
         cnsp_only = getattr(args, 'cnsp', False)
@@ -434,7 +450,7 @@ def cmd_run(args, config):
             papers = papers[:limit]
 
     if not papers:
-        ts_print("No downloaded papers to interpret.")
+        ts_print("No papers to interpret.")
         return 0
 
     phase_str = getattr(args, 'phase', None)
@@ -470,6 +486,8 @@ def main():
                    help='Max number of papers to process')
     p.add_argument('--cnsp', action='store_true',
                    help='Only interpret papers published in C/N/S/P journals')
+    p.add_argument('--retry-failed', action='store_true',
+                   help='Retry papers with interpret_failed status')
 
     sub = p.add_subparsers(dest='cmd', title='commands',
                            description='"run" a single paper, or omit for auto-mode')
@@ -479,6 +497,8 @@ def main():
     run_p.add_argument('paper_id', help='Paper ID to interpret')
     run_p.add_argument('--phase', default=None,
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
+    run_p.add_argument('-f', '--force', action='store_true',
+                       help='Force re-interpret even if already interpreted')
 
     args = p.parse_args()
 
@@ -487,7 +507,10 @@ def main():
 
     if args.dry_run:
         conn = get_conn(config)
-        papers = get_papers_by_status(conn, 'downloaded')
+        if args.retry_failed:
+            papers = get_papers_by_status(conn, 'interpret_failed')
+        else:
+            papers = get_papers_by_status(conn, 'downloaded')
         if args.cnsp:
             config['__config_path__'] = config.get('__config_path__', 'config.yaml')
             cnsp_names = load_cnsp_journal_set(config)

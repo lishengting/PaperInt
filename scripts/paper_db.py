@@ -296,6 +296,16 @@ def mark_interpreted(conn: sqlite3.Connection, paper_id: str) -> None:
     conn.commit()
 
 
+def mark_interpret_failed(conn: sqlite3.Connection, paper_id: str, error: str) -> None:
+    """Mark a paper interpretation as failed."""
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET status='interpret_failed', error_message=?, updated_at=? WHERE paper_id=?",
+        (error, now, paper_id),
+    )
+    conn.commit()
+
+
 def mark_skipped(conn: sqlite3.Connection, paper_id: str) -> None:
     """Mark a paper as skipped (not bioinformatics-relevant)."""
     now = _now()
