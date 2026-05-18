@@ -20,7 +20,7 @@ apis:
       - "q-bio.MN"
       - "q-bio.CB"
       - "cs.CE"
-    max_results: 50
+    max_results: 2000
   biorxiv:
     base_url: "https://api.biorxiv.org"
   medrxiv:

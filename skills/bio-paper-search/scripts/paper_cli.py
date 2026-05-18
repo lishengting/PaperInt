@@ -173,7 +173,7 @@ def _urlopen_with_retry(req, config, attempts=4, backoff=2):
 # ---------------------------------------------------------------------------
 
 def arxiv_api(query, config, max_results=50):
-    max_results = min(max_results, 2000)  # arXiv API rejects > ~10000
+    max_results = min(max_results, cfg(config, 'apis.arxiv.max_results', 2000))
     base = cfg(config, 'apis.arxiv.search_url', 'https://export.arxiv.org/api/query')
     url = f"{base}?search_query={urllib.parse.quote(query)}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
     time.sleep(delay(config))
