@@ -155,19 +155,22 @@ def run_phase2(paper_path, paper, config, log_file):
     extract_data = None
     last_error = None
     for attempt, timeout_val in enumerate(extract_timeouts):
+        # Attempt 1: auto (pymupdf4llm with pdftotext fallback).
+        # Attempt 2+: force pdftotext to avoid pymupdf4llm hanging again.
+        mode = extractor_mode if attempt == 0 else 'pdftotext'
         try:
             result = subprocess.run(
                 [sys.executable, extract_script, pdf_path,
                  '--max-chars', str(max_chars),
                  '--image-path', image_dir_full,
-                 '--extractor', extractor_mode,
+                 '--extractor', mode,
                  '--json'],
                 capture_output=True, text=True, timeout=timeout_val,
             )
             extract_data = json.loads(result.stdout)
             break
         except subprocess.TimeoutExpired:
-            last_error = f'timed out after {timeout_val}s (attempt {attempt+1}/{len(extract_timeouts)})'
+            last_error = f'timed out after {timeout_val}s with {mode} (attempt {attempt+1}/{len(extract_timeouts)})'
             ts_print(f"  {last_error}", file=sys.stderr)
         except Exception as e:
             last_error = str(e)[:100]
