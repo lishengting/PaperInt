@@ -151,13 +151,12 @@ def run_phase2(paper_path, paper, config, log_file):
     image_dir_full = os.path.join(paper_path, image_subdir)
 
     extract_script = os.path.join(SKILL_DIR, 'extract_pdf.py')
-    extract_timeouts = cfg(config, 'interpreter.pdf_extract_timeouts', [300, 600, 1200])
+    extract_timeouts = cfg(config, 'interpreter.pdf_extract_timeouts', [120, 240, 240])
     extract_data = None
     last_error = None
     for attempt, timeout_val in enumerate(extract_timeouts):
-        # Attempt 1: auto (pymupdf4llm with pdftotext fallback).
-        # Attempt 2+: force pdftotext to avoid pymupdf4llm hanging again.
-        mode = extractor_mode if attempt == 0 else 'pdftotext'
+        # Attempts 1-2: pymupdf4llm (auto). Attempt 3: force pdftotext fallback.
+        mode = extractor_mode if attempt < 2 else 'pdftotext'
         try:
             result = subprocess.run(
                 [sys.executable, extract_script, pdf_path,
