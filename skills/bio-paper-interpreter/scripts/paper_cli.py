@@ -118,7 +118,7 @@ def run_phase1(paper_path, paper, config, log_file):
         with open(metadata_path) as f:
             metadata = json.load(f)
 
-    combined = {**paper, **metadata}
+    combined = {**metadata, **paper}
 
     relevance = check_relevance(combined, config)
     passed = relevance.get('passed', False)
