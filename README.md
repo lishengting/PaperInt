@@ -94,14 +94,14 @@ The interpreter runs within Claude Code following reference docs in `skills/bio-
 ### Query the database
 
 ```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from paper_db import get_conn, get_stats
-import yaml
-config = yaml.safe_load(open('config.yaml'))
-conn = get_conn(config)
-print(get_stats(conn))
-"
+# Summary statistics
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py stats
+
+# List papers by status
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded -n 10
+
+# Show full details for a paper
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py show -p <paper_id>
 ```
 
 ## Architecture
