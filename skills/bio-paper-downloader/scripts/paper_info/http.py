@@ -67,4 +67,10 @@ def get_text(url: str, params: dict[str, Any] | None = None, timeout: float = 4.
             last_error = exc
             if attempt < 2:
                 time.sleep(0.3 * (attempt + 1))
-    raise FetchError(str(last_error))
+    if isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429:
+            wait = 120 + random.uniform(0, 30)
+            time.sleep(wait)
+            with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                return response.read().decode(charset, errors="replace")
+        raise FetchError(str(last_error))

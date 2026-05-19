@@ -162,6 +162,12 @@ def _urlopen_with_retry(req, config, attempts=3, backoff=2):
             if i < attempts - 1:
                 wait = backoff * (2 ** i) + random.uniform(0, backoff)
                 time.sleep(wait)
+    # All attempts failed — if it was 429, do one final long-wait retry
+    if isinstance(last_err, urllib.error.HTTPError) and last_err.code == 429:
+        wait = 120 + random.uniform(0, 30)
+        print(f"  HTTP 429 persisted, final long wait {round(wait)}s...", file=sys.stderr)
+        time.sleep(wait)
+        return urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context())
     raise last_err
 
 
