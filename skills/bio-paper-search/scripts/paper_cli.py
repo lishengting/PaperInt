@@ -232,6 +232,86 @@ def arxiv_parse(xml_data):
     return papers
 
 
+def _parse_arxiv_search_html(html, max_results=50):
+    """Extract paper metadata from arXiv web search results page."""
+    import html as _html
+    papers = []
+    # Each result is in <li class="arxiv-result">
+    parts = html.split('<li class="arxiv-result">')[1:]  # skip first (header)
+    for part in parts[:max_results]:
+        # arXiv ID from the abs link
+        id_m = re.search(r'/abs/(\d+\.\d+)', part)
+        if not id_m:
+            continue
+        aid = id_m.group(1)
+        # Title
+        title_m = re.search(r'<p class="title is-5 mathjax">\s*(.*?)\s*</p>', part, re.DOTALL)
+        title = _html.unescape(re.sub(r'<[^>]+>', '', title_m.group(1)).strip()) if title_m else ''
+        # Authors
+        authors = ''
+        auth_m = re.search(r'<p class="authors">(.*?)</p>', part, re.DOTALL)
+        if auth_m:
+            auth_text = re.sub(r'<[^>]+>', '', auth_m.group(1))
+            auth_text = auth_text.replace('Authors:', '').strip()
+            authors_list = [a.strip() for a in auth_text.split(',')]
+            authors = ', '.join(authors_list[:5])
+            if len(authors_list) > 5:
+                authors += ' et al.'
+        # Abstract
+        abstract = ''
+        abs_m = re.search(r'<p class="abstract mathjax">(.*?)</p>', part, re.DOTALL)
+        if abs_m:
+            abstract = re.sub(r'<[^>]+>', '', abs_m.group(1)).replace('Abstract:', '').strip()
+            abstract = abstract.replace('&hellip;', '...').replace('…', '...')
+            # Remove "△ Less" suffix
+            abstract = re.sub(r'\s*△\s*Less\s*$', '', abstract)
+        # Date
+        date = ''
+        date_m = re.search(r'(?:submitted|originally announced)\s+(\d{1,2}\s+\w+,\s+\d{4})', part)
+        if date_m:
+            try:
+                date = datetime.strptime(date_m.group(1), '%d %B, %Y').strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+        # Category (first tag)
+        category = ''
+        cat_m = re.search(r'<span class="tag is-small is-link[^"]*"[^>]*>([^<]+)</span>', part)
+        if cat_m:
+            category = cat_m.group(1).strip()
+
+        papers.append(make_paper(
+            'arxiv', aid, title, authors, abstract, date, category,
+            f"https://arxiv.org/pdf/{aid}.pdf",
+            f"https://arxiv.org/abs/{aid}",
+            doi=f"10.48550/arXiv.{aid}", arxiv_id=aid))
+    return papers
+
+
+def _arxiv_search_browser(keywords, config, max_results=50):
+    """Search arXiv via headless browser (fallback when API is rate-limited)."""
+    chrome_port = _get_or_start_chrome()
+    query = ' AND '.join(f'all:"{kw}"' for kw in keywords)
+    url = f'https://arxiv.org/search/?searchtype=all&query={urllib.parse.quote(query)}'
+
+    async def _scrape():
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
+            page = await browser.contexts[0].new_page()
+            await page.goto(url, timeout=30000)
+            html = await page.content()
+            await page.close()
+            return html
+
+    import asyncio as _asyncio
+    try:
+        html = _asyncio.run(_scrape())
+        return _parse_arxiv_search_html(html, max_results)
+    except Exception as e:
+        print(f"  arXiv browser fallback failed: {e}", file=sys.stderr)
+        return []
+
+
 def arxiv_search(keywords, config, max_results=50, start_date=None, end_date=None):
     q = ' AND '.join(f'all:"{kw}"' for kw in keywords)
     if start_date:
@@ -239,7 +319,14 @@ def arxiv_search(keywords, config, max_results=50, start_date=None, end_date=Non
         e = (end_date or datetime.now().strftime('%Y-%m-%d')).replace('-', '') + '235959'
         q += f' AND submittedDate:[{s} TO {e}]'
     xml_data = arxiv_api(q, config, max_results)
-    return arxiv_parse(xml_data) if xml_data else []
+    if xml_data:
+        return arxiv_parse(xml_data)
+    # API rate-limited — fall back to browser-based web search
+    if start_date:
+        print("  arXiv API failed, trying browser fallback (date filter not supported)...", file=sys.stderr)
+    else:
+        print("  arXiv API failed, trying browser fallback...", file=sys.stderr)
+    return _arxiv_search_browser(keywords, config, max_results)
 
 
 def arxiv_search_title(title, config, max_results=10):
