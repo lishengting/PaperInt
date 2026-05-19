@@ -1088,7 +1088,53 @@ def cmd_search(args, config):
     return 0
 
 
+def _crossref_lookup(doi, config):
+    """Resolve a DOI via Crossref API and return a paper list."""
+    url = f"https://api.crossref.org/works/{urllib.parse.quote(doi, safe='')}"
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    with _urlopen_with_retry(req, config, attempts=3) as r:
+        data = json.loads(r.read())
+    msg = data.get('message', {})
+    title = (msg.get('title') or [''])[0]
+    authors_list = msg.get('author', [])
+    authors = ', '.join(
+        (a.get('given', '') + ' ' + a.get('family', '')).strip()
+        for a in authors_list[:5]
+    )
+    if len(authors_list) > 5:
+        authors += ' et al.'
+    abstract = msg.get('abstract', '') or ''
+    date_parts = msg.get('published-print', {}).get('date-parts', [[None]])[0]
+    date = '-'.join(str(d) for d in date_parts if d) if date_parts and date_parts[0] else ''
+    journal = (msg.get('container-title') or [''])[0]
+    return [make_paper(
+        'crossref', doi, title, authors, abstract, date, journal,
+        '', f"https://doi.org/{doi}", doi=doi,
+    )]
+
+
 def cmd_find(args, config):
+    if not args.title and not args.doi:
+        print("Error: either --title or --doi is required", file=sys.stderr)
+        return 1
+
+    # DOI lookup path
+    if args.doi:
+        doi = args.doi.strip()
+        for prefix in ('https://doi.org/', 'http://doi.org/', 'doi:'):
+            if doi.lower().startswith(prefix):
+                doi = doi[len(prefix):]
+                break
+        try:
+            papers = _crossref_lookup(doi, config)
+        except Exception as e:
+            print(f"  DOI lookup failed: {e}", file=sys.stderr)
+            return 1
+        _show_results(papers)
+        if not args.list:
+            _save_to_db(papers, config)
+        return 0
+
     source = args.source or cfg(config, 'search.default_source', 'arxiv')
 
     print(f"Source: {source}  |  Title: {args.title}\n")
@@ -1237,12 +1283,14 @@ def main():
     # ---- find ----
     fp = sub.add_parser(
         'find',
-        help='Search for a specific paper by title',
-        description='Title search: look up a paper by its title.',
+        help='Search for a paper by title or DOI',
+        description='Look up a paper by title or DOI.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    fp.add_argument('-t', '--title', required=True,
-                    help='Paper title to search for (required)')
+    fp.add_argument('-t', '--title',
+                    help='Paper title to search for')
+    fp.add_argument('-d', '--doi',
+                    help='Look up paper by DOI (e.g., 10.1038/s41586-023-00000-0)')
     fp.add_argument('-s', '--source', choices=SOURCES,
                     help='Paper source to search (default: search.default_source from config)')
     fp.add_argument('-l', '--list', action='store_true',
