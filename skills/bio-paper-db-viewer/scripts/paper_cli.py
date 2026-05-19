@@ -290,6 +290,23 @@ def cmd_show(args, config):
 
 
 # ---------------------------------------------------------------------------
+# delete
+# ---------------------------------------------------------------------------
+
+def cmd_delete(args, config):
+    conn = get_conn(config)
+    paper = get_paper(conn, args.paper_id)
+    if not paper:
+        print(f"Paper not found: {args.paper_id}", file=sys.stderr)
+        return 1
+    title = (paper.get('title') or '')[:60]
+    conn.execute("DELETE FROM papers WHERE paper_id = ?", (args.paper_id,))
+    conn.commit()
+    print(f"Deleted: {args.paper_id} — {title}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -329,7 +346,7 @@ def main():
 
     sub = p.add_subparsers(dest='cmd', required=True,
                            title='commands',
-                           description='"stats", "list", or "show"')
+                           description='"stats", "list", "show", or "delete"')
 
     # ---- stats ----
     sub.add_parser('stats', help='Show database summary statistics',
@@ -351,6 +368,12 @@ def main():
     lp.add_argument('--cnsp', action='store_true',
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
 
+    # ---- delete ----
+    dp = sub.add_parser('delete', help='Delete a paper record',
+                        description='Remove a paper from the database by its ID.')
+    dp.add_argument('-p', '--paper-id', required=True,
+                    help='Paper ID to delete')
+
     # ---- show ----
     sp = sub.add_parser('show', help='Show full details for a paper',
                         description='Display all available fields for a single paper by its ID.')
@@ -368,6 +391,8 @@ def main():
         return cmd_list(args, config)
     elif args.cmd == 'show':
         return cmd_show(args, config)
+    elif args.cmd == 'delete':
+        return cmd_delete(args, config)
     return 1
 
 
