@@ -1115,18 +1115,6 @@ def cmd_find(args, config):
             except Exception as e:
                 print(f"  arxiv: error - {e}", file=sys.stderr)
             try:
-                papers, _ = preprint_search_title(args.title, config, 'biorxiv', use_browser=args.browser)
-                all_papers.extend(papers)
-                print(f"  biorxiv: {len(papers)} results")
-            except Exception as e:
-                print(f"  biorxiv: error - {e}", file=sys.stderr)
-            try:
-                papers, _ = preprint_search_title(args.title, config, 'medrxiv', use_browser=args.browser)
-                all_papers.extend(papers)
-                print(f"  medrxiv: {len(papers)} results")
-            except Exception as e:
-                print(f"  medrxiv: error - {e}", file=sys.stderr)
-            try:
                 papers, _ = pubmed_search_title(args.title, config, 10)
                 all_papers.extend(papers)
                 print(f"  pubmed: {len(papers)} results")
