@@ -1110,6 +1110,7 @@ def _crossref_lookup(doi, config):
     return [make_paper(
         'crossref', doi, title, authors, abstract, date, journal,
         '', f"https://doi.org/{doi}", doi=doi,
+        extra={'journal': journal} if journal else None,
     )]
 
 
