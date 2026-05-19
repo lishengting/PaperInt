@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import ssl
 import time
 import urllib.error
@@ -51,6 +52,17 @@ def get_text(url: str, params: dict[str, Any] | None = None, timeout: float = 4.
             with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
                 return response.read().decode(charset, errors="replace")
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code == 429 and attempt < 2:
+                retry_after = exc.headers.get('Retry-After', '')
+                try:
+                    wait = int(retry_after)
+                except (ValueError, TypeError):
+                    wait = 2 * (4 ** attempt) + random.uniform(0, 4)
+                time.sleep(wait)
+            elif 400 <= exc.code < 500:
+                raise FetchError(str(exc))
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
             if attempt < 2:

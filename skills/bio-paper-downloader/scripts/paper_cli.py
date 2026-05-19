@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import os
+import random
 import re
 import signal
 import socket
@@ -140,10 +141,27 @@ def _urlopen_with_retry(req, config, attempts=3, backoff=2):
     for i in range(attempts):
         try:
             return urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context())
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429:
+                if i < attempts - 1:
+                    retry_after = e.headers.get('Retry-After', '')
+                    try:
+                        wait = int(retry_after)
+                    except (ValueError, TypeError):
+                        wait = backoff * (4 ** i) + random.uniform(0, backoff * 2)
+                    print(f"  HTTP 429 rate-limited, waiting {round(wait)}s...", file=sys.stderr)
+                    time.sleep(wait)
+            elif 400 <= e.code < 500:
+                raise
+            elif i < attempts - 1:
+                wait = backoff * (2 ** i) + random.uniform(0, backoff)
+                time.sleep(wait)
         except Exception as e:
             last_err = e
             if i < attempts - 1:
-                time.sleep(backoff * (i + 1))
+                wait = backoff * (2 ** i) + random.uniform(0, backoff)
+                time.sleep(wait)
     raise last_err
 
 
@@ -196,6 +214,7 @@ def pubmed_api(endpoint, params, config):
 def arxiv_api(query, config, max_results=50):
     base = cfg(config, 'apis.arxiv.search_url', 'https://export.arxiv.org/api/query')
     url = f"{base}?search_query={urllib.parse.quote(query)}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
+    time.sleep(delay(config))
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
         with _urlopen_with_retry(req, config) as r:
