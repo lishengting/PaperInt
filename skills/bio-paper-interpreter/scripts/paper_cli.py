@@ -336,8 +336,8 @@ def run_phase3(paper_path, paper, config, log_file):
     return all_ok
 
 
-def run_phase4(paper_path, paper, config, log_file):
-    """Generate 6 posters: 2 one-shot SVG + 2 rendered PNG + 2 direct PNG."""
+def run_phase4(paper_path, paper, config, log_file, en=False):
+    """Generate posters: 3 Chinese (default) or 6 bilingual with --en."""
     paper_id = paper['paper_id']
 
     af_config = cfg(config, 'autofigure', {})
@@ -362,6 +362,8 @@ def run_phase4(paper_path, paper, config, log_file):
            '--methodology-model', meth_model,
            '--methodology-base-url', meth_base,
            '--enhancement-model', enh_model]
+    if en:
+        cmd.append('--en')
 
     try:
         result = subprocess.run(cmd, timeout=3600,
@@ -376,11 +378,12 @@ def run_phase4(paper_path, paper, config, log_file):
         log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
         return False
 
-    log_phase(log_file, paper_id, 4, 'COMPLETED', '6 posters generated')
+    n = '6' if en else '3'
+    log_phase(log_file, paper_id, 4, 'COMPLETED', f'{n} posters generated')
     return True
 
 
-def process_paper(paper, config, phases, log_file):
+def process_paper(paper, config, phases, log_file, en=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -408,7 +411,7 @@ def process_paper(paper, config, phases, log_file):
         elif phase == 3:
             ok = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file)
+            ok = run_phase4(paper_path, paper, config, log_file, en=en)
             if ok:
                 run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
@@ -459,9 +462,10 @@ def cmd_run(args, config):
 
     ts_print(f"Papers to interpret: {len(papers)}")
     ts_print(f"Phases: {sorted(phases)}")
+    en = getattr(args, 'en', False)
     for i, paper in enumerate(papers):
         ts_print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file)
+        process_paper(paper, config, phases, log_file, en=en)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -488,6 +492,8 @@ def main():
                    help='Only interpret papers published in C/N/S/P journals')
     p.add_argument('--retry-failed', action='store_true',
                    help='Retry papers with interpret_failed status')
+    p.add_argument('--en', action='store_true',
+                   help='Also generate English posters (default: Chinese only)')
 
     sub = p.add_subparsers(dest='cmd', title='commands',
                            description='"run" a single paper, or omit for auto-mode')
@@ -499,6 +505,8 @@ def main():
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
     run_p.add_argument('-f', '--force', action='store_true',
                        help='Force re-interpret even if already interpreted')
+    run_p.add_argument('--en', action='store_true',
+                       help='Also generate English posters (default: Chinese only)')
 
     args = p.parse_args()
 

@@ -442,9 +442,11 @@ def main():
     parser.add_argument('--methodology-base-url',
                         default='https://dashscope.aliyuncs.com/compatible-mode/v1')
     parser.add_argument('--enhancement-model', default='qwen-image-2.0-pro')
-    parser.add_argument('--lang', default='both',
+    parser.add_argument('--lang', default='zh',
                         choices=['en', 'zh', 'both'],
-                        help='Which language(s) to generate (default: both)')
+                        help='Which language(s) to generate (default: zh)')
+    parser.add_argument('--en', action='store_true',
+                        help='Shorthand for --lang both (generate English posters too)')
     args = parser.parse_args()
 
     safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
@@ -452,6 +454,7 @@ def main():
     meth_model = args.methodology_model
     meth_base = args.methodology_base_url
     enh_model = args.enhancement_model
+    lang = 'both' if args.en else args.lang
 
     # Read paper text
     paper_text, source = _read_paper_text(args.paper_dir)
@@ -460,7 +463,7 @@ def main():
         sys.exit(1)
 
     results = []
-    languages = ['en', 'zh'] if args.lang == 'both' else [args.lang]
+    languages = ['en', 'zh'] if lang == 'both' else [lang]
 
     for lang in languages:
         # ── One-shot SVG ──
