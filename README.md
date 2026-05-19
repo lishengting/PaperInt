@@ -4,7 +4,7 @@ Bioinformatics paper intelligence pipeline — search, download, and interpret p
 
 ```
 bio-paper-search ──→ bio-paper-downloader ──→ bio-paper-interpreter
-    (searched)          (downloaded)            (interpreted/skipped)
+    (searched)          (downloaded)            (interpreted)
 ```
 
 Each skill reads from and writes to a shared SQLite database, advancing papers through statuses. The final output is a styled Chinese interpretation report in HTML, with optional SVG/PNG posters.
@@ -85,12 +85,11 @@ python3 skills/bio-paper-downloader/scripts/paper_cli.py --browser
 
 ### Interpret
 
-The interpreter runs within Claude Code following reference docs in `skills/bio-paper-interpreter/references/`. It has a three-phase pipeline:
+The interpreter runs within Claude Code following reference docs in `skills/bio-paper-interpreter/references/`. Three-phase pipeline:
 
-1. **Filter** — check relevance via keywords, assign topic tags
-2. **Interpret** — extract PDF to Markdown, generate Chinese interpretation report via LLM
-3. **Convert** — render styled HTML with dark/light mode
-4. **Poster** — generate SVG/PNG posters (English + Chinese)
+1. **Interpret** — extract PDF to Markdown, generate Chinese interpretation report via LLM
+2. **Convert** — render styled HTML with dark/light mode
+3. **Poster** — generate SVG/PNG posters (English + Chinese)
 
 ### Query the database
 
@@ -112,7 +111,7 @@ print(get_stats(conn))
 ```
 searched → downloaded → interpreted
                 ↓               ↓
-         download_failed     skipped
+         download_failed  interpret_failed
 ```
 
 ### Data Directory
@@ -125,7 +124,6 @@ data/{Title_Slug}/
   {paper_id}.interpret.md      # Chinese interpretation report
   {paper_id}.interpret.html    # styled HTML
   {paper_id}.interpret.json    # structured metadata
-  {paper_id}.skipped.json      # skip record
   {paper_id}.poster.zh.svg     # Chinese poster
   {paper_id}.poster.en.svg     # English poster
   {paper_id}.poster.zh.png     # rendered PNG
@@ -164,7 +162,7 @@ Key config points:
 - `insert_search_results(conn, papers)` — INSERT OR IGNORE with status `searched`
 - `get_papers_by_status(conn, status)` — fetch papers at a given stage
 - `mark_downloaded(conn, pid, dir_name, meta)` — record successful download
-- `mark_interpreted(conn, pid)` / `mark_skipped(conn, pid)` — record interpretation result
+- `mark_interpreted(conn, pid)` — record successful interpretation
 - `get_stats(conn)` — overview of all papers
 
 Uses SQLite with WAL mode. Connection is cached per path.
