@@ -993,12 +993,17 @@ def _resolve_start_date(args, config, source):
                 "SELECT MAX(search_date) FROM papers WHERE source IN ('nature','science','cell','plos')"
             ).fetchone()
         else:
-            row = conn.execute(
-                "SELECT MAX(search_date) FROM papers WHERE source = ?", (source,)
-            ).fetchone()
+            if source == 'all':
+                row = conn.execute(
+                    "SELECT MAX(search_date) FROM papers"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT MAX(search_date) FROM papers WHERE source = ?", (source,)
+                ).fetchone()
         if row and row[0]:
             return datetime.fromisoformat(row[0]).strftime('%Y-%m-%d'), end_date
-        days_back = cfg(config, 'search.incremental_days_back', 90)
+        days_back = cfg(config, 'search.incremental_days_back', 7)
         return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d'), end_date
 
     if explicit_start:
