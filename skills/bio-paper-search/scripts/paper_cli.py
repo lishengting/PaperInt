@@ -1079,10 +1079,11 @@ def cmd_search(args, config):
         return 1
 
     _show_results(papers)
-    if source == 'cnsp':
-        _save_to_db_upsert(papers, config)
-    else:
-        _save_to_db(papers, config)
+    if not args.list:
+        if source == 'cnsp':
+            _save_to_db_upsert(papers, config)
+        else:
+            _save_to_db(papers, config)
     _kill_shared_chrome()
     return 0
 
@@ -1163,7 +1164,8 @@ def cmd_find(args, config):
         return 1
 
     _show_results(papers)
-    _save_to_db(papers, config)
+    if not args.list:
+        _save_to_db(papers, config)
     _kill_shared_chrome()
     return 0
 
@@ -1234,7 +1236,7 @@ def main():
                          'returns all papers in range. '
                          '(default: search.default_num from config)')
     sp.add_argument('-l', '--list', action='store_true',
-                    help='Preview only (results are always saved to database)')
+                    help='Preview only, do not save to database')
     _add_browser_arg(sp)
     sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). '
                     'Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp.')
@@ -1256,7 +1258,7 @@ def main():
     fp.add_argument('-s', '--source', choices=SOURCES,
                     help='Paper source to search (default: search.default_source from config)')
     fp.add_argument('-l', '--list', action='store_true',
-                    help='Preview only (results are always saved to database)')
+                    help='Preview only, do not save to database')
     _add_browser_arg(fp)
 
     args = p.parse_args()
