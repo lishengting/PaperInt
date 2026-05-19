@@ -227,7 +227,7 @@ def arxiv_parse(xml_data):
             'arxiv', aid, title, au, abstract, date, '',
             f"https://arxiv.org/pdf/{aid}.pdf",
             f"https://arxiv.org/abs/{aid}",
-            doi=(e.find('x:doi', ns).text or '').strip() if e.find('x:doi', ns) is not None else None,
+            doi=f"10.48550/arXiv.{aid}",
             arxiv_id=aid))
     return papers
 
