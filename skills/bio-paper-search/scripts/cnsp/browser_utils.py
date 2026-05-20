@@ -165,12 +165,19 @@ def start_chrome(force_headed=False):
             return port
         print(f"{_ts()}   Headless Chrome unavailable", file=sys.stderr)
 
-    # Ensure a display is available for headed Chrome
-    if not os.environ.get('DISPLAY'):
-        print(f"{_ts()}   No DISPLAY set, starting Xvfb for headed Chrome...", file=sys.stderr)
-        if not _xvfb_start():
+    # When force_headed=True: always use Xvfb (avoid popping up GUI on desktop).
+    # When NOT force_headed: use Xvfb only if DISPLAY is not already set.
+    need_xvfb = force_headed or not os.environ.get('DISPLAY')
+    if need_xvfb:
+        label = "Cloudflare-bypass headed" if force_headed else "headed"
+        print(f"{_ts()}   Setting up Xvfb for {label} Chrome...", file=sys.stderr)
+        saved_display = os.environ.pop('DISPLAY', None) if force_headed else None
+        ok = _xvfb_start()
+        if not ok:
+            if saved_display:
+                os.environ['DISPLAY'] = saved_display
             print(f"{_ts()}   Xvfb failed to start (xorg-x11-server-Xvfb not installed?)", file=sys.stderr)
-            raise RuntimeError("Chrome failed: headless unavailable and Xvfb could not start")
+            raise RuntimeError("Chrome failed: Xvfb could not start")
 
     print(f"{_ts()}   Starting headed Chrome on DISPLAY={os.environ.get('DISPLAY')}...", file=sys.stderr)
     port = _start_chrome_instance(headless=False)
