@@ -345,6 +345,7 @@ def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end
             print(f"  arXiv browser: url={url}", file=sys.stderr)
             print(f"  arXiv browser: page title='{title_m.group(1) if title_m else '?'}', "
                   f"html len={len(html)}, arxiv-result count={html.count('arxiv-result')}", file=sys.stderr)
+            print(f"  arXiv browser: html preview={html[:500]}", file=sys.stderr)
         return papers
     except Exception as e:
         print(f"{_ts()}   arXiv browser fallback failed: {e}", file=sys.stderr)
