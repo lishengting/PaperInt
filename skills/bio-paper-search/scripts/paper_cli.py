@@ -336,6 +336,7 @@ def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end
         if not papers:
             # Debug: show what page we got
             title_m = re.search(r'<title>([^<]*)</title>', html)
+            print(f"  arXiv browser: url={url}", file=sys.stderr)
             print(f"  arXiv browser: page title='{title_m.group(1) if title_m else '?'}', "
                   f"html len={len(html)}, arxiv-result count={html.count('arxiv-result')}", file=sys.stderr)
         return papers
