@@ -169,12 +169,7 @@ def _urlopen_with_retry(req, config, attempts=4, backoff=2):
             if i < attempts - 1:
                 wait = backoff * (2 ** i) + random.uniform(0, backoff)
                 time.sleep(wait)
-    # All attempts failed — if it was 429, do one final long-wait retry
-    if isinstance(last_err, urllib.error.HTTPError) and last_err.code == 429:
-        wait = 120 + random.uniform(0, 30)
-        print(f"{_ts()}   HTTP 429 persisted, final long wait {round(wait)}s...", file=sys.stderr)
-        time.sleep(wait)
-        return urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context())
+    # All attempts failed — raise the last error
     raise last_err
 
 
@@ -337,7 +332,13 @@ def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end
     import asyncio as _asyncio
     try:
         html = _asyncio.run(_scrape())
-        return _parse_arxiv_search_html(html, max_results)
+        papers = _parse_arxiv_search_html(html, max_results)
+        if not papers:
+            # Debug: show what page we got
+            title_m = re.search(r'<title>([^<]*)</title>', html)
+            print(f"  arXiv browser: page title='{title_m.group(1) if title_m else '?'}', "
+                  f"html len={len(html)}, arxiv-result count={html.count('arxiv-result')}", file=sys.stderr)
+        return papers
     except Exception as e:
         print(f"{_ts()}   arXiv browser fallback failed: {e}", file=sys.stderr)
         return []
