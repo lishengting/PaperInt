@@ -288,20 +288,25 @@ def _parse_arxiv_search_html(html, max_results=50):
 
 
 def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end_date=None):
-    """Search arXiv via headless browser (fallback when API is rate-limited)."""
+    """Search arXiv via advanced search form in headless browser (fallback when API is rate-limited)."""
     chrome_port = _get_or_start_chrome()
-    query = ' AND '.join(f'all:"{kw}"' for kw in keywords)
-    params = f'searchtype=all&query={urllib.parse.quote(query)}'
-    if start_date:
-        params += f'&date-filter_by=date_range&date-from_date={start_date}&date-to_date={end_date or datetime.now().strftime("%Y-%m-%d")}&date-date_type=submitted_date'
-    url = f'https://arxiv.org/search/?{params}'
+    term = ' AND '.join(f'all:"{kw}"' for kw in keywords) if len(keywords) > 1 else keywords[0]
 
     async def _scrape():
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
             page = await browser.contexts[0].new_page()
-            await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            await page.goto('https://arxiv.org/search/advanced', wait_until='domcontentloaded', timeout=60000)
+            # Fill search term — set field to "All fields" and type the term
+            await page.select_option('#terms-0-field', 'all')
+            await page.fill('#terms-0-term', term)
+            if start_date:
+                await page.check('#date-filter_by-3')  # "Date range" radio
+                await page.fill('#date-from_date', start_date)
+                await page.fill('#date-to_date', end_date or datetime.now().strftime('%Y-%m-%d'))
+            await page.click('button.is-link.is-medium')
+            await page.wait_for_load_state('domcontentloaded')
             html = await page.content()
             await page.close()
             return html
