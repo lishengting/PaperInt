@@ -118,6 +118,7 @@ class CNSP_Parser:
                             timeout: int = 60) -> str | None:
         """Playwright CDP fallback when requests is blocked."""
         if not browser_context:
+            print(f"  CDP fallback skipped (no browser): {url[:100]}", file=sys.stderr)
             return None
         try:
             page = await browser_context.new_page()
@@ -130,6 +131,7 @@ class CNSP_Parser:
                 return html
         except Exception:
             pass
+        print(f"  CDP fallback failed: {url[:100]}", file=sys.stderr)
         return None
 
     @staticmethod
@@ -146,9 +148,11 @@ class CNSP_Parser:
             return html
         if html:
             # JS-rendered page — fall through to CDP
-            pass
+            print(f"  JS-rendered page, falling back to CDP: {url[:100]}", file=sys.stderr)
         if browser_context and self.use_browser:
             return await self._cdp_fallback(url, browser_context, wait_selector, timeout)
+        if not browser_context:
+            print(f"  No browser available for CDP fallback: {url[:100]}", file=sys.stderr)
         return None
 
     # -- Date helpers ----------------------------------------------------------

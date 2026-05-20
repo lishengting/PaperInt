@@ -5,8 +5,8 @@ Bio Paper Search CLI — search bioinformatics papers across multiple sources.
 Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  cnsp
 
 Usage:
-  paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--browser] [--start-date DATE] [--end-date DATE]
-  paper_cli.py find   -t title    [-s source] [-l] [--browser]
+  paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--start-date DATE] [--end-date DATE]
+  paper_cli.py find   -t title    [-s source] [-l]
 
 Results are saved to the shared SQLite database (data/papers.db).
 Use bio-paper-downloader to download found papers.
@@ -565,62 +565,10 @@ def preprint_search_title(title, config, server='biorxiv', use_browser=False):
     return papers, scanned
 
 
-def _get_or_start_chrome(headless=True, fallback_to_headed=False):
-    if headless:
-        profile = os.path.join(tempfile.gettempdir(), 'paper_cli_cnsp_chrome')
-    else:
-        profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
-    os.makedirs(profile, exist_ok=True)
-
-    r = subprocess.run(['pgrep', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
-    if r.returncode == 0 and r.stdout.strip():
-        r2 = subprocess.run(['pgrep', '-a', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
-        m = re.search(r'--remote-debugging-port=(\d+)', r2.stdout)
-        if m:
-            port = int(m.group(1))
-            if _verify_chrome_port(port):
-                return port
-
-    port = None
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        port = s.getsockname()[1]
-
-    subprocess.run(['pkill', '-f', f'remote-debugging-port={port}'], capture_output=True)
-    time.sleep(1)
-
-    cmd = [
-        'google-chrome',
-        f'--remote-debugging-port={port}',
-        f'--user-data-dir={profile}',
-        '--no-first-run', '--no-default-browser-check', '--no-sandbox',
-    ]
-    if headless:
-        cmd.append('--headless=new')
-    cmd.append('about:blank')
-
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
-
-    if _verify_chrome_port(port):
-        return port
-
-    if headless and fallback_to_headed:
-        print("  Headless Chrome unavailable, falling back to headed mode...", file=sys.stderr)
-        return _get_or_start_chrome(headless=False, fallback_to_headed=False)
-
-    raise RuntimeError(f"Chrome failed to start on port {port} (headless={headless})")
-
-
-def _verify_chrome_port(port, timeout=5):
-    """Poll Chrome's /json/version endpoint to confirm it is listening."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version', timeout=1)
-            return True
-        except Exception:
-            time.sleep(0.5)
-    return False
+def _get_or_start_chrome(force_headed=False):
+    """Start Chrome with CDP. Delegates to cnsp.browser_utils.start_chrome()."""
+    from cnsp.browser_utils import start_chrome
+    return start_chrome(force_headed=force_headed)
 
 _shared_chrome_port = None
 
@@ -1000,7 +948,7 @@ def _merge_dedup(papers, source_priority=None):
     return merged
 
 
-def search_all(keywords, config, max_results=10, use_browser=False, sort_by='date', chrome_port=None,
+def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=None,
                start_date=None, end_date=None):
     all_papers = []
 
@@ -1185,23 +1133,16 @@ def cmd_search(args, config):
     elif source == 'scholar':
         papers, scanned = scholar_search(keywords, config, max_results=num)
     elif source == 'all':
-        chrome_port = None
-        try:
-            chrome_port = _get_or_start_chrome(headless=True, fallback_to_headed=args.browser)
-            _shared_chrome_port = chrome_port
-        except Exception as e:
-            print(f"{_ts()}   Chrome: {e}", file=sys.stderr)
-        papers = search_all(keywords, config, max_results=num, use_browser=args.browser,
-                           sort_by='date', chrome_port=chrome_port,
+        _shared_chrome_port = _get_or_start_chrome()
+        papers = search_all(keywords, config, max_results=num,
+                           sort_by='date', chrome_port=_shared_chrome_port,
                            start_date=start_date, end_date=end_date)
     elif source == 'cnsp':
-        _shared_chrome_port = _get_or_start_chrome(headless=True, fallback_to_headed=args.browser)
         from cnsp import cnsp_search
         cnsp_journals = getattr(args, 'cnsp_journals', None) or None
         papers = cnsp_search(keywords, config, max_results=num * 3,
                              start_date=start_date, end_date=end_date,
-                             cnsp_journals=cnsp_journals,
-                             chrome_port=_shared_chrome_port)
+                             cnsp_journals=cnsp_journals)
     else:
         print(f"{_ts()} Unknown source: {source}", file=sys.stderr)
         return 1
@@ -1281,14 +1222,14 @@ def cmd_find(args, config):
         papers = arxiv_search_title(args.title, config, 10)
     elif source in ('biorxiv', 'medrxiv'):
         papers, scanned = preprint_search_title(args.title, config, source,
-                                                  use_browser=args.browser)
+                                                  use_browser=True)
     elif source == 'pubmed':
         papers, scanned = pubmed_search_title(args.title, config, 10)
     elif source == 'scholar':
         papers, scanned = scholar_search_title(args.title, config, 5)
     elif source == 'all':
         global _shared_chrome_port
-        _shared_chrome_port = _get_or_start_chrome(fallback_to_headed=args.browser)
+        _shared_chrome_port = _get_or_start_chrome()
         try:
             all_papers = []
             try:
@@ -1303,13 +1244,12 @@ def cmd_find(args, config):
                 print(f"{_ts()}   pubmed: {len(papers)} results")
             except Exception as e:
                 print(f"{_ts()}   pubmed: error - {e}", file=sys.stderr)
-            if args.browser:
-                try:
-                    papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
-                    all_papers.extend(papers)
-                    print(f"{_ts()}   scholar: {len(papers)} results")
-                except Exception as e:
-                    print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
+                all_papers.extend(papers)
+                print(f"{_ts()}   scholar: {len(papers)} results")
+            except Exception as e:
+                print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
 
             if all_papers:
                 merged = _merge_dedup(all_papers)
@@ -1355,21 +1295,16 @@ examples:
   paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
   paper_cli.py find -t "CRISPR editing" -s pubmed
 
-  # Google Scholar (requires --browser)
-  paper_cli.py search -k "deep learning single cell" -s scholar -n 3 --browser
+  # Google Scholar (browser auto-starts when needed)
+  paper_cli.py search -k "deep learning single cell" -s scholar -n 3
 
-  # CNSP journal scraping (requires --browser)
-  paper_cli.py search -k "CRISPR" -s cnsp -n 3 --browser
-  paper_cli.py search -k "CRISPR" -s cnsp -n 3 --start-date 2026-05-01 --end-date 2026-05-13 --browser
-  paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental --browser
-  paper_cli.py search -k "methylation" -s cnsp -n 2 --browser --cnsp-journals Nature Science
+  # CNSP journal scraping (browser auto-starts when needed)
+  paper_cli.py search -k "CRISPR" -s cnsp -n 3
+  paper_cli.py search -k "CRISPR" -s cnsp -n 3 --start-date 2026-05-01 --end-date 2026-05-13
+  paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental
+  paper_cli.py search -k "methylation" -s cnsp -n 2 --cnsp-journals Nature Science
 
 sources: arxiv, biorxiv, medrxiv, pubmed, scholar, cnsp, all"""
-
-
-def _add_browser_arg(p):
-    p.add_argument('--browser', action='store_true',
-                   help='Use Chrome browser for searches. Required for Google Scholar and CNSP.')
 
 
 def main():
@@ -1408,7 +1343,6 @@ def main():
                          '(default: search.default_num from config)')
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only, do not save to database')
-    _add_browser_arg(sp)
     sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). '
                     'Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp.')
     sp.add_argument('--end-date', help='Search until this date (YYYY-MM-DD). Default: today.')
@@ -1432,7 +1366,6 @@ def main():
                     help='Paper source to search (default: search.default_source from config)')
     fp.add_argument('-l', '--list', action='store_true',
                     help='Preview only, do not save to database')
-    _add_browser_arg(fp)
 
     args = p.parse_args()
     config = load_config(args.config)

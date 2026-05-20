@@ -67,6 +67,20 @@ async def _scrape_journal_type(journal_type: str, config: dict,
             ctx = browser.contexts[0]
         except Exception as e:
             print(f"{_ts()}   CNSP {journal_type}: CDP connect failed ({e}), requests-only", file=sys.stderr)
+    elif use_browser and not chrome_port:
+        # Auto-start Chrome — Science and Cell use Cloudflare, skip headless
+        force_headed = journal_type in ('science', 'cell')
+        try:
+            from .browser_utils import start_chrome
+            chrome_port = start_chrome(force_headed=force_headed)
+            from playwright.async_api import async_playwright
+            pw = await async_playwright().start()
+            browser = await pw.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
+            ctx = browser.contexts[0]
+        except RuntimeError as e:
+            print(f"{_ts()}   CNSP {journal_type}: {e}, requests-only", file=sys.stderr)
+        except Exception as e:
+            print(f"{_ts()}   CNSP {journal_type}: browser setup failed ({e}), requests-only", file=sys.stderr)
 
     try:
         for j in journals:
