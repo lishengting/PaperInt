@@ -132,13 +132,21 @@ class CNSP_Parser:
             pass
         return None
 
+    @staticmethod
+    def _is_template_html(html: str) -> bool:
+        """Detect JS-template placeholders (EJS, Underscore) in HTML — page is client-rendered."""
+        return '<%=' in html or '<%' in html
+
     async def _get_page(self, url: str, browser_context=None,
                         wait_selector: str | None = None,
                         timeout: int = 60) -> str | None:
         """Requests-first, CDP fallback if browser_context is available."""
         html = self._get_page_with_retry(url, timeout=timeout)
-        if html:
+        if html and not self._is_template_html(html):
             return html
+        if html:
+            # JS-rendered page — fall through to CDP
+            pass
         if browser_context and self.use_browser:
             return await self._cdp_fallback(url, browser_context, wait_selector, timeout)
         return None
