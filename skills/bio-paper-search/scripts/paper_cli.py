@@ -288,25 +288,33 @@ def _parse_arxiv_search_html(html, max_results=50):
 
 
 def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end_date=None):
-    """Search arXiv via advanced search form in headless browser (fallback when API is rate-limited)."""
+    """Search arXiv via advanced search URL in headless browser (fallback when API is rate-limited)."""
     chrome_port = _get_or_start_chrome()
     term = ' AND '.join(f'all:"{kw}"' for kw in keywords) if len(keywords) > 1 else keywords[0]
+    params = (
+        f'advanced=&terms-0-operator=AND&terms-0-term={urllib.parse.quote(term)}'
+        f'&terms-0-field=all'
+        f'&classification-physics_archives=all&classification-include_cross_list=include'
+        f'&date-year=&date-filter_by=date_range'
+        f'&date-from_date={start_date}&date-to_date={end_date or datetime.now().strftime("%Y-%m-%d")}'
+        f'&date-date_type=submitted_date'
+        f'&abstracts=show&size=50&order=-announced_date_first'
+    ) if start_date else (
+        f'advanced=&terms-0-operator=AND&terms-0-term={urllib.parse.quote(term)}'
+        f'&terms-0-field=all'
+        f'&classification-physics_archives=all&classification-include_cross_list=include'
+        f'&date-year=&date-filter_by=all_dates'
+        f'&date-date_type=submitted_date'
+        f'&abstracts=show&size=50&order=-announced_date_first'
+    )
+    url = f'https://arxiv.org/search/advanced?{params}'
 
     async def _scrape():
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
             page = await browser.contexts[0].new_page()
-            await page.goto('https://arxiv.org/search/advanced', wait_until='domcontentloaded', timeout=60000)
-            # Fill search term — set field to "All fields" and type the term
-            await page.select_option('#terms-0-field', 'all')
-            await page.fill('#terms-0-term', term)
-            if start_date:
-                await page.check('#date-filter_by-3')  # "Date range" radio
-                await page.fill('#date-from_date', start_date)
-                await page.fill('#date-to_date', end_date or datetime.now().strftime('%Y-%m-%d'))
-            await page.click('button.is-link.is-medium')
-            await page.wait_for_load_state('domcontentloaded')
+            await page.goto(url, wait_until='domcontentloaded', timeout=60000)
             html = await page.content()
             await page.close()
             return html
