@@ -128,11 +128,15 @@ class CNSP_Parser:
                 await page.wait_for_selector(wait_selector, timeout=15000)
             html = await page.content()
             await page.close()
-            if "403" not in html and "Forbidden" not in html and len(html) > 1000:
+            has_403 = "403" in html
+            has_forbidden = "Forbidden" in html
+            html_len = len(html)
+            if not has_403 and not has_forbidden and html_len > 1000:
                 return html
-        except Exception:
-            pass
-        print(f"  CDP fallback failed: {url[:100]}", file=sys.stderr)
+            reason = "403" if has_403 else ("Forbidden" if has_forbidden else f"len={html_len}")
+            print(f"  CDP got blocked page ({reason}): {url[:100]}", file=sys.stderr)
+        except Exception as e:
+            print(f"  CDP error ({e}): {url[:100]}", file=sys.stderr)
         return None
 
     @staticmethod
