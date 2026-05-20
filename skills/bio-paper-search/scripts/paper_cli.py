@@ -318,6 +318,12 @@ def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end
                 try:
                     await page.goto(url, wait_until='domcontentloaded', timeout=60000)
                     html = await page.content()
+                    if 'Rate exceeded' in html or 'rate exceeded' in html.lower():
+                        if attempt < 2:
+                            wait = 10 * (attempt + 1)
+                            print(f"  arXiv browser rate-limited, waiting {wait}s...", file=sys.stderr)
+                            time.sleep(wait)
+                            continue
                     return html
                 except Exception as e:
                     last_err = e
