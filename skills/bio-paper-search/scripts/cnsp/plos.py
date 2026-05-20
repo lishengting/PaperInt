@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from datetime import date, datetime
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
-from dateutil import parser as dateparser
 
 from .base import CNSP_Parser, clean_error
 
@@ -50,7 +49,8 @@ class PLOSParser(CNSP_Parser):
         journal_path = self.JOURNAL_CODE_MAP.get(journal_code, 'plosone')
 
         page = 1
-        while True:
+        max_pages = 3
+        while page <= max_pages:
             search_url = self._build_search_url(journal_code, journal_path, start_date, end_date, page)
             page_articles = await self._scrape_search_page(search_url, journal_name, browser_context)
             if not page_articles:
@@ -78,9 +78,11 @@ class PLOSParser(CNSP_Parser):
 
     async def _scrape_search_page(self, search_url: str, journal_name: str,
                                    browser_context) -> list[dict]:
-        """Scrape a single page of PLOS search results."""
+        """Scrape a single page of PLOS search results. Extracts title/authors/date
+        from the rendered DOM — no per-article HTTP requests needed."""
         articles = []
-        html = await self._get_page(search_url, browser_context, timeout=60)
+        html = await self._get_page(search_url, browser_context,
+                                   wait_selector='dt[data-doi]', timeout=60)
         if not html:
             return articles
 
@@ -94,22 +96,45 @@ class PLOSParser(CNSP_Parser):
         for elem in doi_elements:
             try:
                 data_doi = elem.get('data-doi', '')
-                if not data_doi:
+                if not data_doi or '<%' in data_doi:
                     continue
 
-                doi_url = f"https://doi.org/{data_doi}"
-                detail = self._fetch_article_detail(doi_url)
-                if not detail or not detail.get('title'):
+                # Title from the <a> inside the <dt>
+                title = ''
+                link = elem.find('a')
+                if link:
+                    title = link.get_text(strip=True)
+
+                if not title:
                     continue
+
+                # Authors and date from the following <dd>
+                authors = ''
+                pub_date = None
+                dd_elem = elem.find_next_sibling('dd')
+                if dd_elem:
+                    author_el = dd_elem.find(class_=lambda c: c and 'author' in c.lower() if c else False)
+                    if author_el:
+                        authors = author_el.get_text(strip=True)
+
+                    dd_text = dd_elem.get_text()
+                    m = re.search(r'published\s+(\d{1,2})\s+(\w+)\s+(\d{4})', dd_text)
+                    if m:
+                        try:
+                            pub_date = datetime.strptime(
+                                f"{m.group(1)} {m.group(2)} {m.group(3)}", '%d %B %Y'
+                            ).date()
+                        except ValueError:
+                            pass
 
                 articles.append({
-                    'title': detail.get('title', ''),
-                    'url': doi_url,
-                    'abstract': detail.get('abstract', ''),
-                    'date': detail.get('date'),
+                    'title': title,
+                    'url': f"https://doi.org/{data_doi}",
+                    'abstract': '',
+                    'date': pub_date,
                     'doi': data_doi,
                     'journal': journal_name,
-                    'authors': detail.get('authors', ''),
+                    'authors': authors,
                 })
 
             except Exception as e:

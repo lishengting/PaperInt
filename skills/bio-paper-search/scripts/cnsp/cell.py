@@ -104,7 +104,7 @@ class CellParser(CNSP_Parser):
                 issue_url = urljoin('https://www.cell.com', href)
                 title = c.get_text(strip=True)[:100]
 
-                # Try to parse date from title or container
+                # Try to parse date from container text
                 issue_date = None
                 date_text = c.select_one('time, .issue-date, [class*="date"]')
                 if date_text:
@@ -114,6 +114,26 @@ class CellParser(CNSP_Parser):
                             issue_date = dt.date()
                     except Exception:
                         pass
+
+                # Fallback: extract date from link text (handles "Issue 5May 07, 2026p889")
+                if not issue_date:
+                    m = re.search(r'(\d{1,2})?\s*([A-Z][a-z]+)\s*(\d{1,2}),?\s*(\d{4})', title)
+                    if m:
+                        try:
+                            issue_date = datetime.strptime(
+                                f"{m.group(2)} {m.group(3)} {m.group(4)}",
+                                '%B %d %Y'
+                            ).date()
+                        except ValueError:
+                            pass
+
+                # Fallback: extract year from PII (e.g. S0002-9297(25) → 2025)
+                if not issue_date:
+                    m = re.search(r'\((\d{2})\)', href)
+                    if m:
+                        pii_year = 2000 + int(m.group(1))
+                        # PII year is approximate — use Jan 1 as placeholder
+                        issue_date = date(pii_year, 1, 1)
 
                 if issue_date and issue_date < start_date:
                     continue
@@ -128,7 +148,8 @@ class CellParser(CNSP_Parser):
     async def _scrape_issue(self, issue_url: str, journal_name: str,
                              start_date: date, end_date: date,
                              browser_context) -> list[dict]:
-        """Scrape articles from a single Cell issue page."""
+        """Scrape articles from a single Cell issue page. Extracts titles from
+        h3 a[href*=\"/fulltext/\"] links — no per-article HTTP requests needed."""
         articles = []
         html = await self._get_page(issue_url, browser_context, timeout=60)
         if not html:
@@ -136,11 +157,20 @@ class CellParser(CNSP_Parser):
 
         soup = BeautifulSoup(html, 'html.parser')
 
-        # Find article links
-        article_links = soup.select('a[href*="/article/"]')
-        seen = set()
+        # Extract issue date and filter by date range
+        issue_date = None
+        date_meta = soup.find('meta', attrs={'name': 'citation_publication_date'})
+        if date_meta:
+            try:
+                issue_date = dateparser.parse(date_meta.get('content', '')).date()
+            except Exception:
+                pass
 
-        for link in article_links:
+        if issue_date and not self._is_date_in_range(issue_date, start_date, end_date):
+            return articles
+
+        seen = set()
+        for link in soup.select('h3 a[href*="/fulltext/"]'):
             try:
                 href = link.get('href', '')
                 if not href:
@@ -154,23 +184,16 @@ class CellParser(CNSP_Parser):
                 if not title or len(title) < 10:
                     continue
 
-                # Fetch article detail page
-                detail = await self._fetch_article_detail(article_url, browser_context)
-                pub_date = detail.get('date')
-
-                if pub_date and not self._is_date_in_range(pub_date, start_date, end_date):
-                    continue
-
                 doi = self._extract_doi(article_url)
 
                 articles.append({
-                    'title': detail.get('title', title),
+                    'title': title,
                     'url': article_url,
-                    'abstract': detail.get('abstract', ''),
-                    'date': pub_date,
+                    'abstract': '',
+                    'date': issue_date,
                     'doi': doi,
                     'journal': journal_name,
-                    'authors': detail.get('authors', ''),
+                    'authors': '',
                 })
 
             except Exception as e:
@@ -178,41 +201,6 @@ class CellParser(CNSP_Parser):
                 continue
 
         return articles
-
-    async def _fetch_article_detail(self, url: str, browser_context) -> dict:
-        """Fetch title, abstract, authors, date from a Cell article page."""
-        html = await self._get_page(url, browser_context, timeout=30)
-        if not html:
-            return {}
-
-        soup = BeautifulSoup(html, 'html.parser')
-
-        title = ''
-        title_tag = soup.find('meta', attrs={'name': 'citation_title'})
-        if title_tag:
-            title = title_tag.get('content', '')
-
-        abstract = ''
-        abs_elem = soup.select_one('div.section.abstract, div.article__abstract, section.abstract')
-        if abs_elem:
-            abstract = abs_elem.get_text(strip=True)
-
-        authors = ''
-        author_metas = soup.find_all('meta', attrs={'name': 'citation_author'})
-        if author_metas:
-            authors = '; '.join(m.get('content', '') for m in author_metas)
-
-        date_val = None
-        date_meta = soup.find('meta', attrs={'name': 'citation_publication_date'})
-        if not date_meta:
-            date_meta = soup.find('meta', attrs={'name': 'citation_online_date'})
-        if date_meta:
-            try:
-                date_val = dateparser.parse(date_meta.get('content', '')).date()
-            except Exception:
-                pass
-
-        return {'title': title, 'abstract': abstract, 'authors': authors, 'date': date_val}
 
     @staticmethod
     def _extract_doi(url: str) -> str:

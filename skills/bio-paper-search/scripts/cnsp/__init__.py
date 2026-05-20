@@ -103,7 +103,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
                 print(f"{_ts()}     {len(raw_articles)} articles found")
                 if len(raw_articles) == 0:
                     print(f"{_ts()}     Warning: 0 articles from {jname} — "
-                          f"site may be unreachable (Cloudflare/403) or JS-rendered", file=sys.stderr)
+                          f"no articles in date range or site unreachable", file=sys.stderr)
             except asyncio.TimeoutError:
                 print(f"{_ts()}     Timeout ({jname}): skipped after 120s", file=sys.stderr)
             except ValueError as e:

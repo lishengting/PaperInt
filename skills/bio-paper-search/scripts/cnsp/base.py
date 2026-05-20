@@ -72,7 +72,7 @@ class CNSP_Parser:
         retry_strategy = Retry(
             total=2,
             backoff_factor=5,
-            status_forcelist=[403, 429, 500, 502, 503, 504],
+            status_forcelist=[429, 500, 502, 503, 504],
             respect_retry_after_header=True,
         )
         adapter = PermissiveSSLAdapter(max_retries=retry_strategy)
@@ -96,7 +96,8 @@ class CNSP_Parser:
         return None
 
     def _get_page_with_retry(self, url: str, timeout: int = 60) -> str | None:
-        """Try requests up to 3 times with backoff. Returns HTML text or None."""
+        """Try requests up to 3 times with backoff. Returns HTML text or None.
+        403 (Cloudflare) returns None immediately — CDP fallback will handle it."""
         for attempt in range(3):
             self._rotate_ua()
             if attempt > 0:
@@ -107,9 +108,7 @@ class CNSP_Parser:
                 if resp.status_code == 200:
                     return resp.text
                 if resp.status_code == 403:
-                    if attempt < 2:
-                        time.sleep(random.uniform(10, 20))
-                        continue
+                    return None  # Cloudflare — fall through to CDP immediately
             except Exception:
                 if attempt < 2:
                     time.sleep(random.uniform(5, 12))
@@ -127,9 +126,11 @@ class CNSP_Parser:
             resp = await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
             status = resp.status if resp else 0
             if wait_selector:
-                await page.wait_for_selector(wait_selector, timeout=15000)
-            # Wait for JS to render (PLOS and other JS-heavy pages)
-            await asyncio.sleep(3)
+                try:
+                    await page.wait_for_selector(wait_selector, timeout=10000)
+                except Exception:
+                    pass  # selector not found — may be empty results page
+            await asyncio.sleep(2)
             html = await page.content()
             await page.close()
             if status in (403, 429, 503) or status == 0:
@@ -156,8 +157,9 @@ class CNSP_Parser:
         if html and not self._is_template_html(html):
             return html
         if html:
-            # JS-rendered page — fall through to CDP
             print(f"  JS-rendered page, falling back to CDP: {url[:100]}", file=sys.stderr)
+        elif browser_context and self.use_browser:
+            print(f"  Requests blocked, falling back to CDP: {url[:100]}", file=sys.stderr)
         if browser_context and self.use_browser:
             return await self._cdp_fallback(url, browser_context, wait_selector, timeout)
         if not browser_context:
