@@ -38,6 +38,10 @@ from paper_db import get_conn, get_db_path, insert_search_results, upsert_search
 # SSL workaround for older servers (bioRxiv, etc.)
 # ---------------------------------------------------------------------------
 
+def _ts():
+    return datetime.now().strftime('[%H:%M:%S]')
+
+
 def _ssl_context():
     ctx = ssl._create_unverified_context()
     ctx.check_hostname = False
@@ -153,7 +157,7 @@ def _urlopen_with_retry(req, config, attempts=4, backoff=2):
                         wait = int(retry_after)
                     except (ValueError, TypeError):
                         wait = backoff * (4 ** i) + random.uniform(0, backoff * 2)
-                    print(f"  HTTP 429 rate-limited, waiting {round(wait)}s...", file=sys.stderr)
+                    print(f"{_ts()}   HTTP 429 rate-limited, waiting {round(wait)}s...", file=sys.stderr)
                     time.sleep(wait)
             elif 400 <= e.code < 500:
                 raise
@@ -168,7 +172,7 @@ def _urlopen_with_retry(req, config, attempts=4, backoff=2):
     # All attempts failed — if it was 429, do one final long-wait retry
     if isinstance(last_err, urllib.error.HTTPError) and last_err.code == 429:
         wait = 120 + random.uniform(0, 30)
-        print(f"  HTTP 429 persisted, final long wait {round(wait)}s...", file=sys.stderr)
+        print(f"{_ts()}   HTTP 429 persisted, final long wait {round(wait)}s...", file=sys.stderr)
         time.sleep(wait)
         return urllib.request.urlopen(req, timeout=tout(config), context=_ssl_context())
     raise last_err
@@ -188,7 +192,7 @@ def arxiv_api(query, config, max_results=50):
         with _urlopen_with_retry(req, config) as r:
             return r.read().decode('utf-8')
     except Exception as e:
-        print(f"  arXiv error: {e}", file=sys.stderr)
+        print(f"{_ts()}   arXiv error: {e}", file=sys.stderr)
         return None
 
 
@@ -324,7 +328,7 @@ def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end
         html = _asyncio.run(_scrape())
         return _parse_arxiv_search_html(html, max_results)
     except Exception as e:
-        print(f"  arXiv browser fallback failed: {e}", file=sys.stderr)
+        print(f"{_ts()}   arXiv browser fallback failed: {e}", file=sys.stderr)
         return []
 
 
@@ -382,7 +386,7 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
             with _urlopen_with_retry(req, config, attempts=3) as r:
                 data = json.loads(r.read().decode('utf-8'))
         except Exception as e:
-            print(f"  {server} error: {e}", file=sys.stderr)
+            print(f"{_ts()}   {server} error: {e}", file=sys.stderr)
             break
 
         batch = data.get('collection', [])
@@ -421,7 +425,7 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
     query = urllib.parse.quote(title)
     url = f'https://www.{server}.org/search/{query}'
 
-    print(f"  Searching {server}...")
+    print(f"{_ts()}   Searching {server}...")
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
         ctx = browser.contexts[0]
@@ -624,7 +628,7 @@ def pubmed_api(endpoint, params, config):
         with _urlopen_with_retry(req, config, attempts=3) as r:
             return json.loads(r.read().decode('utf-8'))
     except Exception as e:
-        print(f"  PubMed error: {e}", file=sys.stderr)
+        print(f"{_ts()}   PubMed error: {e}", file=sys.stderr)
         return None
 
 
@@ -649,7 +653,7 @@ def pubmed_fetch_abstracts(pmids, config):
             with _urlopen_with_retry(req, config, attempts=3) as r:
                 xml_text = r.read().decode('utf-8')
         except Exception as e:
-            print(f"  PubMed efetch error: {e}", file=sys.stderr)
+            print(f"{_ts()}   PubMed efetch error: {e}", file=sys.stderr)
             if not abstracts:
                 return {}
             continue
@@ -771,7 +775,7 @@ async def _scholar_search_async(keywords, config, max_results, chrome_port=None)
     query = '+'.join(k.strip().replace(' ', '+') for k in keywords)
     url = f'https://scholar.google.com/scholar?q={query}&num={min(max_results, 20)}&as_sdt=0,5'
 
-    print(f"  Searching Google Scholar...")
+    print(f"{_ts()}   Searching Google Scholar...")
 
     own_chrome = chrome_port is None
     if own_chrome:
@@ -789,7 +793,7 @@ async def _scholar_search_async(keywords, config, max_results, chrome_port=None)
                 await _asyncio.sleep(4)
                 title = await page.title()
                 if 'sorry' in title.lower():
-                    print(f"  Google Scholar blocked us (captcha/IP rate limit)", file=sys.stderr)
+                    print(f"{_ts()}   Google Scholar blocked us (captcha/IP rate limit)", file=sys.stderr)
                     return [], 0
                 if 'scholar' in title.lower():
                     break
@@ -977,40 +981,40 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
         papers = arxiv_search(keywords, config, max_results=max_results * 3,
                              start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
-        print(f"  arxiv: {len(papers)} results")
+        print(f"{_ts()}   arxiv: {len(papers)} results")
     except Exception as e:
-        print(f"  arxiv: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   arxiv: error - {e}", file=sys.stderr)
 
     try:
         papers, _ = preprint_search(keywords, config, 'biorxiv', max_results=max_results * 3,
                                      start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
-        print(f"  biorxiv: {len(papers)} results")
+        print(f"{_ts()}   biorxiv: {len(papers)} results")
     except Exception as e:
-        print(f"  biorxiv: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   biorxiv: error - {e}", file=sys.stderr)
 
     try:
         papers, _ = preprint_search(keywords, config, 'medrxiv', max_results=max_results * 3,
                                      start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
-        print(f"  medrxiv: {len(papers)} results")
+        print(f"{_ts()}   medrxiv: {len(papers)} results")
     except Exception as e:
-        print(f"  medrxiv: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   medrxiv: error - {e}", file=sys.stderr)
 
     try:
         papers, total = pubmed_search(keywords, config, max_results=max_results * 3,
                                        start_date=start_date, end_date=end_date)
         all_papers.extend(papers)
-        print(f"  pubmed: {len(papers)} results (total: {total})")
+        print(f"{_ts()}   pubmed: {len(papers)} results (total: {total})")
     except Exception as e:
-        print(f"  pubmed: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   pubmed: error - {e}", file=sys.stderr)
 
     try:
         papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
         all_papers.extend(papers)
-        print(f"  scholar: {len(papers)} results")
+        print(f"{_ts()}   scholar: {len(papers)} results")
     except Exception as e:
-        print(f"  scholar: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
 
     try:
         from cnsp import cnsp_search
@@ -1018,9 +1022,9 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
                              start_date=start_date, end_date=end_date,
                              chrome_port=chrome_port)
         all_papers.extend(papers)
-        print(f"  cnsp: {len(papers)} results")
+        print(f"{_ts()}   cnsp: {len(papers)} results")
     except Exception as e:
-        print(f"  cnsp: error - {e}", file=sys.stderr)
+        print(f"{_ts()}   cnsp: error - {e}", file=sys.stderr)
 
     if not all_papers:
         return []
@@ -1040,7 +1044,7 @@ def search_all(keywords, config, max_results=10, use_browser=False, sort_by='dat
         for p in merged:
             p.pop('_score', None)
 
-    print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
+    print(f"{_ts()}   Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
     return merged[:max_results]
 
 
@@ -1064,7 +1068,7 @@ def _save_to_db(papers, config):
     """Save search results to the shared database."""
     conn = get_conn(config)
     n = insert_search_results(conn, papers)
-    print(f"Saved: {n} new paper(s) to database ({len(papers) - n} already existed)")
+    print(f"{_ts()} Saved: {n} new paper(s) to database ({len(papers) - n} already existed)")
     return n
 
 
@@ -1072,7 +1076,7 @@ def _save_to_db_upsert(papers, config):
     """Save search results with upsert-by-DOI (for CNSP source)."""
     conn = get_conn(config)
     n = upsert_search_results(conn, papers)
-    print(f"Saved/updated: {n} paper(s) to database")
+    print(f"{_ts()} Saved/updated: {n} paper(s) to database")
     return n
 
 
@@ -1130,15 +1134,15 @@ def cmd_search(args, config):
     else:
         num = args.num or cfg(config, 'search.default_num', 1)
 
-    print(f"Source: {source}  |  Keywords: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
-    print(f"Target: {'all (no limit)' if unlimited else f'{num} paper(s)'}\n")
+    print(f"{_ts()} Source: {source}  |  Keywords: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
+    print(f"{_ts()} Target: {'all (no limit)' if unlimited else f'{num} paper(s)'}\n")
 
     # Resolve date range for sources that support it
     start_date, end_date = None, None
     if source in ('arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'cnsp', 'all'):
         start_date, end_date = _resolve_start_date(args, config, source)
         if start_date:
-            print(f"Date range: {start_date} — {end_date}")
+            print(f"{_ts()} Date range: {start_date} — {end_date}")
 
     scanned = 0
     if source == 'arxiv':
@@ -1159,7 +1163,7 @@ def cmd_search(args, config):
             chrome_port = _get_or_start_chrome(headless=True, fallback_to_headed=args.browser)
             _shared_chrome_port = chrome_port
         except Exception as e:
-            print(f"  Chrome: {e}", file=sys.stderr)
+            print(f"{_ts()}   Chrome: {e}", file=sys.stderr)
         papers = search_all(keywords, config, max_results=num, use_browser=args.browser,
                            sort_by='date', chrome_port=chrome_port,
                            start_date=start_date, end_date=end_date)
@@ -1172,15 +1176,15 @@ def cmd_search(args, config):
                              cnsp_journals=cnsp_journals,
                              chrome_port=_shared_chrome_port)
     else:
-        print(f"Unknown source: {source}", file=sys.stderr)
+        print(f"{_ts()} Unknown source: {source}", file=sys.stderr)
         return 1
 
     if scanned:
-        print(f"Scanned {scanned}, found {len(papers)}")
+        print(f"{_ts()} Scanned {scanned}, found {len(papers)}")
     papers = papers[:num]
 
     if not papers:
-        print("No papers found.")
+        print(f"{_ts()}No papers found.")
         return 1
 
     _show_results(papers)
@@ -1234,7 +1238,7 @@ def cmd_find(args, config):
         try:
             papers = _crossref_lookup(doi, config)
         except Exception as e:
-            print(f"  DOI lookup failed: {e}", file=sys.stderr)
+            print(f"{_ts()}   DOI lookup failed: {e}", file=sys.stderr)
             return 1
         _show_results(papers)
         if not args.list:
@@ -1243,7 +1247,7 @@ def cmd_find(args, config):
 
     source = args.source or cfg(config, 'search.default_source', 'arxiv')
 
-    print(f"Source: {source}  |  Title: {args.title}\n")
+    print(f"{_ts()} Source: {source}  |  Title: {args.title}\n")
 
     scanned = 0
     if source == 'arxiv':
@@ -1263,22 +1267,22 @@ def cmd_find(args, config):
             try:
                 papers = arxiv_search_title(args.title, config, 10)
                 all_papers.extend(papers)
-                print(f"  arxiv: {len(papers)} results")
+                print(f"{_ts()}   arxiv: {len(papers)} results")
             except Exception as e:
-                print(f"  arxiv: error - {e}", file=sys.stderr)
+                print(f"{_ts()}   arxiv: error - {e}", file=sys.stderr)
             try:
                 papers, _ = pubmed_search_title(args.title, config, 10)
                 all_papers.extend(papers)
-                print(f"  pubmed: {len(papers)} results")
+                print(f"{_ts()}   pubmed: {len(papers)} results")
             except Exception as e:
-                print(f"  pubmed: error - {e}", file=sys.stderr)
+                print(f"{_ts()}   pubmed: error - {e}", file=sys.stderr)
             if args.browser:
                 try:
                     papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
                     all_papers.extend(papers)
-                    print(f"  scholar: {len(papers)} results")
+                    print(f"{_ts()}   scholar: {len(papers)} results")
                 except Exception as e:
-                    print(f"  scholar: error - {e}", file=sys.stderr)
+                    print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
 
             if all_papers:
                 merged = _merge_dedup(all_papers)
@@ -1289,7 +1293,7 @@ def cmd_find(args, config):
                 merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
                 for p in merged:
                     p.pop('_score', None)
-                print(f"  Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
+                print(f"{_ts()}   Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
                 papers = merged
             else:
                 papers = []
@@ -1297,10 +1301,10 @@ def cmd_find(args, config):
             pass
 
     if scanned:
-        print(f"Scanned {scanned}, found {len(papers)}")
+        print(f"{_ts()} Scanned {scanned}, found {len(papers)}")
     papers = papers[:5]
     if not papers:
-        print("No matching papers found.")
+        print(f"{_ts()}No matching papers found.")
         return 1
 
     _show_results(papers)
