@@ -23,6 +23,10 @@ from .plos import PLOSParser
 from .utils import filter_by_keywords, normalize_article, score_and_rank
 
 
+def _ts():
+    return datetime.now().strftime('[%H:%M:%S]')
+
+
 async def _scrape_journal_type(journal_type: str, config: dict,
                                 start_date: date, end_date: date,
                                 cnsp_journals_filter: list[str] | None,
@@ -31,7 +35,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
     """Scrape all enabled journals of one type. Returns normalized paper dicts."""
     journals = get_enabled_journals(config, journal_type, cnsp_journals_filter)
     if not journals:
-        print(f"  CNSP {journal_type}: no journals selected")
+        print(f"{_ts()}   CNSP {journal_type}: no journals selected")
         return []
 
     cnsp_cfg = config.get('cnsp', {})
@@ -62,13 +66,13 @@ async def _scrape_journal_type(journal_type: str, config: dict,
             browser = await pw.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
             ctx = browser.contexts[0]
         except Exception as e:
-            print(f"  CNSP {journal_type}: CDP connect failed ({e}), requests-only", file=sys.stderr)
+            print(f"{_ts()}   CNSP {journal_type}: CDP connect failed ({e}), requests-only", file=sys.stderr)
 
     try:
         for j in journals:
             jname = j.get('name', '')
             jlink = j.get('link', '')
-            print(f"  Scraping {journal_type}: {jname} ({start_date} — {end_date})")
+            print(f"{_ts()}   Scraping {journal_type}: {jname} ({start_date} — {end_date})")
 
             try:
                 raw_articles = await parser.scrape_journal(
@@ -79,11 +83,11 @@ async def _scrape_journal_type(journal_type: str, config: dict,
                     if normalized.get('doi'):
                         all_articles.append(normalized)
 
-                print(f"    {len(raw_articles)} articles found")
+                print(f"{_ts()}     {len(raw_articles)} articles found")
             except ValueError as e:
-                print(f"    Connection corrupt ({jname}): {clean_error(e)}", file=sys.stderr)
+                print(f"{_ts()}     Connection corrupt ({jname}): {clean_error(e)}", file=sys.stderr)
             except Exception as e:
-                print(f"    Error ({jname}): {clean_error(e)}", file=sys.stderr)
+                print(f"{_ts()}     Error ({jname}): {clean_error(e)}", file=sys.stderr)
 
             time.sleep(delay)
 
@@ -124,8 +128,8 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
         List of normalized paper dicts (make_paper format)
     """
     start, end = _parse_dates(start_date, end_date)
-    print(f"CNSP search: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
-    print(f"Date range: {start} — {end}")
+    print(f"{_ts()} CNSP search: {', '.join(keywords[:5])}{'...' if len(keywords) > 5 else ''}")
+    print(f"{_ts()} Date range: {start} — {end}")
 
     all_articles: list[dict] = []
 
@@ -133,7 +137,7 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
     for jtype in ['nature', 'science', 'cell', 'plos']:
         cnsp_cfg = config.get('cnsp', {})
         if not cnsp_cfg.get(jtype, {}).get('enabled', True):
-            print(f"  CNSP {jtype}: disabled in config")
+            print(f"{_ts()}   CNSP {jtype}: disabled in config")
             continue
 
         try:
@@ -141,13 +145,13 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
                 jtype, config, start, end, cnsp_journals, keywords, chrome_port
             ))
             all_articles.extend(articles)
-            print(f"  CNSP {jtype}: {len(articles)} articles total")
+            print(f"{_ts()}   CNSP {jtype}: {len(articles)} articles total")
         except Exception as e:
-            print(f"  CNSP {jtype} error: {e}", file=sys.stderr)
+            print(f"{_ts()}   CNSP {jtype} error: {e}", file=sys.stderr)
 
     # Filter by keywords (client-side since CNSP sites have no keyword API)
     matched = filter_by_keywords(all_articles, keywords)
-    print(f"  Keyword filter: {len(matched)}/{len(all_articles)} matched")
+    print(f"{_ts()}   Keyword filter: {len(matched)}/{len(all_articles)} matched")
 
     # Score and rank
     matched = score_and_rank(matched, keywords)
