@@ -298,7 +298,7 @@ def _arxiv_search_browser(keywords, config, max_results=50):
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(f'http://127.0.0.1:{chrome_port}')
             page = await browser.contexts[0].new_page()
-            await page.goto(url, timeout=30000)
+            await page.goto(url, wait_until='domcontentloaded', timeout=60000)
             html = await page.content()
             await page.close()
             return html
