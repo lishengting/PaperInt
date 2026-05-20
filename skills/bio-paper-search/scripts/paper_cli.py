@@ -181,6 +181,7 @@ def arxiv_api(query, config, max_results=50):
     max_results = min(max_results, cfg(config, 'apis.arxiv.max_results', 2000))
     base = cfg(config, 'apis.arxiv.search_url', 'https://export.arxiv.org/api/query')
     url = f"{base}?search_query={urllib.parse.quote(query)}&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
+    print(f"{_ts()}   arXiv API: {url}")
     time.sleep(delay(config))
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
@@ -398,6 +399,9 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
     cursor = 0
     scanned = 0
     kw_lower = [k.lower() for k in keywords]
+
+    print(f"{_ts()}   Searching {server}...")
+    print(f"{_ts()}   URL: {base}/details/{server}/{start}/{end}/0")
 
     while len(all_papers) < max_results and scanned < max_scan:
         url = f"{base}/details/{server}/{start}/{end}/{cursor}"
@@ -698,6 +702,8 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
     if start_date:
         params['mindate'] = start_date
         params['maxdate'] = end_date or datetime.now().strftime('%Y-%m-%d')
+    esearch_url = f"{PUBMED_BASE}/esearch.fcgi?{urllib.parse.urlencode(params)}"
+    print(f"{_ts()}   PubMed API: {esearch_url}")
     sr = pubmed_api('esearch.fcgi', params, config)
     if not sr:
         return [], 0
@@ -796,6 +802,7 @@ async def _scholar_search_async(keywords, config, max_results, chrome_port=None)
     url = f'https://scholar.google.com/scholar?q={query}&num={min(max_results, 20)}&as_sdt=0,5'
 
     print(f"{_ts()}   Searching Google Scholar...")
+    print(f"{_ts()}   URL: {url}")
 
     own_chrome = chrome_port is None
     if own_chrome:
