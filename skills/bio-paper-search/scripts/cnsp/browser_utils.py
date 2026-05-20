@@ -30,6 +30,43 @@ def _ts():
 # Xvfb virtual display helpers
 # ---------------------------------------------------------------------------
 
+def _force_xvfb_start():
+    """Start Xvfb even if DISPLAY is already set (for Cloudflare bypass).
+
+    Unlike _xvfb_start, this always creates a virtual display and does NOT
+    reuse the system DISPLAY. Safe to call multiple times — reuses the
+    already-running Xvfb process.
+    """
+    global _XVFB_PROC, _XVFB_DISPLAY
+    if _XVFB_PROC is not None and _XVFB_PROC.poll() is None:
+        os.environ['DISPLAY'] = _XVFB_DISPLAY
+        return True
+
+    if _XVFB_DISPLAY is None:
+        for d in range(99, 110):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(f'/tmp/.X11-unix/X{d}')
+                sock.close()
+            except (OSError, FileNotFoundError):
+                _XVFB_DISPLAY = f':{d}'
+                break
+        if _XVFB_DISPLAY is None:
+            _XVFB_DISPLAY = ':99'
+
+    try:
+        _XVFB_PROC = subprocess.Popen(
+            ['Xvfb', _XVFB_DISPLAY, '-screen', '0', '1920x1080x24', '-ac'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid)
+        os.environ['DISPLAY'] = _XVFB_DISPLAY
+        atexit.register(_xvfb_stop)
+        time.sleep(0.5)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def _xvfb_start():
     """Start Xvfb virtual display if no DISPLAY is set."""
     global _XVFB_PROC, _XVFB_DISPLAY
@@ -167,15 +204,14 @@ def start_chrome(force_headed=False):
 
     # When force_headed=True: always use Xvfb (avoid popping up GUI on desktop).
     # When NOT force_headed: use Xvfb only if DISPLAY is not already set.
-    need_xvfb = force_headed or not os.environ.get('DISPLAY')
-    if need_xvfb:
-        label = "Cloudflare-bypass headed" if force_headed else "headed"
-        print(f"{_ts()}   Setting up Xvfb for {label} Chrome...", file=sys.stderr)
-        saved_display = os.environ.pop('DISPLAY', None) if force_headed else None
-        ok = _xvfb_start()
-        if not ok:
-            if saved_display:
-                os.environ['DISPLAY'] = saved_display
+    if force_headed:
+        print(f"{_ts()}   Setting up Xvfb for Cloudflare-bypass headed Chrome...", file=sys.stderr)
+        if not _force_xvfb_start():
+            print(f"{_ts()}   Xvfb failed to start (xorg-x11-server-Xvfb not installed?)", file=sys.stderr)
+            raise RuntimeError("Chrome failed: Xvfb could not start")
+    elif not os.environ.get('DISPLAY'):
+        print(f"{_ts()}   No DISPLAY set, starting Xvfb...", file=sys.stderr)
+        if not _xvfb_start():
             print(f"{_ts()}   Xvfb failed to start (xorg-x11-server-Xvfb not installed?)", file=sys.stderr)
             raise RuntimeError("Chrome failed: Xvfb could not start")
 
