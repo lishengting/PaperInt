@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import date, datetime
 
+import asyncio
 import requests
 import urllib3
 from requests.adapters import HTTPAdapter
@@ -123,18 +124,21 @@ class CNSP_Parser:
             return None
         try:
             page = await browser_context.new_page()
-            await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
+            resp = await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
+            status = resp.status if resp else 0
             if wait_selector:
                 await page.wait_for_selector(wait_selector, timeout=15000)
+            # Wait for JS to render (PLOS and other JS-heavy pages)
+            await asyncio.sleep(3)
             html = await page.content()
             await page.close()
-            has_403 = "403" in html
-            has_forbidden = "Forbidden" in html
-            html_len = len(html)
-            if not has_403 and not has_forbidden and html_len > 1000:
-                return html
-            reason = "403" if has_403 else ("Forbidden" if has_forbidden else f"len={html_len}")
-            print(f"  CDP got blocked page ({reason}): {url[:100]}", file=sys.stderr)
+            if status in (403, 429, 503) or status == 0:
+                print(f"  CDP got HTTP {status}: {url[:100]}", file=sys.stderr)
+                return None
+            if len(html) < 500:
+                print(f"  CDP got short page (len={len(html)}): {url[:100]}", file=sys.stderr)
+                return None
+            return html
         except Exception as e:
             print(f"  CDP error ({e}): {url[:100]}", file=sys.stderr)
         return None
