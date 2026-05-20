@@ -72,7 +72,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
         for j in journals:
             jname = j.get('name', '')
             jlink = j.get('link', '')
-            print(f"{_ts()}   Scraping {journal_type}: {jname} ({start_date} — {end_date})")
+            print(f"{_ts()}   Scraping {journal_type}: {jname} ({start_date} — {end_date}) {jlink}")
 
             try:
                 raw_articles = await asyncio.wait_for(
