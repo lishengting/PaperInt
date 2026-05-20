@@ -287,11 +287,14 @@ def _parse_arxiv_search_html(html, max_results=50):
     return papers
 
 
-def _arxiv_search_browser(keywords, config, max_results=50):
+def _arxiv_search_browser(keywords, config, max_results=50, start_date=None, end_date=None):
     """Search arXiv via headless browser (fallback when API is rate-limited)."""
     chrome_port = _get_or_start_chrome()
     query = ' AND '.join(f'all:"{kw}"' for kw in keywords)
-    url = f'https://arxiv.org/search/?searchtype=all&query={urllib.parse.quote(query)}'
+    params = f'searchtype=all&query={urllib.parse.quote(query)}'
+    if start_date:
+        params += f'&date-filter_by=date_range&date-from_date={start_date}&date-to_date={end_date or datetime.now().strftime("%Y-%m-%d")}&date-date_type=submitted_date'
+    url = f'https://arxiv.org/search/?{params}'
 
     async def _scrape():
         from playwright.async_api import async_playwright
@@ -322,11 +325,8 @@ def arxiv_search(keywords, config, max_results=50, start_date=None, end_date=Non
     if xml_data:
         return arxiv_parse(xml_data)
     # API rate-limited — fall back to browser-based web search
-    if start_date:
-        print("  arXiv API failed, trying browser fallback (date filter not supported)...", file=sys.stderr)
-    else:
-        print("  arXiv API failed, trying browser fallback...", file=sys.stderr)
-    return _arxiv_search_browser(keywords, config, max_results)
+    print("  arXiv API failed, trying browser fallback...", file=sys.stderr)
+    return _arxiv_search_browser(keywords, config, max_results, start_date, end_date)
 
 
 def arxiv_search_title(title, config, max_results=10):
