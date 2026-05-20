@@ -68,7 +68,7 @@ class CNSP_Parser:
         })
 
         retry_strategy = Retry(
-            total=8,
+            total=2,
             backoff_factor=5,
             status_forcelist=[403, 429, 500, 502, 503, 504],
             respect_retry_after_header=True,

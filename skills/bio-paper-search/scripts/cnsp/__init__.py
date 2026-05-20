@@ -75,8 +75,11 @@ async def _scrape_journal_type(journal_type: str, config: dict,
             print(f"{_ts()}   Scraping {journal_type}: {jname} ({start_date} — {end_date})")
 
             try:
-                raw_articles = await parser.scrape_journal(
-                    jname, jlink, start_date, end_date, browser_context=ctx
+                raw_articles = await asyncio.wait_for(
+                    parser.scrape_journal(
+                        jname, jlink, start_date, end_date, browser_context=ctx
+                    ),
+                    timeout=120
                 )
                 for a in raw_articles:
                     normalized = normalize_article(a, journal_type, jname)
@@ -84,6 +87,8 @@ async def _scrape_journal_type(journal_type: str, config: dict,
                         all_articles.append(normalized)
 
                 print(f"{_ts()}     {len(raw_articles)} articles found")
+            except asyncio.TimeoutError:
+                print(f"{_ts()}     Timeout ({jname}): skipped after 120s", file=sys.stderr)
             except ValueError as e:
                 print(f"{_ts()}     Connection corrupt ({jname}): {clean_error(e)}", file=sys.stderr)
             except Exception as e:
