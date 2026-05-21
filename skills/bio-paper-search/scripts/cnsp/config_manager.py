@@ -129,6 +129,9 @@ def get_enabled_journals(config: dict, journal_type: str,
         include_lower = {j.lower() for j in include}
         journals = [j for j in journals if j.get('name', '').lower() in include_lower]
 
+    # Filter out disabled journals (enabled: false in JSON)
+    journals = [j for j in journals if j.get('enabled', True)]
+
     # Apply CLI-level filter
     if cnsp_journals_filter:
         filter_lower = {j.lower() for j in cnsp_journals_filter}

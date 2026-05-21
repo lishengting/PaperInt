@@ -1,206 +1,257 @@
 [
     {
         "name": "Cell Death & Differentiation",
-        "link": "https://www.nature.com/cdd/"
+        "link": "https://www.nature.com/cdd/",
+        "enabled": true
     },
     {
         "name": "Cell Death & Disease",
-        "link": "https://www.nature.com/cddis/"
+        "link": "https://www.nature.com/cddis/",
+        "enabled": true
     },
     {
         "name": "Communications Earth & Environment",
-        "link": "https://www.nature.com/commsenv/"
+        "link": "https://www.nature.com/commsenv/",
+        "enabled": false
     },
     {
         "name": "Communications Materials",
-        "link": "https://www.nature.com/commsmat/"
+        "link": "https://www.nature.com/commsmat/",
+        "enabled": false
     },
     {
         "name": "Communications Medicine",
-        "link": "https://www.nature.com/commsmed/"
+        "link": "https://www.nature.com/commsmed/",
+        "enabled": true
     },
     {
         "name": "Communications Physics",
-        "link": "https://www.nature.com/commsphys/"
+        "link": "https://www.nature.com/commsphys/",
+        "enabled": false
     },
     {
         "name": "Nature",
-        "link": "https://www.nature.com/nature/"
+        "link": "https://www.nature.com/nature/",
+        "enabled": true
     },
     {
         "name": "Nature Aging",
-        "link": "https://www.nature.com/nataging/"
+        "link": "https://www.nature.com/nataging/",
+        "enabled": true
     },
     {
         "name": "Nature Astronomy",
-        "link": "https://www.nature.com/natastron/"
+        "link": "https://www.nature.com/natastron/",
+        "enabled": false
     },
     {
         "name": "Nature Biomedical Engineering",
-        "link": "https://www.nature.com/natbiomedeng/"
+        "link": "https://www.nature.com/natbiomedeng/",
+        "enabled": true
     },
     {
         "name": "Nature Biotechnology",
-        "link": "https://www.nature.com/nbt/"
+        "link": "https://www.nature.com/nbt/",
+        "enabled": true
     },
     {
         "name": "Nature Cancer",
-        "link": "https://www.nature.com/natcancer/"
+        "link": "https://www.nature.com/natcancer/",
+        "enabled": true
     },
     {
         "name": "Nature Cardiovascular Research",
-        "link": "https://www.nature.com/natcardiovascres/"
+        "link": "https://www.nature.com/natcardiovascres/",
+        "enabled": true
     },
     {
         "name": "Nature Catalysis",
-        "link": "https://www.nature.com/natcatal/"
+        "link": "https://www.nature.com/natcatal/",
+        "enabled": false
     },
     {
         "name": "Nature Cell Biology",
-        "link": "https://www.nature.com/ncb/"
+        "link": "https://www.nature.com/ncb/",
+        "enabled": true
     },
     {
         "name": "Nature Chemical Biology",
-        "link": "https://www.nature.com/nchembio/"
+        "link": "https://www.nature.com/nchembio/",
+        "enabled": true
     },
     {
         "name": "Nature Chemical Engineering",
-        "link": "https://www.nature.com/natchemeng/"
+        "link": "https://www.nature.com/natchemeng/",
+        "enabled": false
     },
     {
         "name": "Nature Chemistry",
-        "link": "https://www.nature.com/nchem/"
+        "link": "https://www.nature.com/nchem/",
+        "enabled": false
     },
     {
         "name": "Nature Cities",
-        "link": "https://www.nature.com/natcities/"
+        "link": "https://www.nature.com/natcities/",
+        "enabled": false
     },
     {
         "name": "Nature Climate Change",
-        "link": "https://www.nature.com/nclimate/"
+        "link": "https://www.nature.com/nclimate/",
+        "enabled": false
     },
     {
         "name": "Nature Communications",
-        "link": "https://www.nature.com/ncomms/"
+        "link": "https://www.nature.com/ncomms/",
+        "enabled": true
     },
     {
         "name": "Nature Computational Science",
-        "link": "https://www.nature.com/natcomputsci/"
+        "link": "https://www.nature.com/natcomputsci/",
+        "enabled": false
     },
     {
         "name": "Nature Ecology & Evolution",
-        "link": "https://www.nature.com/natecolevol/"
+        "link": "https://www.nature.com/natecolevol/",
+        "enabled": true
     },
     {
         "name": "Nature Electronics",
-        "link": "https://www.nature.com/natelectron/"
+        "link": "https://www.nature.com/natelectron/",
+        "enabled": false
     },
     {
         "name": "Nature Energy",
-        "link": "https://www.nature.com/nenergy/"
+        "link": "https://www.nature.com/nenergy/",
+        "enabled": false
     },
     {
         "name": "Nature Food",
-        "link": "https://www.nature.com/natfood/"
+        "link": "https://www.nature.com/natfood/",
+        "enabled": true
     },
     {
         "name": "Nature Genetics",
-        "link": "https://www.nature.com/ng/"
+        "link": "https://www.nature.com/ng/",
+        "enabled": true
     },
     {
         "name": "Nature Geoscience",
-        "link": "https://www.nature.com/ngeo/"
+        "link": "https://www.nature.com/ngeo/",
+        "enabled": false
     },
     {
         "name": "Nature Human Behaviour",
-        "link": "https://www.nature.com/nathumbehav/"
+        "link": "https://www.nature.com/nathumbehav/",
+        "enabled": true
     },
     {
         "name": "Nature Immunology",
-        "link": "https://www.nature.com/ni/"
+        "link": "https://www.nature.com/ni/",
+        "enabled": true
     },
     {
         "name": "Nature Machine Intelligence",
-        "link": "https://www.nature.com/natmachintell/"
+        "link": "https://www.nature.com/natmachintell/",
+        "enabled": false
     },
     {
         "name": "Nature Materials",
-        "link": "https://www.nature.com/nmat/"
+        "link": "https://www.nature.com/nmat/",
+        "enabled": false
     },
     {
         "name": "Nature Medicine",
-        "link": "https://www.nature.com/nm/"
+        "link": "https://www.nature.com/nm/",
+        "enabled": true
     },
     {
         "name": "Nature Mental Health",
-        "link": "https://www.nature.com/natmentalhealth/"
+        "link": "https://www.nature.com/natmentalhealth/",
+        "enabled": true
     },
     {
         "name": "Nature Metabolism",
-        "link": "https://www.nature.com/natmetab/"
+        "link": "https://www.nature.com/natmetab/",
+        "enabled": true
     },
     {
         "name": "Nature Methods",
-        "link": "https://www.nature.com/nmeth/"
+        "link": "https://www.nature.com/nmeth/",
+        "enabled": true
     },
     {
         "name": "Nature Microbiology",
-        "link": "https://www.nature.com/nmicrobiol/"
+        "link": "https://www.nature.com/nmicrobiol/",
+        "enabled": true
     },
     {
         "name": "Nature Nanotechnology",
-        "link": "https://www.nature.com/nnano/"
+        "link": "https://www.nature.com/nnano/",
+        "enabled": false
     },
     {
         "name": "Nature Neuroscience",
-        "link": "https://www.nature.com/neuro/"
+        "link": "https://www.nature.com/neuro/",
+        "enabled": true
     },
     {
         "name": "Nature Photonics",
-        "link": "https://www.nature.com/nphoton/"
+        "link": "https://www.nature.com/nphoton/",
+        "enabled": false
     },
     {
         "name": "Nature Physics",
-        "link": "https://www.nature.com/nphys/"
+        "link": "https://www.nature.com/nphys/",
+        "enabled": false
     },
     {
         "name": "Nature Plants",
-        "link": "https://www.nature.com/nplants/"
+        "link": "https://www.nature.com/nplants/",
+        "enabled": true
     },
     {
         "name": "Nature Protocols",
-        "link": "https://www.nature.com/nprot/"
+        "link": "https://www.nature.com/nprot/",
+        "enabled": true
     },
     {
         "name": "Nature Sensors",
-        "link": "https://www.nature.com/natsensors/"
+        "link": "https://www.nature.com/natsensors/",
+        "enabled": false
     },
     {
         "name": "Nature Structural & Molecular Biology",
-        "link": "https://www.nature.com/nsmb/"
+        "link": "https://www.nature.com/nsmb/",
+        "enabled": true
     },
     {
         "name": "Nature Sustainability",
-        "link": "https://www.nature.com/natsustain/"
+        "link": "https://www.nature.com/natsustain/",
+        "enabled": false
     },
     {
         "name": "Nature Synthesis",
-        "link": "https://www.nature.com/natsynth/"
+        "link": "https://www.nature.com/natsynth/",
+        "enabled": false
     },
     {
         "name": "Nature Water",
-        "link": "https://www.nature.com/natwater/"
+        "link": "https://www.nature.com/natwater/",
+        "enabled": false
     },
     {
         "name": "Oncogene",
-        "link": "https://www.nature.com/onc/"
+        "link": "https://www.nature.com/onc/",
+        "enabled": true
     },
     {
         "name": "Oncogenesis",
-        "link": "https://www.nature.com/oncsis/"
+        "link": "https://www.nature.com/oncsis/",
+        "enabled": true
     },
     {
         "name": "Translational Psychiatry",
-        "link": "https://www.nature.com/tp/"
+        "link": "https://www.nature.com/tp/",
+        "enabled": true
     }
 ]

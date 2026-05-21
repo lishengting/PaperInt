@@ -1,58 +1,72 @@
 [
   {
     "name": "PLOS Biology",
-    "link": "https://journals.plos.org/plosbiology/"
+    "link": "https://journals.plos.org/plosbiology/",
+    "enabled": true
   },
   {
     "name": "PLOS Climate",
-    "link": "https://journals.plos.org/climate/"
+    "link": "https://journals.plos.org/climate/",
+    "enabled": false
   },
   {
     "name": "PLOS Complex Systems",
-    "link": "https://journals.plos.org/complexsystems/"
+    "link": "https://journals.plos.org/complexsystems/",
+    "enabled": false
   },
   {
     "name": "PLOS Computational Biology",
-    "link": "https://journals.plos.org/ploscompbiol/"
+    "link": "https://journals.plos.org/ploscompbiol/",
+    "enabled": true
   },
   {
     "name": "PLOS Digital Health",
-    "link": "https://journals.plos.org/digitalhealth/"
+    "link": "https://journals.plos.org/digitalhealth/",
+    "enabled": true
   },
   {
     "name": "PLOS Genetics",
-    "link": "https://journals.plos.org/plosgenetics/"
+    "link": "https://journals.plos.org/plosgenetics/",
+    "enabled": true
   },
   {
     "name": "PLOS Global Public Health",
-    "link": "https://journals.plos.org/globalpublichealth/"
+    "link": "https://journals.plos.org/globalpublichealth/",
+    "enabled": true
   },
   {
     "name": "PLOS Medicine",
-    "link": "https://journals.plos.org/plosmedicine/"
+    "link": "https://journals.plos.org/plosmedicine/",
+    "enabled": true
   },
   {
     "name": "PLOS Mental Health",
-    "link": "https://journals.plos.org/mentalhealth/"
+    "link": "https://journals.plos.org/mentalhealth/",
+    "enabled": true
   },
   {
     "name": "PLOS Neglected Tropical Diseases",
-    "link": "https://journals.plos.org/plosntds/"
+    "link": "https://journals.plos.org/plosntds/",
+    "enabled": true
   },
   {
     "name": "PLOS One",
-    "link": "https://journals.plos.org/plosone/"
+    "link": "https://journals.plos.org/plosone/",
+    "enabled": true
   },
   {
     "name": "PLOS Pathogens",
-    "link": "https://journals.plos.org/plospathogens/"
+    "link": "https://journals.plos.org/plospathogens/",
+    "enabled": true
   },
   {
     "name": "PLOS Sustainability and Transformation",
-    "link": "https://journals.plos.org/sustainabilitytransformation/"
+    "link": "https://journals.plos.org/sustainabilitytransformation/",
+    "enabled": false
   },
   {
     "name": "PLOS Water",
-    "link": "https://journals.plos.org/water/"
+    "link": "https://journals.plos.org/water/",
+    "enabled": false
   }
 ]

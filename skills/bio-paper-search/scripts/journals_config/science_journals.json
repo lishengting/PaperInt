@@ -1,26 +1,32 @@
 [
     {
         "name": "Science",
-        "link": "https://www.science.org/journal/science"
+        "link": "https://www.science.org/journal/science",
+        "enabled": true
     },
     {
         "name": "Science Advances",
-        "link": "https://www.science.org/journal/sciadv"
+        "link": "https://www.science.org/journal/sciadv",
+        "enabled": true
     },
     {
         "name": "Science Immunology",
-        "link": "https://www.science.org/journal/sciimmunol"
+        "link": "https://www.science.org/journal/sciimmunol",
+        "enabled": true
     },
     {
         "name": "Science Robotics",
-        "link": "https://www.science.org/journal/scirobotics"
+        "link": "https://www.science.org/journal/scirobotics",
+        "enabled": false
     },
     {
         "name": "Science Signaling",
-        "link": "https://www.science.org/journal/signaling"
+        "link": "https://www.science.org/journal/signaling",
+        "enabled": true
     },
     {
         "name": "Science Translational Medicine",
-        "link": "https://www.science.org/journal/stm"
+        "link": "https://www.science.org/journal/stm",
+        "enabled": true
     }
 ]

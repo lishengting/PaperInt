@@ -1,250 +1,312 @@
 [
     {
         "name": "American Journal of Human Genetics (partner)",
-        "link": "https://www.cell.com/ajhg/home"
+        "link": "https://www.cell.com/ajhg/home",
+        "enabled": true
     },
     {
         "name": "Biophysical Journal (partner)",
-        "link": "https://www.cell.com/biophysj/home"
+        "link": "https://www.cell.com/biophysj/home",
+        "enabled": true
     },
     {
         "name": "Biophysical Reports (partner)",
-        "link": "https://www.cell.com/biophysreports/home"
+        "link": "https://www.cell.com/biophysreports/home",
+        "enabled": true
     },
     {
         "name": "Cancer Cell",
-        "link": "https://www.cell.com/cancer-cell/home"
+        "link": "https://www.cell.com/cancer-cell/home",
+        "enabled": true
     },
     {
         "name": "Cell",
-        "link": "https://www.cell.com/cell/home"
+        "link": "https://www.cell.com/cell/home",
+        "enabled": true
     },
     {
         "name": "Cell Biomaterials",
-        "link": "https://www.cell.com/cell-biomaterials/home"
+        "link": "https://www.cell.com/cell-biomaterials/home",
+        "enabled": true
     },
     {
         "name": "Cell Genomics",
-        "link": "https://www.cell.com/cell-genomics/home"
+        "link": "https://www.cell.com/cell-genomics/home",
+        "enabled": true
     },
     {
         "name": "Cell Host & Microbe",
-        "link": "https://www.cell.com/cell-host-microbe/home"
+        "link": "https://www.cell.com/cell-host-microbe/home",
+        "enabled": true
     },
     {
         "name": "Cell Host and Microbe",
-        "link": "https://www.cell.com/cell-host-microbe/home"
+        "link": "https://www.cell.com/cell-host-microbe/home",
+        "enabled": true
     },
     {
         "name": "Cell Metabolism",
-        "link": "https://www.cell.com/cell-metabolism/home"
+        "link": "https://www.cell.com/cell-metabolism/home",
+        "enabled": true
     },
     {
         "name": "Cell Reports",
-        "link": "https://www.cell.com/cell-reports/home"
+        "link": "https://www.cell.com/cell-reports/home",
+        "enabled": true
     },
     {
         "name": "Cell Reports Medicine",
-        "link": "https://www.cell.com/cell-reports-medicine/home"
+        "link": "https://www.cell.com/cell-reports-medicine/home",
+        "enabled": true
     },
     {
         "name": "Cell Reports Methods",
-        "link": "https://www.cell.com/cell-reports-methods/home"
+        "link": "https://www.cell.com/cell-reports-methods/home",
+        "enabled": true
     },
     {
         "name": "Cell Reports Physical Science",
-        "link": "https://www.cell.com/cell-reports-physical-science/home"
+        "link": "https://www.cell.com/cell-reports-physical-science/home",
+        "enabled": false
     },
     {
         "name": "Cell Reports Sustainability",
-        "link": "https://www.cell.com/cell-reports-sustainability/home"
+        "link": "https://www.cell.com/cell-reports-sustainability/home",
+        "enabled": false
     },
     {
         "name": "Cell Stem Cell",
-        "link": "https://www.cell.com/cell-stem-cell/home"
+        "link": "https://www.cell.com/cell-stem-cell/home",
+        "enabled": true
     },
     {
         "name": "Cell Systems",
-        "link": "https://www.cell.com/cell-systems/home"
+        "link": "https://www.cell.com/cell-systems/home",
+        "enabled": true
     },
     {
         "name": "Chem",
-        "link": "https://www.cell.com/chem/home"
+        "link": "https://www.cell.com/chem/home",
+        "enabled": false
     },
     {
         "name": "Chem Catalysis",
-        "link": "https://www.cell.com/chem-catalysis/home"
+        "link": "https://www.cell.com/chem-catalysis/home",
+        "enabled": false
     },
     {
         "name": "Current Biology",
-        "link": "https://www.cell.com/current-biology/home"
+        "link": "https://www.cell.com/current-biology/home",
+        "enabled": true
     },
     {
         "name": "Developmental Cell",
-        "link": "https://www.cell.com/developmental-cell/home"
+        "link": "https://www.cell.com/developmental-cell/home",
+        "enabled": true
     },
     {
         "name": "Device",
-        "link": "https://www.cell.com/device/home"
+        "link": "https://www.cell.com/device/home",
+        "enabled": false
     },
     {
         "name": "Heliyon",
-        "link": "https://www.cell.com/heliyon/home"
+        "link": "https://www.cell.com/heliyon/home",
+        "enabled": true
     },
     {
         "name": "Human Genetics and Genomics Advances (partner)",
-        "link": "https://www.cell.com/hgg-advances/home"
+        "link": "https://www.cell.com/hgg-advances/home",
+        "enabled": true
     },
     {
         "name": "Immunity",
-        "link": "https://www.cell.com/immunity/home"
+        "link": "https://www.cell.com/immunity/home",
+        "enabled": true
     },
     {
         "name": "Joule",
-        "link": "https://www.cell.com/joule/home"
+        "link": "https://www.cell.com/joule/home",
+        "enabled": false
     },
     {
         "name": "Matter",
-        "link": "https://www.cell.com/matter/home"
+        "link": "https://www.cell.com/matter/home",
+        "enabled": false
     },
     {
         "name": "Med",
-        "link": "https://www.cell.com/med/home"
+        "link": "https://www.cell.com/med/home",
+        "enabled": true
     },
     {
         "name": "Molecular Cell",
-        "link": "https://www.cell.com/molecular-cell/home"
+        "link": "https://www.cell.com/molecular-cell/home",
+        "enabled": true
     },
     {
         "name": "Molecular Plant (partner)",
-        "link": "https://www.cell.com/molecular-plant/home"
+        "link": "https://www.cell.com/molecular-plant/home",
+        "enabled": true
     },
     {
         "name": "Molecular Therapy (partner)",
-        "link": "https://www.cell.com/molecular-therapy-family/molecular-therapy/home"
+        "link": "https://www.cell.com/molecular-therapy-family/molecular-therapy/home",
+        "enabled": true
     },
     {
         "name": "Molecular Therapy Methods & Clinical Development (partner)",
-        "link": "https://www.cell.com/molecular-therapy-family/methods/home"
+        "link": "https://www.cell.com/molecular-therapy-family/methods/home",
+        "enabled": true
     },
     {
         "name": "Molecular Therapy Nucleic Acids (partner)",
-        "link": "https://www.cell.com/molecular-therapy-family/nucleic-acids/home"
+        "link": "https://www.cell.com/molecular-therapy-family/nucleic-acids/home",
+        "enabled": true
     },
     {
         "name": "Molecular Therapy Oncology (partner)",
-        "link": "https://www.cell.com/molecular-therapy-family/oncology/home"
+        "link": "https://www.cell.com/molecular-therapy-family/oncology/home",
+        "enabled": true
     },
     {
         "name": "Neuron",
-        "link": "https://www.cell.com/newton/home"
+        "link": "https://www.cell.com/newton/home",
+        "enabled": true
     },
     {
         "name": "Newton",
-        "link": "https://www.cell.com/newton/home"
+        "link": "https://www.cell.com/newton/home",
+        "enabled": false
     },
     {
         "name": "Nexus (partner)",
-        "link": "https://www.cell.com/nexus/home"
+        "link": "https://www.cell.com/nexus/home",
+        "enabled": false
     },
     {
         "name": "One Earth",
-        "link": "https://www.cell.com/one-earth/home"
+        "link": "https://www.cell.com/one-earth/home",
+        "enabled": false
     },
     {
         "name": "Patterns",
-        "link": "https://www.cell.com/patterns/home"
+        "link": "https://www.cell.com/patterns/home",
+        "enabled": false
     },
     {
         "name": "Plant Communications (partner)",
-        "link": "https://www.cell.com/plant-communications/home"
+        "link": "https://www.cell.com/plant-communications/home",
+        "enabled": true
     },
     {
         "name": "Stem Cell Reports (partner)",
-        "link": "https://www.cell.com/stem-cell-reports/home"
+        "link": "https://www.cell.com/stem-cell-reports/home",
+        "enabled": true
     },
     {
         "name": "Structure",
-        "link": "https://www.cell.com/structure/home"
+        "link": "https://www.cell.com/structure/home",
+        "enabled": true
     },
     {
         "name": "The Innovation (partner)",
-        "link": "https://www.cell.com/the-innovation/home"
+        "link": "https://www.cell.com/the-innovation/home",
+        "enabled": true
     },
     {
         "name": "Trends in Biochemical Sciences",
-        "link": "https://www.cell.com/trends/biochemical-sciences/home"
+        "link": "https://www.cell.com/trends/biochemical-sciences/home",
+        "enabled": true
     },
     {
         "name": "Trends in Biotechnology",
-        "link": "https://www.cell.com/trends/biotechnology/home"
+        "link": "https://www.cell.com/trends/biotechnology/home",
+        "enabled": true
     },
     {
         "name": "Trends in Cancer",
-        "link": "https://www.cell.com/trends/cancer/home"
+        "link": "https://www.cell.com/trends/cancer/home",
+        "enabled": true
     },
     {
         "name": "Trends in Cell Biology",
-        "link": "https://www.cell.com/trends/cell-biology/home"
+        "link": "https://www.cell.com/trends/cell-biology/home",
+        "enabled": true
     },
     {
         "name": "Trends in Chemistry",
-        "link": "https://www.cell.com/trends/chemistry/home"
+        "link": "https://www.cell.com/trends/chemistry/home",
+        "enabled": false
     },
     {
         "name": "Trends in Cognitive Sciences",
-        "link": "https://www.cell.com/trends/cognitive-sciences/home"
+        "link": "https://www.cell.com/trends/cognitive-sciences/home",
+        "enabled": true
     },
     {
         "name": "Trends in Ecology & Evolution",
-        "link": "https://www.cell.com/trends/ecology-evolution/home"
+        "link": "https://www.cell.com/trends/ecology-evolution/home",
+        "enabled": true
     },
     {
         "name": "Trends in Ecology and Evolution",
-        "link": "https://www.cell.com/trends/ecology-evolution/home"
+        "link": "https://www.cell.com/trends/ecology-evolution/home",
+        "enabled": true
     },
     {
         "name": "Trends in Endocrinology & Metabolism",
-        "link": "https://www.cell.com/trends/endocrinology-metabolism/home"
+        "link": "https://www.cell.com/trends/endocrinology-metabolism/home",
+        "enabled": true
     },
     {
         "name": "Trends in Endocrinology and Metabolism",
-        "link": "https://www.cell.com/trends/endocrinology-metabolism/home"
+        "link": "https://www.cell.com/trends/endocrinology-metabolism/home",
+        "enabled": true
     },
     {
         "name": "Trends in Genetics",
-        "link": "https://www.cell.com/trends/genetics/home"
+        "link": "https://www.cell.com/trends/genetics/home",
+        "enabled": true
     },
     {
         "name": "Trends in Immunology",
-        "link": "https://www.cell.com/trends/immunology/home"
+        "link": "https://www.cell.com/trends/immunology/home",
+        "enabled": true
     },
     {
         "name": "Trends in Microbiology",
-        "link": "https://www.cell.com/trends/microbiology/home"
+        "link": "https://www.cell.com/trends/microbiology/home",
+        "enabled": true
     },
     {
         "name": "Trends in Molecular Medicine",
-        "link": "https://www.cell.com/trends/molecular-medicine/home"
+        "link": "https://www.cell.com/trends/molecular-medicine/home",
+        "enabled": true
     },
     {
         "name": "Trends in Neurosciences",
-        "link": "https://www.cell.com/trends/neurosciences/home"
+        "link": "https://www.cell.com/trends/neurosciences/home",
+        "enabled": true
     },
     {
         "name": "Trends in Parasitology",
-        "link": "https://www.cell.com/trends/parasitology/home"
+        "link": "https://www.cell.com/trends/parasitology/home",
+        "enabled": true
     },
     {
         "name": "Trends in Pharmacological Sciences",
-        "link": "https://www.cell.com/trends/pharmacological-sciences/home"
+        "link": "https://www.cell.com/trends/pharmacological-sciences/home",
+        "enabled": true
     },
     {
         "name": "Trends in Plant Science",
-        "link": "https://www.cell.com/trends/plant-science/home"
+        "link": "https://www.cell.com/trends/plant-science/home",
+        "enabled": true
     },
     {
         "name": "iScience",
-        "link": "https://www.cell.com/iscience/home"
+        "link": "https://www.cell.com/iscience/home",
+        "enabled": true
     }
 ]
