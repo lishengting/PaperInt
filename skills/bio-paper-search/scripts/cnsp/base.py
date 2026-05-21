@@ -145,20 +145,40 @@ class CNSP_Parser:
         return None
 
     @staticmethod
-    def _is_template_html(html: str) -> bool:
-        """Detect JS-template placeholders (EJS, Underscore) in HTML — page is client-rendered."""
-        return '<%=' in html or '<%' in html
+    def _needs_cdp_fallback(html: str) -> bool:
+        """Detect pages that need CDP rendering: Cloudflare challenges,
+        JS-template shells, SPA placeholders, or suspiciously short pages."""
+        # Cloudflare / anti-bot challenge pages
+        cf_markers = [
+            'cf-browser-verification', 'just a moment', 'checking your browser',
+            'cf-challenge', 'challenge-error-text', 'cf-please-wait',
+            'enable javascript', 'please enable cookies',
+        ]
+        lower = html.lower()
+        if any(m in lower for m in cf_markers):
+            return True
+        # Very short page — real journal TOC pages are 50K+
+        if len(html) < 2000:
+            return True
+        # SPA shell: near-empty body with JS bundle but no server-rendered content
+        body_m = re.search(r'<body[^>]*>(.*?)</body>', html, re.DOTALL)
+        if body_m and len(body_m.group(1).strip()) < 500:
+            return True
+        # Original template markers (EJS, Underscore)
+        if '<%' in html:
+            return True
+        return False
 
     async def _get_page(self, url: str, browser_context=None,
                         wait_selector: str | None = None,
                         timeout: int = 60) -> str | None:
         """Requests-first, CDP fallback if browser_context is available."""
         html = self._get_page_with_retry(url, timeout=timeout)
-        if html and not self._is_template_html(html):
+        if html and not self._needs_cdp_fallback(html):
             return html
         if html:
             print(f"  JS-rendered page, falling back to CDP: {url[:100]}", file=sys.stderr)
-        elif browser_context and self.use_browser:
+        else:
             print(f"  Requests blocked, falling back to CDP: {url[:100]}", file=sys.stderr)
         if browser_context and self.use_browser:
             return await self._cdp_fallback(url, browser_context, wait_selector, timeout)
