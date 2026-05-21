@@ -733,6 +733,7 @@ def pubmed_search_title(title, config, max_results=10):
 
 def crossref_search(keywords, config, max_results=50, start_date=None, end_date=None):
     """Search Crossref API for papers matching keywords."""
+    max_results = min(max_results, 1000)  # Crossref API limit
     query = ' '.join(keywords)
     params = {
         'query': query,
@@ -825,6 +826,7 @@ def crossref_search_title(title, config, max_results=10):
 
 def europepmc_search(keywords, config, max_results=50, start_date=None, end_date=None):
     """Search Europe PMC API for papers matching keywords."""
+    max_results = min(max_results, 1000)  # Europe PMC API limit
     query_parts = []
     for kw in keywords:
         if ' ' in kw:
@@ -1534,7 +1536,7 @@ examples:
   paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental
   paper_cli.py search -k "methylation" -s cnsp -n 2 --cnsp-journals Nature Science
 
-sources: arxiv, biorxiv, medrxiv, pubmed, scholar, cnsp, all"""
+sources: arxiv, biorxiv, medrxiv, pubmed, scholar, crossref, europepmc, cnsp, all"""
 
 
 def main():
@@ -1574,7 +1576,7 @@ def main():
     sp.add_argument('-l', '--list', action='store_true',
                     help='Preview only, do not save to database')
     sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). '
-                    'Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp.')
+                    'Supported by arxiv, biorxiv, medrxiv, pubmed, crossref, europepmc, cnsp.')
     sp.add_argument('--end-date', help='Search until this date (YYYY-MM-DD). Default: today.')
     sp.add_argument('--incremental', action='store_true',
                     help='Auto-compute start_date from last crawl date for this source.')

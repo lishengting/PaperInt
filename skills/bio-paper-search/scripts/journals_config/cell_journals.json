@@ -1,7 +1,7 @@
 [
     {"name": "American Journal of Human Genetics (partner)", "link": "https://www.cell.com/ajhg/home", "enabled": false, "abbrev": "Am J Hum Genet"},
     {"name": "Biophysical Journal (partner)", "link": "https://www.cell.com/biophysj/home", "enabled": false, "abbrev": "Biophys J"},
-    {"name": "Biophysical Reports (partner)", "link": "https://www.cell.com/biophysreports/home", "enabled": false, "abbrev": "Biophys Rep"},
+    {"name": "Biophysical Reports (partner)", "link": "https://www.cell.com/biophysreports/home", "enabled": false, "abbrev": "Biophys Rep (N Y)"},
     {"name": "Cancer Cell", "link": "https://www.cell.com/cancer-cell/home", "enabled": false, "abbrev": "Cancer Cell"},
     {"name": "Cell", "link": "https://www.cell.com/cell/home", "enabled": false, "abbrev": "Cell"},
     {"name": "Cell Biomaterials", "link": "https://www.cell.com/cell-biomaterials/home", "enabled": false, "abbrev": "Cell Biomater"},
@@ -37,7 +37,7 @@
     {"name": "Newton", "link": "https://www.cell.com/newton/home", "enabled": false, "abbrev": "Newton"},
     {"name": "Nexus (partner)", "link": "https://www.cell.com/nexus/home", "enabled": false, "abbrev": "Nexus"},
     {"name": "One Earth", "link": "https://www.cell.com/one-earth/home", "enabled": false, "abbrev": "One Earth"},
-    {"name": "Patterns", "link": "https://www.cell.com/patterns/home", "enabled": false, "abbrev": "Patterns"},
+    {"name": "Patterns", "link": "https://www.cell.com/patterns/home", "enabled": false, "abbrev": "Patterns (N Y)"},
     {"name": "Plant Communications (partner)", "link": "https://www.cell.com/plant-communications/home", "enabled": false, "abbrev": "Plant Commun"},
     {"name": "Stem Cell Reports (partner)", "link": "https://www.cell.com/stem-cell-reports/home", "enabled": false, "abbrev": "Stem Cell Reports"},
     {"name": "Structure", "link": "https://www.cell.com/structure/home", "enabled": false, "abbrev": "Structure"},
