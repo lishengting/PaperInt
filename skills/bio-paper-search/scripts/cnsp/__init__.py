@@ -59,6 +59,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
     # Set up browser context if needed
     browser = None
     ctx = None
+    pw = None
     if use_browser and chrome_port:
         try:
             from playwright.async_api import async_playwright
@@ -118,6 +119,11 @@ async def _scrape_journal_type(journal_type: str, config: dict,
         if browser:
             try:
                 await browser.close()
+            except Exception:
+                pass
+        if pw:
+            try:
+                await pw.stop()
             except Exception:
                 pass
 
