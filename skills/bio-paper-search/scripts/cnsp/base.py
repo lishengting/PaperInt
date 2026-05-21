@@ -119,44 +119,56 @@ class CNSP_Parser:
     async def _cdp_fallback(self, url: str, browser_context,
                             wait_selector: str | None = None,
                             timeout: int = 60) -> str | None:
-        """Playwright CDP fallback when requests is blocked.
-        Waits up to 20s for Cloudflare challenges to auto-resolve."""
+        """Playwright CDP fallback. Retries up to 3x on 403, waits for CF challenges."""
         if not browser_context:
             print(f"  CDP fallback skipped (no browser): {url[:100]}", file=sys.stderr)
             return None
-        try:
-            page = await browser_context.new_page()
-            resp = await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
-            status = resp.status if resp else 0
 
-            if wait_selector:
-                try:
-                    await page.wait_for_selector(wait_selector, timeout=10000)
-                except Exception:
-                    pass
+        for attempt in range(3):
+            try:
+                page = await browser_context.new_page()
+                resp = await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
+                status = resp.status if resp else 0
 
-            # Wait for Cloudflare challenge to resolve (up to 20s)
-            for _ in range(10):
+                if wait_selector:
+                    try:
+                        await page.wait_for_selector(wait_selector, timeout=10000)
+                    except Exception:
+                        pass
+
+                # Wait for Cloudflare challenge to resolve (up to 20s)
+                for _ in range(10):
+                    html = await page.content()
+                    if not self._is_cf_challenge(html):
+                        break
+                    await asyncio.sleep(2)
+                else:
+                    await page.close()
+                    print(f"  CDP Cloudflare challenge timed out: {url[:100]}", file=sys.stderr)
+                    return None
+
                 html = await page.content()
-                if not self._is_cf_challenge(html):
-                    break
-                await asyncio.sleep(2)
-            else:
                 await page.close()
-                print(f"  CDP Cloudflare challenge timed out: {url[:100]}", file=sys.stderr)
-                return None
-
-            html = await page.content()
-            await page.close()
-            if status in (403, 429, 503) or status == 0:
-                print(f"  CDP got HTTP {status}: {url[:100]}", file=sys.stderr)
-                return None
-            if len(html) < 500:
-                print(f"  CDP got short page (len={len(html)}): {url[:100]}", file=sys.stderr)
-                return None
-            return html
-        except Exception as e:
-            print(f"  CDP error ({e}): {url[:100]}", file=sys.stderr)
+                if status in (403, 429, 503) or status == 0:
+                    if attempt < 2:
+                        delay = (attempt + 1) * 5
+                        print(f"  CDP HTTP {status}, retry {attempt + 2}/3 in {delay}s: {url[:100]}", file=sys.stderr)
+                        await asyncio.sleep(delay)
+                        continue
+                    print(f"  CDP got HTTP {status}: {url[:100]}", file=sys.stderr)
+                    return None
+                if len(html) < 500:
+                    print(f"  CDP got short page (len={len(html)}): {url[:100]}", file=sys.stderr)
+                    return None
+                return html
+            except Exception as e:
+                await page.close() if 'page' in dir() else None
+                if attempt < 2:
+                    delay = (attempt + 1) * 5
+                    print(f"  CDP error ({e}), retry {attempt + 2}/3 in {delay}s: {url[:100]}", file=sys.stderr)
+                    await asyncio.sleep(delay)
+                    continue
+                print(f"  CDP error ({e}): {url[:100]}", file=sys.stderr)
         return None
 
     @staticmethod
