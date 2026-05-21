@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import ssl
 import sys
 import time
