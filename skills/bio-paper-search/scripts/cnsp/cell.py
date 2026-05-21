@@ -69,6 +69,7 @@ class CellParser(CNSP_Parser):
         ]
 
         for url in urls:
+            print(f"  Cell issues: {url}", file=sys.stderr)
             html = await self._get_page(url, browser_context, timeout=60)
             if not html:
                 continue
@@ -153,6 +154,7 @@ class CellParser(CNSP_Parser):
         h3 a[href*=\"/fulltext/\"] links — no per-article HTTP requests needed."""
         articles = []
         html = await self._get_page(issue_url, browser_context, timeout=60)
+        print(f"  Cell issue: {issue_url}", file=sys.stderr)
         if not html:
             return articles
 

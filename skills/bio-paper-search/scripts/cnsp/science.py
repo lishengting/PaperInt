@@ -72,6 +72,7 @@ class ScienceParser(CNSP_Parser):
         year_url = f"{archive_url}/group/d{decade_start}.y{year}"
 
         html = await self._get_page(year_url, browser_context, timeout=60)
+        print(f"  Science archive: {year_url}", file=sys.stderr)
         if not html:
             return volumes
 
@@ -124,6 +125,7 @@ class ScienceParser(CNSP_Parser):
         the rendered DOM — no per-article HTTP requests needed."""
         articles = []
         html = await self._get_page(volume_url, browser_context, timeout=60)
+        print(f"  Science TOC: {volume_url}", file=sys.stderr)
         if not html:
             return articles
 

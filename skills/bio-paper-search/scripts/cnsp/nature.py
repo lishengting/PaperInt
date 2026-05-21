@@ -34,6 +34,7 @@ class NatureParser(CNSP_Parser):
 
         for article_type in ['research-articles']:
             page_url = urljoin(base_url, article_type)
+            print(f"  Nature: {page_url}", file=sys.stderr)
             ret_date = None
 
             while page_url:
@@ -104,6 +105,7 @@ class NatureParser(CNSP_Parser):
                         page_url = None
                     else:
                         page_url = next_page
+                        print(f"  Nature next: {page_url}", file=sys.stderr)
                 else:
                     page_url = None
 
