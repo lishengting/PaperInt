@@ -144,6 +144,11 @@ class CNSP_Parser:
                     await asyncio.sleep(2)
                 else:
                     await page.close()
+                    if attempt < 2:
+                        delay = (attempt + 1) * 5
+                        print(f"  CDP CF challenge timed out, retry {attempt + 2}/3 in {delay}s: {url[:100]}", file=sys.stderr)
+                        await asyncio.sleep(delay)
+                        continue
                     print(f"  CDP Cloudflare challenge timed out: {url[:100]}", file=sys.stderr)
                     return None
 
