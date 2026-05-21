@@ -103,6 +103,10 @@ class CellParser(CNSP_Parser):
                 if not href or '/issue' not in href:
                     continue
 
+                # Skip the /issues listing page itself, keep only specific issues
+                if href.rstrip('/').endswith('/issues'):
+                    continue
+
                 issue_url = urljoin('https://www.cell.com', href)
                 title = c.get_text(strip=True)[:100]
 
