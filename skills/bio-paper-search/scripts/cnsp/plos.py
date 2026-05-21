@@ -34,6 +34,7 @@ class PLOSParser(CNSP_Parser):
 
     def __init__(self, use_browser: bool = True):
         super().__init__('plos', use_browser=use_browser)
+        self.force_cdp = True  # PLOS search pages are JS-only, skip requests
 
     async def scrape_journal(self, journal_name: str, base_url: str,
                        start_date: date, end_date: date,
