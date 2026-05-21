@@ -119,7 +119,8 @@ class CNSP_Parser:
     async def _cdp_fallback(self, url: str, browser_context,
                             wait_selector: str | None = None,
                             timeout: int = 60) -> str | None:
-        """Playwright CDP fallback when requests is blocked."""
+        """Playwright CDP fallback when requests is blocked.
+        Waits up to 20s for Cloudflare challenges to auto-resolve."""
         if not browser_context:
             print(f"  CDP fallback skipped (no browser): {url[:100]}", file=sys.stderr)
             return None
@@ -127,12 +128,24 @@ class CNSP_Parser:
             page = await browser_context.new_page()
             resp = await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
             status = resp.status if resp else 0
+
             if wait_selector:
                 try:
                     await page.wait_for_selector(wait_selector, timeout=10000)
                 except Exception:
-                    pass  # selector not found — may be empty results page
-            await asyncio.sleep(2)
+                    pass
+
+            # Wait for Cloudflare challenge to resolve (up to 20s)
+            for _ in range(10):
+                html = await page.content()
+                if not self._is_cf_challenge(html):
+                    break
+                await asyncio.sleep(2)
+            else:
+                await page.close()
+                print(f"  CDP Cloudflare challenge timed out: {url[:100]}", file=sys.stderr)
+                return None
+
             html = await page.content()
             await page.close()
             if status in (403, 429, 503) or status == 0:
@@ -147,26 +160,27 @@ class CNSP_Parser:
         return None
 
     @staticmethod
+    def _is_cf_challenge(html: str) -> bool:
+        """Check if page is a Cloudflare challenge / anti-bot interstitial."""
+        markers = [
+            'cf-browser-verification', 'just a moment', 'checking your browser',
+            'cf-challenge', 'challenge-error-text', 'cf-please-wait',
+            'enable javascript', 'please enable cookies', 'cf-spinner',
+        ]
+        lower = html.lower()
+        return any(m in lower for m in markers)
+
+    @staticmethod
     def _needs_cdp_fallback(html: str) -> bool:
         """Detect pages that need CDP rendering: Cloudflare challenges,
         JS-template shells, SPA placeholders, or suspiciously short pages."""
-        # Cloudflare / anti-bot challenge pages
-        cf_markers = [
-            'cf-browser-verification', 'just a moment', 'checking your browser',
-            'cf-challenge', 'challenge-error-text', 'cf-please-wait',
-            'enable javascript', 'please enable cookies',
-        ]
-        lower = html.lower()
-        if any(m in lower for m in cf_markers):
+        if CNSP_Parser._is_cf_challenge(html):
             return True
-        # Very short page — real journal TOC pages are 50K+
         if len(html) < 2000:
             return True
-        # SPA shell: near-empty body with JS bundle but no server-rendered content
         body_m = re.search(r'<body[^>]*>(.*?)</body>', html, re.DOTALL)
         if body_m and len(body_m.group(1).strip()) < 500:
             return True
-        # Original template markers (EJS, Underscore)
         if '<%' in html:
             return True
         return False
