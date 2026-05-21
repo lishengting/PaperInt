@@ -46,6 +46,7 @@ class CNSP_Parser:
     def __init__(self, journal_type: str, use_browser: bool = False):
         self.journal_type = journal_type
         self.use_browser = use_browser
+        self.force_cdp = False  # overridden by ScienceParser/CellParser
         self.session = requests.Session()
 
         self.user_agents = [
@@ -173,7 +174,14 @@ class CNSP_Parser:
     async def _get_page(self, url: str, browser_context=None,
                         wait_selector: str | None = None,
                         timeout: int = 60) -> str | None:
-        """Requests-first, CDP fallback if browser_context is available."""
+        """Requests-first, CDP fallback if browser_context is available.
+        When force_cdp is True, skip requests entirely (Science/Cell parsers)."""
+        if self.force_cdp:
+            if browser_context and self.use_browser:
+                return await self._cdp_fallback(url, browser_context, wait_selector, timeout)
+            if not browser_context:
+                print(f"  No browser available for forced CDP: {url[:100]}", file=sys.stderr)
+            return None
         html = self._get_page_with_retry(url, timeout=timeout)
         if html and not self._needs_cdp_fallback(html):
             return html

@@ -19,6 +19,7 @@ class CellParser(CNSP_Parser):
 
     def __init__(self, use_browser: bool = True):
         super().__init__('cell', use_browser=use_browser)
+        self.force_cdp = True  # cell.com is JS-only, skip requests
         self.session.headers.update({
             'Referer': 'https://www.cell.com/',
             'Origin': 'https://www.cell.com',

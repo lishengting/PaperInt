@@ -28,6 +28,7 @@ class ScienceParser(CNSP_Parser):
 
     def __init__(self, use_browser: bool = True):
         super().__init__('science', use_browser=use_browser)
+        self.force_cdp = True  # science.org is JS-only, skip requests
         self.session.headers.update({
             'Referer': 'https://www.science.org/',
             'Origin': 'https://www.science.org',
