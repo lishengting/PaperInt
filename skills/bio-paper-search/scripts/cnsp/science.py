@@ -119,12 +119,25 @@ class ScienceParser(CNSP_Parser):
     async def _scrape_volume_articles(self, volume_url: str, journal_name: str,
                                        start_date: date, end_date: date,
                                        browser_context) -> list[dict]:
+        """Scrape articles from a Science TOC page. Extracts titles/DOIs from
+        the rendered DOM — no per-article HTTP requests needed."""
         articles = []
         html = await self._get_page(volume_url, browser_context, timeout=60)
         if not html:
             return articles
 
         soup = BeautifulSoup(html, 'html.parser')
+
+        # Extract issue date from page meta
+        page_date = None
+        date_meta = (soup.find('meta', attrs={'name': 'citation_publication_date'})
+                     or soup.find('meta', attrs={'name': 'citation_cover_date'}))
+        if date_meta:
+            try:
+                page_date = dateparser.parse(date_meta.get('content', '')).date()
+            except Exception:
+                pass
+
         sections = soup.select('section.toc__section.mt-lg-2_5x.mt-2x')
 
         for section in sections:
@@ -137,57 +150,42 @@ class ScienceParser(CNSP_Parser):
                     article_url = urljoin('https://www.science.org', href)
                     title = link_elem.get_text(strip=True)
 
+                    if not title or len(title) < 10:
+                        continue
+
                     doi = ''
                     if '/doi/' in article_url:
                         doi = article_url.split('/doi/')[-1].split('?')[0]
 
-                    article_data = await self._fetch_article_detail(article_url, browser_context)
-                    pub_date = article_data.get('date') or end_date
-
-                    if pub_date and not self._is_date_in_range(pub_date, start_date, end_date):
-                        continue
+                    # Try to find authors in nearby elements
+                    authors = ''
+                    parent = link_elem.find_parent(['div', 'li'])
+                    if parent:
+                        for cls_pat in ['author', 'byline', 'contrib']:
+                            elems = parent.select(f'[class*="{cls_pat}"]')
+                            for e in elems:
+                                text = e.get_text(strip=True)
+                                if text and len(text) > 3:
+                                    authors = text
+                                    break
+                            if authors:
+                                break
 
                     articles.append({
                         'title': title,
                         'url': article_url,
-                        'abstract': article_data.get('abstract', ''),
-                        'date': pub_date,
+                        'abstract': '',
+                        'date': page_date,
                         'doi': doi or self._extract_doi(article_url),
                         'journal': journal_name,
-                        'authors': article_data.get('authors', ''),
+                        'authors': authors,
                     })
+
                 except Exception as e:
                     print(f"  Science article error: {clean_error(e)}", file=sys.stderr)
                     continue
 
         return articles
-
-    async def _fetch_article_detail(self, url: str, browser_context) -> dict:
-        """Fetch abstract and authors from a Science article page."""
-        html = await self._get_page(url, browser_context, timeout=30)
-        if not html:
-            return {}
-
-        soup = BeautifulSoup(html, 'html.parser')
-        abstract = ''
-        abs_elem = soup.select_one('div.section.abstract, div.abstract, div.article-section__abstract')
-        if abs_elem:
-            abstract = abs_elem.get_text(strip=True)
-
-        authors = ''
-        author_metas = soup.find_all('meta', attrs={'name': 'citation_author'})
-        if author_metas:
-            authors = '; '.join(m.get('content', '') for m in author_metas)
-
-        date_val = None
-        date_meta = soup.find('meta', attrs={'name': 'citation_online_date'})
-        if date_meta:
-            try:
-                date_val = dateparser.parse(date_meta.get('content', '')).date()
-            except Exception:
-                pass
-
-        return {'abstract': abstract, 'authors': authors, 'date': date_val}
 
     @staticmethod
     def _extract_doi(url: str) -> str:
