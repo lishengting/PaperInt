@@ -50,11 +50,12 @@ class PLOSParser(CNSP_Parser):
         journal_path = self.JOURNAL_CODE_MAP.get(journal_code, 'plosone')
 
         page = 1
-        max_pages = 3
-        while page <= max_pages:
+        while True:
             search_url = self._build_search_url(journal_code, journal_path, start_date, end_date, page)
+            print(f"  PLOS search: {search_url[:150]}", file=sys.stderr)
             page_articles = await self._scrape_search_page(search_url, journal_name, browser_context)
-            if not page_articles:
+            if len(page_articles) < 60:
+                articles.extend(page_articles)
                 break
             articles.extend(page_articles)
             page += 1
