@@ -15,21 +15,22 @@ from .base import CNSP_Parser, clean_error
 class PLOSParser(CNSP_Parser):
     """Scrape PLOS journal articles via search API. Uses CDP for JS-rendered results."""
 
-    JOURNAL_CODE_MAP = {
-        'PLOSOne': 'plosone',
-        'PLOSBiology': 'plosbiology',
-        'PLOSMedicine': 'plosmedicine',
-        'PLOSGenetics': 'plosgenetics',
-        'PLOSComputationalBiology': 'ploscompbiol',
-        'PLOSPathogens': 'plospathogens',
-        'PLOSNegTropicalDiseases': 'plosntds',
-        'PLOSDigitalHealth': 'digitalhealth',
-        'PLOSGlobalPublicHealth': 'globalpublichealth',
-        'PLOSClimate': 'climate',
-        'PLOSWater': 'water',
-        'PLOSSustainabilityTransformation': 'sustainabilitytransformation',
-        'PLOSComplexSystems': 'complexsystems',
-        'PLOSMentalHealth': 'mentalhealth',
+    # Maps journal display name → (PLOS search filter code, URL path segment)
+    JOURNAL_CONFIG = {
+        'PLOS Biology':                       ('PLoSBiology', 'plosbiology'),
+        'PLOS Climate':                       ('PLOSClimate', 'climate'),
+        'PLOS Complex Systems':               ('PLOSComplexSystems', 'complexsystems'),
+        'PLOS Computational Biology':         ('PLoSCompBiol', 'ploscompbiol'),
+        'PLOS Digital Health':                ('PLOSDigitalHealth', 'digitalhealth'),
+        'PLOS Genetics':                      ('PLoSGenetics', 'plosgenetics'),
+        'PLOS Global Public Health':          ('PLOSGlobalPublicHealth', 'globalpublichealth'),
+        'PLOS Medicine':                      ('PLoSMedicine', 'plosmedicine'),
+        'PLOS Mental Health':                 ('PLOSMentalHealth', 'mentalhealth'),
+        'PLOS Neglected Tropical Diseases':   ('PLoSNTD', 'plosntds'),
+        'PLOS One':                           ('PLoSONE', 'plosone'),
+        'PLOS Pathogens':                     ('PLoSPathogens', 'plospathogens'),
+        'PLOS Sustainability and Transformation': ('PLOSSustainabilityTransformation', 'sustainabilitytransformation'),
+        'PLOS Water':                         ('PLOSWater', 'water'),
     }
 
     def __init__(self, use_browser: bool = True):
@@ -46,12 +47,15 @@ class PLOSParser(CNSP_Parser):
         if isinstance(end_date, datetime):
             end_date = end_date.date()
 
-        journal_code = journal_name.replace(' ', '').replace('PLOS', 'PLOS')
-        journal_path = self.JOURNAL_CODE_MAP.get(journal_code, 'plosone')
+        config_entry = self.JOURNAL_CONFIG.get(journal_name)
+        if not config_entry:
+            print(f"  PLOS unknown journal: {journal_name}", file=sys.stderr)
+            return articles
+        filter_code, journal_path = config_entry
 
         page = 1
         while True:
-            search_url = self._build_search_url(journal_code, journal_path, start_date, end_date, page)
+            search_url = self._build_search_url(filter_code, journal_path, start_date, end_date, page)
             print(f"  PLOS search: {search_url[:150]}", file=sys.stderr)
             page_articles = await self._scrape_search_page(search_url, journal_name, browser_context)
             if len(page_articles) < 60:
@@ -64,11 +68,11 @@ class PLOSParser(CNSP_Parser):
         return articles
 
     @staticmethod
-    def _build_search_url(journal_code: str, journal_path: str,
+    def _build_search_url(filter_code: str, journal_path: str,
                           start_date: date, end_date: date, page: int) -> str:
         """Build PLOS search URL with date and pagination params."""
         params = (
-            f"filterJournals={journal_code}"
+            f"filterJournals={filter_code}"
             f"&filterStartDate={start_date.strftime('%Y-%m-%d')}"
             f"&filterEndDate={end_date.strftime('%Y-%m-%d')}"
             f"&resultsPerPage=60"
