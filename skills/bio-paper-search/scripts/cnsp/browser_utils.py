@@ -174,6 +174,7 @@ def _start_chrome_instance(headless):
         f'--remote-debugging-port={port}',
         f'--user-data-dir={profile}',
         '--no-first-run', '--no-default-browser-check', '--no-sandbox',
+        '--disable-blink-features=AutomationControlled',
     ]
     if headless:
         cmd.append('--headless=new')
