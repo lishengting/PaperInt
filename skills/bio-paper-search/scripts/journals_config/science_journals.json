@@ -2,17 +2,17 @@
     {
         "name": "Science",
         "link": "https://www.science.org/journal/science",
-        "enabled": true
+        "enabled": false
     },
     {
         "name": "Science Advances",
         "link": "https://www.science.org/journal/sciadv",
-        "enabled": true
+        "enabled": false
     },
     {
         "name": "Science Immunology",
         "link": "https://www.science.org/journal/sciimmunol",
-        "enabled": true
+        "enabled": false
     },
     {
         "name": "Science Robotics",
@@ -22,11 +22,11 @@
     {
         "name": "Science Signaling",
         "link": "https://www.science.org/journal/signaling",
-        "enabled": true
+        "enabled": false
     },
     {
         "name": "Science Translational Medicine",
         "link": "https://www.science.org/journal/stm",
-        "enabled": true
+        "enabled": false
     }
 ]

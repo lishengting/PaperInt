@@ -884,6 +884,18 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
             if not pdf_data and not pmc_has_pdf:
                 print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
+    elif src in ('crossref', 'europepmc'):
+        if fallback_level >= 1 and paper.get('doi'):
+            pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
+                                           fallback_level=fallback_level,
+                                           captcha_enabled=captcha_enabled,
+                                           stealth_enabled=stealth_enabled)
+        if not pdf_data:
+            pmc_id = paper.get('pmc_id')
+            if not pmc_id and paper.get('pmid'):
+                pmc_id = _pubmed_lookup_pmc(paper.get('pmid'), config)
+            if pmc_id:
+                pdf_data = _download_pmc_pdf(pmc_id, config)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
                                   stealth_enabled=stealth_enabled)

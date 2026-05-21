@@ -728,6 +728,198 @@ def pubmed_search_title(title, config, max_results=10):
 
 
 # ---------------------------------------------------------------------------
+# Crossref
+# ---------------------------------------------------------------------------
+
+def crossref_search(keywords, config, max_results=50, start_date=None, end_date=None):
+    """Search Crossref API for papers matching keywords."""
+    query = ' '.join(keywords)
+    params = {
+        'query': query,
+        'rows': str(max_results),
+        'sort': 'published',
+        'order': 'desc',
+    }
+    if start_date:
+        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        params['filter'] = f'from-pub-date:{start_date},until-pub-date:{end}'
+
+    encoded = urllib.parse.urlencode(params, doseq=True)
+    url = f"https://api.crossref.org/works?{encoded}"
+    print(f"{_ts()}   Crossref API: {url}")
+
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=3) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception as e:
+        print(f"{_ts()}   Crossref error: {e}", file=sys.stderr)
+        return [], 0
+
+    items = data.get('message', {}).get('items', [])
+    total = data.get('message', {}).get('total-results', 0)
+
+    papers = []
+    for item in items:
+        doi = (item.get('DOI') or '').strip().lower()
+        if not doi:
+            continue
+        title = (item.get('title') or [''])[0]
+        if not title:
+            continue
+
+        authors_list = item.get('author', [])
+        authors = ', '.join(
+            f"{a.get('given', '')} {a.get('family', '')}".strip()
+            for a in authors_list[:5]
+        )
+        if len(authors_list) > 5:
+            authors += ' et al.'
+
+        abstract = item.get('abstract', '') or ''
+        abstract = re.sub(r'<[^>]+>', ' ', abstract).strip()
+        abstract = re.sub(r'\s+', ' ', abstract)
+
+        date = ''
+        for date_field in ('published-print', 'published-online', 'created'):
+            date_parts = item.get(date_field, {}).get('date-parts', [[None]])[0]
+            if date_parts and date_parts[0]:
+                date = '-'.join(str(d) for d in date_parts if d)
+                break
+
+        journal = (item.get('container-title') or [''])[0]
+
+        pdf_url = ''
+        for link in item.get('link', []):
+            if link.get('content-type') == 'application/pdf':
+                pdf_url = link.get('URL', '')
+                break
+
+        abs_url = item.get('URL', '') or f"https://doi.org/{doi}"
+
+        papers.append(make_paper(
+            'crossref', doi, title, authors, abstract, date, journal,
+            pdf_url, abs_url, doi=doi,
+            extra={'journal': journal} if journal else None,
+        ))
+
+    return papers, total
+
+
+def crossref_search_title(title, config, max_results=10):
+    """Search Crossref by title."""
+    papers, total = crossref_search([title], config, max_results)
+    tw = set(title.lower().split())
+    for p in papers:
+        pw = set(p['title'].lower().split())
+        p['_score'] = len(tw & pw) / max(len(tw), 1)
+    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
+    for p in papers:
+        p.pop('_score', None)
+    return papers[:max_results], total
+
+
+# ---------------------------------------------------------------------------
+# Europe PMC
+# ---------------------------------------------------------------------------
+
+def europepmc_search(keywords, config, max_results=50, start_date=None, end_date=None):
+    """Search Europe PMC API for papers matching keywords."""
+    query_parts = []
+    for kw in keywords:
+        if ' ' in kw:
+            query_parts.append(f'"{kw}"')
+        else:
+            query_parts.append(kw)
+    query = ' AND '.join(query_parts)
+
+    if start_date:
+        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        query += f' AND FIRST_PDATE:[{start_date} TO {end}]'
+
+    params = {
+        'query': query,
+        'format': 'json',
+        'pageSize': str(max_results),
+        'resultType': 'core',
+    }
+
+    encoded = urllib.parse.urlencode(params, doseq=True)
+    url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?{encoded}"
+    print(f"{_ts()}   Europe PMC API: {url}")
+
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=3) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception as e:
+        print(f"{_ts()}   Europe PMC error: {e}", file=sys.stderr)
+        return [], 0
+
+    results = data.get('resultList', {}).get('result', [])
+    total = data.get('hitCount', 0)
+
+    papers = []
+    for r in results:
+        doi = (r.get('doi') or '').strip().lower()
+        if not doi:
+            continue
+        title = (r.get('title') or '').strip()
+        if not title:
+            continue
+
+        authors = r.get('authorString', '') or ''
+        abstract = r.get('abstractText', '') or ''
+
+        date = ''
+        for key in ('firstPublicationDate', 'electronicPublicationDate'):
+            val = r.get(key)
+            if val:
+                try:
+                    date = datetime.strptime(val[:10], '%Y-%m-%d').strftime('%Y-%m-%d')
+                    break
+                except ValueError:
+                    pass
+        if not date and r.get('pubYear'):
+            date = f"{r['pubYear']}-01-01"
+
+        journal = r.get('journalTitle', '') or ''
+        pmid = r.get('pmid')
+        pmcid = r.get('pmcid')
+
+        pdf_url = ''
+        if pmcid:
+            pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/main.pdf"
+
+        abs_url = ''
+        if pmid:
+            abs_url = f"https://europepmc.org/article/med/{pmid}"
+        elif doi:
+            abs_url = f"https://doi.org/{doi}"
+
+        papers.append(make_paper(
+            'europepmc', doi, title, authors, abstract, date, journal,
+            pdf_url, abs_url, doi=doi, pmid=pmid,
+            extra={'pmc_id': pmcid, 'journal': journal} if journal else None,
+        ))
+
+    return papers, total
+
+
+def europepmc_search_title(title, config, max_results=10):
+    """Search Europe PMC by title."""
+    papers, total = europepmc_search([title], config, max_results)
+    tw = set(title.lower().split())
+    for p in papers:
+        pw = set(p['title'].lower().split())
+        p['_score'] = len(tw & pw) / max(len(tw), 1)
+    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
+    for p in papers:
+        p.pop('_score', None)
+    return papers[:max_results], total
+
+
+# ---------------------------------------------------------------------------
 # Google Scholar
 # ---------------------------------------------------------------------------
 
@@ -876,7 +1068,7 @@ def scholar_search_title(title, config, max_results=5, chrome_port=None):
 # All-sources search
 # ---------------------------------------------------------------------------
 
-SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
+SOURCE_PRIORITY = {'pubmed': 0, 'crossref': 1, 'europepmc': 2, 'scholar': 3, 'arxiv': 4, 'medrxiv': 5, 'biorxiv': 6}
 
 
 def _paper_score(paper, kw_lower):
@@ -985,6 +1177,22 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
         print(f"{_ts()}   pubmed: error - {e}", file=sys.stderr)
 
     try:
+        papers, total = crossref_search(keywords, config, max_results=max_results * 3,
+                                          start_date=start_date, end_date=end_date)
+        all_papers.extend(papers)
+        print(f"{_ts()}   crossref: {len(papers)} results (total: {total})")
+    except Exception as e:
+        print(f"{_ts()}   crossref: error - {e}", file=sys.stderr)
+
+    try:
+        papers, total = europepmc_search(keywords, config, max_results=max_results * 3,
+                                           start_date=start_date, end_date=end_date)
+        all_papers.extend(papers)
+        print(f"{_ts()}   europepmc: {len(papers)} results (total: {total})")
+    except Exception as e:
+        print(f"{_ts()}   europepmc: error - {e}", file=sys.stderr)
+
+    try:
         papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
         all_papers.extend(papers)
         print(f"{_ts()}   scholar: {len(papers)} results")
@@ -1027,7 +1235,7 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
 # Commands
 # ---------------------------------------------------------------------------
 
-SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'cnsp', 'all']
+SOURCES = ['arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'scholar', 'crossref', 'europepmc', 'cnsp', 'all']
 
 
 def _show_results(papers):
@@ -1114,7 +1322,7 @@ def cmd_search(args, config):
 
     # Resolve date range for sources that support it
     start_date, end_date = None, None
-    if source in ('arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'cnsp', 'all'):
+    if source in ('arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'crossref', 'europepmc', 'cnsp', 'all'):
         start_date, end_date = _resolve_start_date(args, config, source)
         if start_date:
             print(f"{_ts()} Date range: {start_date} — {end_date}")
@@ -1132,6 +1340,12 @@ def cmd_search(args, config):
                                          start_date=start_date, end_date=end_date)
     elif source == 'scholar':
         papers, scanned = scholar_search(keywords, config, max_results=num)
+    elif source == 'crossref':
+        papers, scanned = crossref_search(keywords, config, max_results=num * 5,
+                                           start_date=start_date, end_date=end_date)
+    elif source == 'europepmc':
+        papers, scanned = europepmc_search(keywords, config, max_results=num * 5,
+                                            start_date=start_date, end_date=end_date)
     elif source == 'all':
         _shared_chrome_port = _get_or_start_chrome()
         papers = search_all(keywords, config, max_results=num,
@@ -1227,6 +1441,10 @@ def cmd_find(args, config):
         papers, scanned = pubmed_search_title(args.title, config, 10)
     elif source == 'scholar':
         papers, scanned = scholar_search_title(args.title, config, 5)
+    elif source == 'crossref':
+        papers, scanned = crossref_search_title(args.title, config, 10)
+    elif source == 'europepmc':
+        papers, scanned = europepmc_search_title(args.title, config, 10)
     elif source == 'all':
         global _shared_chrome_port
         _shared_chrome_port = _get_or_start_chrome()
@@ -1244,6 +1462,18 @@ def cmd_find(args, config):
                 print(f"{_ts()}   pubmed: {len(papers)} results")
             except Exception as e:
                 print(f"{_ts()}   pubmed: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = crossref_search_title(args.title, config, 10)
+                all_papers.extend(papers)
+                print(f"{_ts()}   crossref: {len(papers)} results")
+            except Exception as e:
+                print(f"{_ts()}   crossref: error - {e}", file=sys.stderr)
+            try:
+                papers, _ = europepmc_search_title(args.title, config, 10)
+                all_papers.extend(papers)
+                print(f"{_ts()}   europepmc: {len(papers)} results")
+            except Exception as e:
+                print(f"{_ts()}   europepmc: error - {e}", file=sys.stderr)
             try:
                 papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
                 all_papers.extend(papers)

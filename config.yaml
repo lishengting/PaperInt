@@ -41,11 +41,11 @@ cnsp:
     enabled: true
     request_delay_seconds: 1.5
   science:
-    enabled: true
+    enabled: false
     request_delay_seconds: 3
     use_browser: true
   cell:
-    enabled: true
+    enabled: false
     request_delay_seconds: 2
     use_browser: true
   plos:
