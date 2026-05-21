@@ -2,71 +2,85 @@
   {
     "name": "PLOS Biology",
     "link": "https://journals.plos.org/plosbiology/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Biol"
   },
   {
     "name": "PLOS Climate",
     "link": "https://journals.plos.org/climate/",
-    "enabled": false
+    "enabled": false,
+    "abbrev": "PLOS Clim"
   },
   {
     "name": "PLOS Complex Systems",
     "link": "https://journals.plos.org/complexsystems/",
-    "enabled": false
+    "enabled": false,
+    "abbrev": "PLOS Complex Syst"
   },
   {
     "name": "PLOS Computational Biology",
     "link": "https://journals.plos.org/ploscompbiol/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Comput Biol"
   },
   {
     "name": "PLOS Digital Health",
     "link": "https://journals.plos.org/digitalhealth/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLOS Digit Health"
   },
   {
     "name": "PLOS Genetics",
     "link": "https://journals.plos.org/plosgenetics/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Genet"
   },
   {
     "name": "PLOS Global Public Health",
     "link": "https://journals.plos.org/globalpublichealth/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLOS Glob Public Health"
   },
   {
     "name": "PLOS Medicine",
     "link": "https://journals.plos.org/plosmedicine/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Med"
   },
   {
     "name": "PLOS Mental Health",
     "link": "https://journals.plos.org/mentalhealth/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLOS Ment Health"
   },
   {
     "name": "PLOS Neglected Tropical Diseases",
     "link": "https://journals.plos.org/plosntds/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Negl Trop Dis"
   },
   {
     "name": "PLOS One",
     "link": "https://journals.plos.org/plosone/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS One"
   },
   {
     "name": "PLOS Pathogens",
     "link": "https://journals.plos.org/plospathogens/",
-    "enabled": true
+    "enabled": true,
+    "abbrev": "PLoS Pathog"
   },
   {
     "name": "PLOS Sustainability and Transformation",
     "link": "https://journals.plos.org/sustainabilitytransformation/",
-    "enabled": false
+    "enabled": false,
+    "abbrev": "PLOS Sustain Transform"
   },
   {
     "name": "PLOS Water",
     "link": "https://journals.plos.org/water/",
-    "enabled": false
+    "enabled": false,
+    "abbrev": "PLOS Water"
   }
 ]

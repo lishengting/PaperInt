@@ -2,31 +2,37 @@
     {
         "name": "Science",
         "link": "https://www.science.org/journal/science",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Science"
     },
     {
         "name": "Science Advances",
         "link": "https://www.science.org/journal/sciadv",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Sci Adv"
     },
     {
         "name": "Science Immunology",
         "link": "https://www.science.org/journal/sciimmunol",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Sci Immunol"
     },
     {
         "name": "Science Robotics",
         "link": "https://www.science.org/journal/scirobotics",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Sci Robot"
     },
     {
         "name": "Science Signaling",
         "link": "https://www.science.org/journal/signaling",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Sci Signal"
     },
     {
         "name": "Science Translational Medicine",
         "link": "https://www.science.org/journal/stm",
-        "enabled": false
+        "enabled": false,
+        "abbrev": "Sci Transl Med"
     }
 ]
