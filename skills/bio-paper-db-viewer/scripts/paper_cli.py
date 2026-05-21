@@ -146,8 +146,13 @@ def cmd_list(args, config):
                 continue
             for j in json.load(open(jpath)):
                 name = (j.get('name', '') or '').replace(' (partner)', '')
-                if name:
-                    journal_map[name.lower()] = letter.upper() if name in flagships else letter
+                if not name:
+                    continue
+                code = letter.upper() if name in flagships else letter
+                journal_map[name.lower()] = code
+                abbrev = j.get('abbrev', '')
+                if abbrev:
+                    journal_map[abbrev.lower()] = code
         return journal_map
 
     cnsp_map = _load_cnsp_map()
@@ -155,7 +160,8 @@ def cmd_list(args, config):
     def _get_cnsp(journal_name):
         if not journal_name:
             return ''
-        return cnsp_map.get(journal_name.lower(), '')
+        key = journal_name.lower().replace('&amp;', '&')
+        return cnsp_map.get(key, '')
 
     # If --cnsp flag, load all matching rows and post-filter
     if args.cnsp:
