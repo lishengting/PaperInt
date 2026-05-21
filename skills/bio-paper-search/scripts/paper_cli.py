@@ -114,6 +114,60 @@ def tout(config):
     return cfg(config, 'download.timeout_seconds', 60)
 
 
+# ---------------------------------------------------------------------------
+# CNSP journal abbreviation lookup (loaded lazily)
+# ---------------------------------------------------------------------------
+
+_JOURNAL_ABBREV_MAP: dict[str, str] | None = None
+
+def _cnsp_abbrev_map() -> dict[str, str]:
+    """Return {journal_name_lower: nlm_abbrev} for all CNSP journals.
+
+    Maps both full names (e.g., 'nature communications') and NLM abbreviations
+    (e.g., 'nat commun') to the canonical NLM abbreviation.  Handles &/and
+    variants.  Loaded once and cached.
+    """
+    global _JOURNAL_ABBREV_MAP
+    if _JOURNAL_ABBREV_MAP is not None:
+        return _JOURNAL_ABBREV_MAP
+
+    import json as _json
+    from pathlib import Path as _Path
+
+    m: dict[str, str] = {}
+    config_dir = _Path(__file__).resolve().parent / 'journals_config'
+    for fname in ['nature_journals.json', 'science_journals.json',
+                  'cell_journals.json', 'plos_journals.json']:
+        fp = config_dir / fname
+        if not fp.is_file():
+            continue
+        for j in _json.loads(fp.read_text()):
+            name = j['name']
+            abbrev = j.get('abbrev', '')
+            if not abbrev:
+                continue
+            clean = name.replace(' (partner)', '')
+            for variant in {clean, name, clean.replace('&', 'and'), clean.replace('&', '&amp;')}:
+                m[variant.lower()] = abbrev
+            m[abbrev.lower()] = abbrev
+
+    _JOURNAL_ABBREV_MAP = m
+    return m
+
+
+def _add_abbrev_to_paper(paper: dict) -> dict:
+    """If the paper's journal matches a CNSP journal, add its NLM abbrev."""
+    journal = (paper.get('journal', '') or '').strip()
+    category = (paper.get('category', '') or '').strip()
+    candidate = journal or (category.split('/', 1)[1].strip() if '/' in category else '')
+    if not candidate:
+        return paper
+    abbrev = _cnsp_abbrev_map().get(candidate.lower())
+    if abbrev:
+        paper['abbrev'] = abbrev
+    return paper
+
+
 def delay(config):
     return cfg(config, 'download.request_delay_seconds', 3)
 
@@ -803,6 +857,7 @@ def crossref_search(keywords, config, max_results=50, start_date=None, end_date=
             pdf_url, abs_url, doi=doi,
             extra={'journal': journal} if journal else None,
         ))
+        _add_abbrev_to_paper(papers[-1])
 
     return papers, total
 
@@ -843,7 +898,7 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
         'query': query,
         'format': 'json',
         'pageSize': str(max_results),
-        'resultType': 'core',
+        'resultType': 'lite',
     }
 
     encoded = urllib.parse.urlencode(params, doseq=True)
@@ -904,6 +959,7 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
             pdf_url, abs_url, doi=doi, pmid=pmid,
             extra={'pmc_id': pmcid, 'journal': journal} if journal else None,
         ))
+        _add_abbrev_to_paper(papers[-1])
 
     return papers, total
 
