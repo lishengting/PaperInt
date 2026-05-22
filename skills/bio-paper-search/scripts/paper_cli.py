@@ -793,6 +793,15 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
             elif aid.get('idtype') == 'doi':
                 doi = aid.get('value')
 
+        # If articleids has no DOI, try extracting from elocationid
+        # (which may contain "pii: S1234. doi: 10.xxx/yyy" or just "doi: 10.xxx/yyy")
+        if not doi:
+            eloc = info.get('elocationid', '')
+            if eloc:
+                m = re.search(r'10\.\d{4,}/[^\s]+', eloc)
+                if m:
+                    doi = m.group(0)
+
         pdf_url = ''
         if pmc_id:
             pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
@@ -805,8 +814,7 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
             info.get('pubdate', ''), '',
             pdf_url, abs_url, pmid=pmid,
             extra={'pmc_id': pmc_id, 'journal': info.get('source', ''),
-                   'issn': issns,
-                   'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else doi}))
+                   'issn': issns, 'doi': doi}))
 
     return papers, total
 

@@ -368,6 +368,23 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _normalize_doi(doi: str) -> str | None:
+    """Extract a valid DOI (10.xxx/yyy pattern) from a possibly-malformed string.
+
+    PubMed sometimes returns elocationid values like
+    ``pii: S1234. 10.1016/j.cell.2024.01.001`` where the real DOI is embedded.
+    Returns the extracted DOI or None if no DOI-like pattern is found.
+    """
+    if not doi:
+        return None
+    doi = doi.strip()
+    if doi.startswith('10.'):
+        return doi
+    import re
+    m = re.search(r'10\.\d{4,}/[^\s]+', doi)
+    return m.group(0) if m else doi
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict:
     """Convert a sqlite3.Row to a plain dict, parsing metadata_json."""
     d = dict(row)
@@ -379,6 +396,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
             d.update(meta)
         except json.JSONDecodeError:
             pass
+    # Normalize DOI — fix malformed PII-prefixed values from PubMed search
+    if d.get('doi'):
+        d['doi'] = _normalize_doi(d['doi'])
     if d.get('relevance'):
         try:
             d['relevance'] = json.loads(d['relevance'])
