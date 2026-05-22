@@ -173,6 +173,33 @@ def delay(config):
 
 
 # ---------------------------------------------------------------------------
+# DOI → journal name resolver (lazily cached)
+# ---------------------------------------------------------------------------
+
+_JOURNAL_CACHE: dict[str, str] = {}
+
+def _resolve_journal_by_doi(doi: str, config) -> str:
+    """Look up a DOI via Crossref API and return the journal (container-title)."""
+    if not doi:
+        return ''
+    cached = _JOURNAL_CACHE.get(doi)
+    if cached is not None:
+        return cached
+
+    url = f'https://api.crossref.org/works/{urllib.parse.quote(doi, safe="")}'
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
+            data = json.loads(r.read().decode('utf-8'))
+        journal = (data.get('message', {}).get('container-title') or [''])[0]
+    except Exception:
+        journal = ''
+
+    _JOURNAL_CACHE[doi] = journal
+    return journal
+
+
+# ---------------------------------------------------------------------------
 # Common paper normalizer
 # ---------------------------------------------------------------------------
 
@@ -478,9 +505,15 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
             combined = f"{title} {abstract}"
             if any(kw in combined for kw in kw_lower):
                 doi = p.get('doi', '')
+                published_doi = p.get('published', '')
+                journal = ''
+                if published_doi:
+                    journal = _resolve_journal_by_doi(published_doi.strip(), config)
+                if not journal:
+                    journal = p.get('category', '') or server
                 all_papers.append(make_paper(
                     server, doi, p.get('title', ''), p.get('authors', ''),
-                    p.get('abstract', ''), p.get('date', ''), p.get('category', ''),
+                    p.get('abstract', ''), p.get('date', ''), journal,
                     f"https://www.{server}.org/content/{doi}.full.pdf",
                     f"https://www.{server}.org/content/{doi}",
                     doi=doi))
@@ -1213,6 +1246,8 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
     try:
         papers, _ = preprint_search(keywords, config, 'biorxiv', max_results=max_results * 3,
                                      start_date=start_date, end_date=end_date)
+        for p in papers:
+            _add_abbrev_to_paper(p)
         all_papers.extend(papers)
         print(f"{_ts()}   biorxiv: {len(papers)} results")
     except Exception as e:
@@ -1221,6 +1256,8 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
     try:
         papers, _ = preprint_search(keywords, config, 'medrxiv', max_results=max_results * 3,
                                      start_date=start_date, end_date=end_date)
+        for p in papers:
+            _add_abbrev_to_paper(p)
         all_papers.extend(papers)
         print(f"{_ts()}   medrxiv: {len(papers)} results")
     except Exception as e:
@@ -1393,6 +1430,8 @@ def cmd_search(args, config):
         papers, scanned = preprint_search(keywords, config, source,
                                           max_results=num * 5,
                                           start_date=start_date, end_date=end_date)
+        for p in papers:
+            _add_abbrev_to_paper(p)
     elif source == 'pubmed':
         papers, scanned = pubmed_search(keywords, config, max_results=num * 5,
                                          start_date=start_date, end_date=end_date)
