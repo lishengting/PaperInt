@@ -473,26 +473,32 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 
             # Step 3: fetch PDF bytes — try JS fetch from article page first
-            # (valid session + referrer), fall back to navigation approaches
+            # (valid session + referrer), fall back to navigation + download capture
             print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
+
+            fetch_js = """
+                async ([url]) => {
+                    try {
+                        const r = await fetch(url, {credentials: 'include'});
+                        if (!r.ok) return {error: 'HTTP ' + r.status};
+                        const blob = await r.blob();
+                        return new Promise(resolve => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
+                            reader.onerror = () => resolve({error: 'FileReader failed'});
+                            reader.readAsDataURL(blob);
+                        });
+                    } catch (e) {
+                        return {error: e.message || 'fetch failed'};
+                    }
+                }
+            """
 
             pdf_bytes = None
 
             # Primary: JS fetch from current page context (no navigation needed
             # for same-domain PDFs; preserves article page session/referrer)
-            js_result = await page.evaluate("""
-                async ([url]) => {
-                    const r = await fetch(url, {credentials: 'include'});
-                    if (!r.ok) return {error: 'HTTP ' + r.status};
-                    const blob = await r.blob();
-                    return new Promise(resolve => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
-                        reader.onerror = () => resolve({error: 'FileReader failed'});
-                        reader.readAsDataURL(blob);
-                    });
-                }
-            """, [pdf_url])
+            js_result = await page.evaluate(fetch_js, [pdf_url])
 
             if not isinstance(js_result, dict) or 'error' not in js_result:
                 pdf_bytes = base64.b64decode(js_result['data'])
@@ -505,7 +511,6 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                                     timeout=timeout * 1000)
                     await asyncio.sleep(wait)
                 except Exception:
-                    # "Download is starting" or timeout
                     pass
 
                 if goto_response is not None:
@@ -516,27 +521,37 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     except Exception:
                         pass
 
-                # Last resort: JS fetch from PDF page after navigation
+                # Fallback: JS fetch from PDF page after navigation
                 if pdf_bytes is None:
-                    js_result = await page.evaluate("""
-                        async ([url]) => {
-                            const r = await fetch(url, {credentials: 'include'});
-                            if (!r.ok) return {error: 'HTTP ' + r.status};
-                            const blob = await r.blob();
-                            return new Promise(resolve => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
-                                reader.onerror = () => resolve({error: 'FileReader failed'});
-                                reader.readAsDataURL(blob);
-                            });
-                        }
-                    """, [pdf_url])
+                    try:
+                        js_result = await page.evaluate(fetch_js, [pdf_url])
+                        if not isinstance(js_result, dict) or 'error' not in js_result:
+                            pdf_bytes = base64.b64decode(js_result['data'])
+                    except Exception:
+                        pass
 
-                    if isinstance(js_result, dict) and 'error' in js_result:
-                        result['message'] = f"PDF fetch failed: {js_result['error']}"
-                        return result
-
-                    pdf_bytes = base64.b64decode(js_result['data'])
+            # Last resort: trigger browser download and capture it
+            # (handles Content-Disposition:attachment where page cannot load the PDF)
+            if pdf_bytes is None:
+                try:
+                    async with page.expect_download(timeout=timeout * 1000) as dl_info:
+                        await page.evaluate("([url]) => {
+                            const a = document.createElement('a');
+                            a.href = url; a.download = ''; a.target = '_blank';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                        }", [pdf_url])
+                    download = await dl_info.value
+                    tmp_path = str(output_path) + '.tmpdl'
+                    await download.save_as(tmp_path)
+                    with open(tmp_path, 'rb') as f:
+                        body = f.read()
+                    os.unlink(tmp_path)
+                    if len(body) >= 10000 and body[:5] == b'%PDF-':
+                        pdf_bytes = body
+                except Exception:
+                    pass
 
             if len(pdf_bytes) < 10000:
                 result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
