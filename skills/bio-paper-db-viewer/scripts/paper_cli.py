@@ -354,6 +354,36 @@ def cmd_delete(args, config):
 
 
 # ---------------------------------------------------------------------------
+# set-status
+# ---------------------------------------------------------------------------
+
+VALID_STATUSES = {'searched', 'downloaded', 'download_failed', 'interpreted',
+                  'interpret_failed', 'skipped'}
+
+
+def cmd_set_status(args, config):
+    conn = get_conn(config)
+    updated = 0
+    not_found = 0
+    for pid in args.paper_id:
+        paper = get_paper(conn, pid)
+        if not paper:
+            print(f"Not found: {pid}", file=sys.stderr)
+            not_found += 1
+            continue
+        old_status = paper['status']
+        conn.execute(
+            "UPDATE papers SET status = ?, updated_at = datetime('now') WHERE paper_id = ?",
+            (args.status, pid))
+        conn.commit()
+        title = (paper.get('title') or '')[:60]
+        print(f"{pid}  {old_status} -> {args.status}  {title}")
+        updated += 1
+    print(f"\n{updated} updated" + (f", {not_found} not found" if not_found else ""))
+    return 0 if not_found == 0 else 1
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -423,6 +453,14 @@ def main():
     dp.add_argument('-p', '--paper-id', required=True,
                     help='Paper ID to delete')
 
+    # ---- set-status ----
+    ssp = sub.add_parser('set-status', help='Set status for one or more papers',
+                         description='Change the status of one or more papers by ID.')
+    ssp.add_argument('-p', '--paper-id', required=True, nargs='+',
+                     help='Paper ID(s) to update')
+    ssp.add_argument('-s', '--status', required=True, choices=sorted(VALID_STATUSES),
+                     help='Target status')
+
     # ---- show ----
     sp = sub.add_parser('show', help='Show full details for a paper',
                         description='Display all available fields for a single paper by its ID.')
@@ -442,6 +480,8 @@ def main():
         return cmd_show(args, config)
     elif args.cmd == 'delete':
         return cmd_delete(args, config)
+    elif args.cmd == 'set-status':
+        return cmd_set_status(args, config)
     return 1
 
 
