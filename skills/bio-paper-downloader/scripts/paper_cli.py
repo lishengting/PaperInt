@@ -338,7 +338,7 @@ def download_arxiv(arxiv_id, config):
     try:
         with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
-            return data if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) else None
+            return data if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) and data[:5] == b'%PDF-' else None
     except Exception as e:
         print(f"    download error: {e}", file=sys.stderr)
         return None
@@ -362,7 +362,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
             req = urllib.request.Request(url, headers=headers)
             with _urlopen_with_retry(req, config, attempts=2) as r:
                 data = r.read()
-                if data.startswith(b'%PDF') or (server == 'medrxiv' and len(data) > 10000):
+                if data.startswith(b'%PDF'):
                     return data
         except Exception:
             pass
@@ -652,6 +652,25 @@ def _is_pdf(data: bytes) -> bool:
     return data[:5] == b'%PDF-'
 
 
+def _validate_pdf(data: bytes) -> bool:
+    """Validate PDF bytes by opening with PyMuPDF. Returns True if valid."""
+    if data[:5] != b'%PDF-':
+        return False
+    try:
+        import fitz
+        doc = fitz.open(stream=data, filetype='pdf')
+        # Reject HTML rendered as PDF (format='HTML5' from fitz)
+        fmt = (doc.metadata or {}).get('format', '')
+        if fmt == 'HTML5':
+            doc.close()
+            return False
+        ok = doc.page_count > 0
+        doc.close()
+        return ok
+    except Exception:
+        return False
+
+
 def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False,
                          stealth_enabled=False):
     if not pdf_url:
@@ -937,6 +956,11 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
                                   stealth_enabled=stealth_enabled)
 
+    # Validate PDF before accepting (catch corrupt/truncated files early)
+    if pdf_data and not _validate_pdf(pdf_data):
+        print(f"  [warn] downloaded data is not a valid PDF, discarding", file=sys.stderr)
+        pdf_data = None
+
     # Fallback: try alternative sources
     if not pdf_data and paper.get('_alt_sources'):
         alts = sorted(paper['_alt_sources'],
@@ -970,8 +994,12 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                     if pmc_id:
                         pdf_data = _download_pmc_pdf(pmc_id, config)
             if pdf_data:
-                print(f"  Fallback OK from {alt_src}", file=sys.stderr)
-                break
+                if _validate_pdf(pdf_data):
+                    print(f"  Fallback OK from {alt_src}", file=sys.stderr)
+                    break
+                else:
+                    print(f"  [warn] fallback {alt_src} returned invalid PDF, discarding", file=sys.stderr)
+                    pdf_data = None
             time.sleep(2)
 
     if pdf_data:

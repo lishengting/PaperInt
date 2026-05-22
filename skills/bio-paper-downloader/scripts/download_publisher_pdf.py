@@ -508,7 +508,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             pdf_bytes = base64.b64decode(js_result['data'])
 
-            if len(pdf_bytes) < 10000:
+            if len(pdf_bytes) < 10000 or not pdf_bytes[:5] == b'%PDF-':
                 result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
                 result['file_size'] = len(pdf_bytes)
                 return result
