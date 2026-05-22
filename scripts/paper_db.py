@@ -396,16 +396,18 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 # CNSP journal filter
 # ---------------------------------------------------------------------------
 
-def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> set:
-    """Load all CNSP journal names (lowercase) from journals_config/*.json.
+def _load_journal_data(config: dict, config_path: str, keys: list) -> dict:
+    """Load journal names, abbreviations, and ISSNs from journals_config/*.json.
 
-    Resolves relative paths against the directory of config_path.
-    Returns a set of lowercase journal names.
+    Returns a dict with 'names' (lowercase full names), 'abbrevs' (lowercase),
+    and 'issns' (both hyphenated and un-hyphenated forms).
     """
     cnsp_cfg = config.get('cnsp', {})
     names: set = set()
+    abbrevs: set = set()
+    issns: set = set()
     config_dir = os.path.dirname(os.path.abspath(config_path))
-    for key in ('nature_journals', 'science_journals', 'cell_journals', 'plos_journals'):
+    for key in keys:
         rel = cnsp_cfg.get(key, '')
         if not rel:
             continue
@@ -416,43 +418,66 @@ def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> set
             name = (j.get('name', '') or '').replace(' (partner)', '')
             if name:
                 names.add(name.lower())
-    return names
+            abbrev = (j.get('abbrev', '') or '').strip()
+            if abbrev:
+                abbrevs.add(abbrev.lower())
+            for issn_key in ('issn_print', 'issn_electronic'):
+                issn = (j.get(issn_key, '') or '').strip()
+                if issn:
+                    issns.add(issn)
+                    issns.add(issn.replace('-', ''))
+    return {'names': names, 'abbrevs': abbrevs, 'issns': issns}
 
 
-def load_cns_journal_set(config: dict, config_path: str = 'config.yaml') -> set:
-    """Load CNS journal names (lowercase) from journals_config/*.json, excluding PLOS.
+def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> dict:
+    """Load all CNSP journal identifiers (names, abbrevs, ISSNs).
 
-    Resolves relative paths against the directory of config_path.
-    Returns a set of lowercase journal names.
+    Returns a dict with 'names', 'abbrevs', 'issns' sets.
     """
-    cnsp_cfg = config.get('cnsp', {})
-    names: set = set()
-    config_dir = os.path.dirname(os.path.abspath(config_path))
-    for key in ('nature_journals', 'science_journals', 'cell_journals'):
-        rel = cnsp_cfg.get(key, '')
-        if not rel:
-            continue
-        jpath = rel if os.path.isabs(rel) else os.path.join(config_dir, rel)
-        if not os.path.exists(jpath):
-            continue
-        for j in json.load(open(jpath)):
-            name = (j.get('name', '') or '').replace(' (partner)', '')
-            if name:
-                names.add(name.lower())
-    return names
+    return _load_journal_data(config, config_path,
+                              ['nature_journals', 'science_journals',
+                               'cell_journals', 'plos_journals'])
 
 
-def filter_cnsp_papers(papers: list, cnsp_names: set) -> list:
-    """Filter papers to only those whose journal (from metadata_json) is in cnsp_names."""
+def load_cns_journal_set(config: dict, config_path: str = 'config.yaml') -> dict:
+    """Load CNS journal identifiers (names, abbrevs, ISSNs), excluding PLOS.
+
+    Returns a dict with 'names', 'abbrevs', 'issns' sets.
+    """
+    return _load_journal_data(config, config_path,
+                              ['nature_journals', 'science_journals',
+                               'cell_journals'])
+
+
+def filter_cnsp_papers(papers: list, cnsp_data: dict) -> list:
+    """Filter papers to only those matching CNSP journal identifiers.
+
+    Matches by ISSN first (unambiguous), then full journal name, then
+    abbreviation (to handle PubMed NLM abbreviations like 'Nat Commun').
+    """
+    names = cnsp_data.get('names', set())
+    abbrevs = cnsp_data.get('abbrevs', set())
+    issns = cnsp_data.get('issns', set())
     result = []
     for p in papers:
         meta = p.get('metadata_json')
         if not meta:
             continue
         try:
-            journal = (json.loads(meta) if isinstance(meta, str) else meta).get('journal', '') or ''
+            data = json.loads(meta) if isinstance(meta, str) else meta
         except (json.JSONDecodeError, TypeError):
             continue
-        if journal.lower() in cnsp_names:
+        # ISSN match (check both hyphenated and plain forms)
+        issn = (data.get('issn', '') or '').strip()
+        if issn and (issn in issns or issn.replace('-', '') in issns):
+            result.append(p)
+            continue
+        # Journal name match
+        journal = (data.get('journal', '') or '').lower()
+        if journal and journal in names:
+            result.append(p)
+            continue
+        # Abbreviation match (NLM style, e.g. 'Nat Commun')
+        if journal and journal in abbrevs:
             result.append(p)
     return result
