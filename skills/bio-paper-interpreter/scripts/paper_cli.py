@@ -119,6 +119,89 @@ def _call_llm(config, system_prompt, user_prompt):
     return resp_data['choices'][0]['message']['content']
 
 
+def _validate_pdf_content_llm(config, pdf_text, paper):
+    """Use LLM to check whether extracted PDF content matches the paper's title and abstract.
+
+    Returns (passed: bool, confidence: float, reason: str).
+    """
+    title = (paper.get('title') or '').strip()
+    abstract = (paper.get('abstract') or '').strip()
+    if not title and not abstract:
+        return True, 1.0, 'no title or abstract to validate'
+    if not pdf_text or len(pdf_text.strip()) < 200:
+        return True, 1.0, 'PDF text too short to validate'
+
+    header_chars = cfg(config, 'interpreter.pdf_content_validation.header_chars', 4000)
+    pdf_sample = pdf_text[:header_chars]
+
+    system_prompt = (
+        "You are a research paper validator. Your task is to determine whether "
+        "a given PDF content snippet matches the expected paper (by title and abstract)."
+    )
+
+    formatted_title = title if title else '(not available)'
+    formatted_abstract = abstract[:1500] if abstract else '(not available)'
+
+    user_prompt = (
+        "I will give you:\n"
+        "1. The expected paper title and abstract\n"
+        "2. The first portion of text extracted from a downloaded PDF\n\n"
+        "Determine whether the PDF content is the actual paper described by the "
+        "title and abstract, or something else (e.g., Supplementary Materials, "
+        "a different paper, a publisher error page, etc.).\n\n"
+        "Consider:\n"
+        "- Does the PDF text mention the same research topic?\n"
+        "- Does the title or key terms from the title/abstract appear in the PDF?\n"
+        "- Does the PDF look like a full research article, or supplementary content?\n\n"
+        f"=== EXPECTED PAPER ===\n"
+        f"Title: {formatted_title}\n"
+        f"Abstract: {formatted_abstract}\n\n"
+        f"=== PDF CONTENT (first {len(pdf_sample)} chars) ===\n"
+        f"{pdf_sample}\n\n"
+        "Respond with ONLY a JSON object (no markdown, no code fences):\n"
+        '{"match": true/false, "confidence": 0.0-1.0, "reason": "brief explanation in English"}'
+    )
+
+    api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
+    model = cfg(config, 'llm.model', 'deepseek-v4-pro')
+    api_key_cfg = cfg(config, 'llm.api_key_env', 'LLM_API_KEY')
+    api_key = os.environ.get(api_key_cfg, '')
+    if not api_key:
+        if api_key_cfg and ' ' not in api_key_cfg and len(api_key_cfg) > 20:
+            api_key = api_key_cfg
+
+    body = json.dumps({
+        'model': model,
+        'temperature': 0,
+        'max_tokens': 256,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ],
+    }).encode('utf-8')
+
+    url = f"{api_base.rstrip('/')}/chat/completions"
+    req = urllib.request.Request(url, data=body, headers={
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    })
+
+    ts_print("  Validating PDF content via LLM...")
+    resp = urllib.request.urlopen(req, timeout=cfg(config, 'interpreter.pdf_content_validation.timeout', 60))
+    resp_data = json.loads(resp.read().decode('utf-8'))
+    content = resp_data['choices'][0]['message']['content'].strip()
+
+    # Parse JSON from response (strip code fences if present)
+    content = re.sub(r'^```(?:json)?\s*', '', content)
+    content = re.sub(r'\s*```$', '', content)
+    result = json.loads(content)
+
+    match = result.get('match', False)
+    confidence = float(result.get('confidence', 0.5))
+    reason = result.get('reason', 'no reason provided')
+    return match, confidence, reason
+
+
 def run_phase1(paper_path, paper, config, log_file):
     """Assign topic tags to paper. Always passes — keywords are for search only."""
     paper_id = paper['paper_id']
@@ -199,6 +282,19 @@ def run_phase2(paper_path, paper, config, log_file):
         mark_interpret_failed(get_conn(config), paper_id,
                               f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
         return False
+
+    # Validate PDF content matches paper via LLM (catch Supplementary Materials etc.)
+    validation_enabled = cfg(config, 'interpreter.pdf_content_validation.enabled', True)
+    if validation_enabled:
+        try:
+            passed, confidence, reason = _validate_pdf_content_llm(config, pdf_text, paper)
+            if not passed:
+                log_phase(log_file, paper_id, 2, 'FAILED', reason)
+                mark_interpret_failed(get_conn(config), paper_id, reason)
+                return False
+            ts_print(f"  PDF validation: {reason}")
+        except Exception as e:
+            ts_print(f"  PDF validation error (proceeding anyway): {e}", file=sys.stderr)
 
     mode = 'full_text'
     ts_print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")

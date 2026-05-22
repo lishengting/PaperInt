@@ -221,6 +221,14 @@ autofigure:
   methodology_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   enhancement_model: "qwen-image-2.0-pro"
 
+# --- Interpreter Configuration ---
+interpreter:
+  pdf_extract_timeouts: [120, 240, 240]
+  pdf_content_validation:
+    enabled: true
+    header_chars: 4000
+    timeout: 60
+
 # --- Database ---
 db:
   path: "data/papers.db"
