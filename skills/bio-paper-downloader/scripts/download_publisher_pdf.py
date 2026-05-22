@@ -210,12 +210,13 @@ class ChromeInstance:
 
         args.append('about:blank')
         self.process = subprocess.Popen(
-            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             preexec_fn=os.setsid, env=env)
         time.sleep(2)
         # Verify Chrome is alive — if it crashed, poll() will be non-None
         if self.process.poll() is not None:
-            raise RuntimeError(f'Chrome exited immediately (code {self.process.returncode})')
+            stderr = self.process.stderr.read().decode('utf-8', errors='replace')
+            raise RuntimeError(f'Chrome exited immediately (code {self.process.returncode}): {stderr}')
 
     @property
     def cdp_url(self):
