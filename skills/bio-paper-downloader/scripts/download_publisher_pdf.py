@@ -271,18 +271,41 @@ def _pick_chrome():
 # ---------------------------------------------------------------------------
 
 def doi_from_pmid(pmid):
-    """Look up DOI for a PubMed ID via E-utilities."""
+    """Look up DOI for a PubMed ID via E-utilities.
+
+    Tries three sources in order:
+    1. ``doi`` field (present for most PMIDs)
+    2. ``articleids`` list — look for ``idtype: doi`` (reliable)
+    3. ``elocationid`` field — extract ``doi: 10.xxx/yyy`` (fallback
+       for papers where the publisher hasn't registered the DOI in the
+       articleids list yet)
+    """
     url = ('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi'
            f'?db=pubmed&id={pmid}&retmode=json')
     try:
         req = urllib.request.Request(url, headers={
             'User-Agent': 'PaperInt/1.0 (mailto:example@example.com)'})
-        import json
+        import json, re
         with urllib.request.urlopen(req, timeout=15) as r:
             data = json.loads(r.read())
             result = data.get('result', {}).get(str(pmid), {})
+            # 1. Direct doi field
             dois = result.get('doi', '')
-            return dois if dois else None
+            if dois:
+                m = re.search(r'10\.\d{4,}/[^\s]+', dois)
+                if m:
+                    return m.group(0)
+            # 2. articleids list (most reliable)
+            for aid in result.get('articleids', []) or []:
+                if aid.get('idtype') == 'doi':
+                    return aid['value']
+            # 3. elocationid (may contain pii: + doi:)
+            eloc = result.get('elocationid', '')
+            if eloc:
+                m = re.search(r'10\.\d{4,}/[^\s]+', eloc)
+                if m:
+                    return m.group(0)
+            return None
     except Exception:
         return None
 
