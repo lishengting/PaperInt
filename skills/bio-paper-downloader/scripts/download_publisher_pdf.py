@@ -491,12 +491,13 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             # Primary: use the navigation response body directly
             if goto_response is not None:
                 try:
-                    pdf_bytes = await goto_response.body()
+                    body = await goto_response.body()
+                    if len(body) >= 10000 and body[:5] == b'%PDF-':
+                        pdf_bytes = body
                 except Exception:
                     pass
 
-            # Fallback: JS fetch() from page context (needed when goto throws
-            # due to Content-Disposition:attachment triggering a download dialog)
+            # Fallback: JS fetch() from page context
             if pdf_bytes is None:
                 js_result = await page.evaluate("""
                     async ([url]) => {
