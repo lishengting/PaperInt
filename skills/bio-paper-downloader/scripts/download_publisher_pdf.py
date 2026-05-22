@@ -513,7 +513,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 result['file_size'] = len(pdf_bytes)
                 return result
             if pdf_bytes[:5] != b'%PDF-':
-                preview = pdf_bytes[:200].decode('latin-1', errors='replace').strip()
+                preview = pdf_bytes[:200].decode('latin-1', errors='replace')
+                preview = ' '.join(preview.split())
                 result['message'] = f'Not a valid PDF ({len(pdf_bytes)} bytes, starts with: {preview})'
                 result['file_size'] = len(pdf_bytes)
                 return result
