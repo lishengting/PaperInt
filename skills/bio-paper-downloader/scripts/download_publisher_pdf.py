@@ -182,6 +182,14 @@ class ChromeInstance:
         # Clean up orphan Chrome/Xvfb from previous crashed runs
         _cleanup_orphan_chrome_and_xvfb()
 
+        # Remove stale SingletonLock left by a crashed Chrome process
+        lock_file = os.path.join(self.profile_dir, 'SingletonLock')
+        if os.path.exists(lock_file):
+            try:
+                os.remove(lock_file)
+            except OSError:
+                pass
+
         subprocess.run(['pkill', '-f', f'remote-debugging-port={self.port}'],
                        capture_output=True)
         time.sleep(1)
