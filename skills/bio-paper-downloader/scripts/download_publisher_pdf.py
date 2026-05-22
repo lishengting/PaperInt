@@ -443,8 +443,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     const isPdf = href.includes('.pdf') ||
                         href.endsWith('.pdf') ||
                         href.includes('showPdf') ||
-                        href.includes('pdfft') ||
-                        href.includes('/pdf/') ||
+                        href.includes('/pdf') ||
                         href.includes('download') ||
                         text.includes('pdf') || text.includes('download');
                     // Exclude citation/reference export links
