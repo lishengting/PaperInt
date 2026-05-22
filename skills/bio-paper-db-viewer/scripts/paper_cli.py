@@ -130,6 +130,15 @@ def cmd_list(args, config):
         except Exception:
             return ''
 
+    def _get_issn(metadata_json):
+        if not metadata_json:
+            return ''
+        try:
+            meta = json.loads(metadata_json)
+            return meta.get('issn', '') or ''
+        except Exception:
+            return ''
+
     # ---- CNSP helpers ----
     def _load_cnsp_map():
         cnsp_cfg = config.get('cnsp', {})
@@ -201,9 +210,10 @@ def cmd_list(args, config):
     date_w = 19
     cnsp_w = 4
     j_w = 20
+    issn_w = 10
 
-    header = f"{'DOI':<{doi_w}} {'Paper ID':<{id_w}} {'Title':<50} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}}"
-    sep = f"{'─' * doi_w} {'─' * id_w} {'─' * 50} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w}"
+    header = f"{'DOI':<{doi_w}} {'Paper ID':<{id_w}} {'Title':<50} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}} {'ISSN':<{issn_w}}"
+    sep = f"{'─' * doi_w} {'─' * id_w} {'─' * 50} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w} {'─' * issn_w}"
     print(header)
     print(sep)
 
@@ -228,8 +238,11 @@ def cmd_list(args, config):
         cnsp = _get_cnsp(journal)
         if len(journal) > j_w:
             journal = journal[:j_w - 2] + '..'
+        issn = _get_issn(r['metadata_json'])
+        if len(issn) > issn_w:
+            issn = issn[:issn_w]
 
-        print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}}")
+        print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}} {issn:<{issn_w}}")
 
     showing = min(args.limit, len(rows))
     after = args.offset + showing
@@ -264,6 +277,7 @@ def cmd_show(args, config):
         ('pmid', 'PMID'),
         ('arxiv_id', 'arXiv ID'),
         ('source', 'Source'),
+        ('issn', 'ISSN'),
         ('source_url', 'Source URL'),
         ('pdf_url', 'PDF URL'),
         ('dir_name', 'Directory'),

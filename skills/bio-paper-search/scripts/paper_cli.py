@@ -176,12 +176,25 @@ def delay(config):
 # DOI → journal name resolver (lazily cached)
 # ---------------------------------------------------------------------------
 
-_JOURNAL_CACHE: dict[str, str] = {}
+_JOURNAL_CACHE: dict[str, tuple[str, str]] = {}
 
-def _resolve_journal_by_doi(doi: str, config) -> str:
-    """Look up a DOI via Crossref API and return the journal (container-title)."""
+def _extract_issn_from_crossref_message(msg: dict) -> str:
+    """Extract ISSN from a Crossref API message dict, preferring print ISSN."""
+    issn_types = msg.get('issn-type', [])
+    for it in issn_types:
+        if it.get('type') == 'print':
+            return it.get('value', '')
+    for it in issn_types:
+        if it.get('type') == 'electronic':
+            return it.get('value', '')
+    issn_list = msg.get('ISSN', [])
+    return issn_list[0] if issn_list else ''
+
+
+def _resolve_journal_by_doi(doi: str, config) -> tuple[str, str]:
+    """Look up a DOI via Crossref API and return (journal, issn) tuple."""
     if not doi:
-        return ''
+        return ('', '')
     cached = _JOURNAL_CACHE.get(doi)
     if cached is not None:
         return cached
@@ -191,12 +204,15 @@ def _resolve_journal_by_doi(doi: str, config) -> str:
     try:
         with _urlopen_with_retry(req, config, attempts=2) as r:
             data = json.loads(r.read().decode('utf-8'))
-        journal = (data.get('message', {}).get('container-title') or [''])[0]
+        msg = data.get('message', {})
+        journal = (msg.get('container-title') or [''])[0]
+        issn = _extract_issn_from_crossref_message(msg)
     except Exception:
         journal = ''
+        issn = ''
 
-    _JOURNAL_CACHE[doi] = journal
-    return journal
+    _JOURNAL_CACHE[doi] = (journal, issn)
+    return (journal, issn)
 
 
 # ---------------------------------------------------------------------------
@@ -507,16 +523,21 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
                 doi = p.get('doi', '')
                 published_doi = p.get('published', '')
                 journal = ''
+                issn = ''
                 if published_doi:
-                    journal = _resolve_journal_by_doi(published_doi.strip(), config)
+                    journal, issn = _resolve_journal_by_doi(published_doi.strip(), config)
                 if not journal:
                     journal = p.get('category', '') or server
+                extras = {}
+                if issn:
+                    extras['issn'] = issn
                 all_papers.append(make_paper(
                     server, doi, p.get('title', ''), p.get('authors', ''),
                     p.get('abstract', ''), p.get('date', ''), journal,
                     f"https://www.{server}.org/content/{doi}.full.pdf",
                     f"https://www.{server}.org/content/{doi}",
-                    doi=doi))
+                    doi=doi,
+                    extra=extras if extras else None))
 
             if len(all_papers) >= max_results:
                 break
@@ -777,11 +798,14 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
             pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
         abs_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
+        issns = info.get('issn', '') or info.get('essn', '') or ''
+
         papers.append(make_paper(
             'pubmed', pmid, title, authors, abstract,
             info.get('pubdate', ''), '',
             pdf_url, abs_url, pmid=pmid,
             extra={'pmc_id': pmc_id, 'journal': info.get('source', ''),
+                   'issn': issns,
                    'doi': info.get('elocationid', '').replace('doi: ', '') if info.get('elocationid') else doi}))
 
     return papers, total
@@ -876,6 +900,7 @@ def crossref_search(keywords, config, max_results=50, start_date=None, end_date=
                 break
 
         journal = (item.get('container-title') or [''])[0]
+        issn = _extract_issn_from_crossref_message(item)
 
         pdf_url = ''
         for link in item.get('link', []):
@@ -885,10 +910,15 @@ def crossref_search(keywords, config, max_results=50, start_date=None, end_date=
 
         abs_url = item.get('URL', '') or f"https://doi.org/{doi}"
 
+        extra = {}
+        if journal:
+            extra['journal'] = journal
+        if issn:
+            extra['issn'] = issn
         papers.append(make_paper(
             'crossref', doi, title, authors, abstract, date, journal,
             pdf_url, abs_url, doi=doi,
-            extra={'journal': journal} if journal else None,
+            extra=extra if extra else None,
         ))
         _add_abbrev_to_paper(papers[-1])
 
@@ -974,6 +1004,8 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
             date = f"{r['pubYear']}-01-01"
 
         journal = r.get('journalTitle', '') or ''
+        issn_raw = r.get('journalIssn', '') or ''
+        issn = issn_raw.split(';')[0].strip()
         pmid = r.get('pmid')
         pmcid = r.get('pmcid')
 
@@ -987,10 +1019,17 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
         elif doi:
             abs_url = f"https://doi.org/{doi}"
 
+        extra = {}
+        if pmcid:
+            extra['pmc_id'] = pmcid
+        if journal:
+            extra['journal'] = journal
+        if issn:
+            extra['issn'] = issn
         papers.append(make_paper(
             'europepmc', doi, title, authors, abstract, date, journal,
             pdf_url, abs_url, doi=doi, pmid=pmid,
-            extra={'pmc_id': pmcid, 'journal': journal} if journal else None,
+            extra=extra if extra else None,
         ))
         _add_abbrev_to_paper(papers[-1])
 
@@ -1495,10 +1534,16 @@ def _crossref_lookup(doi, config):
     date_parts = msg.get('published-print', {}).get('date-parts', [[None]])[0]
     date = '-'.join(str(d) for d in date_parts if d) if date_parts and date_parts[0] else ''
     journal = (msg.get('container-title') or [''])[0]
+    issn = _extract_issn_from_crossref_message(msg)
+    extra = {}
+    if journal:
+        extra['journal'] = journal
+    if issn:
+        extra['issn'] = issn
     return [make_paper(
         'crossref', doi, title, authors, abstract, date, journal,
         '', f"https://doi.org/{doi}", doi=doi,
-        extra={'journal': journal} if journal else None,
+        extra=extra if extra else None,
     )]
 
 
