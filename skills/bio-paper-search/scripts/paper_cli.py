@@ -1327,7 +1327,7 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
         print(f"{_ts()}   europepmc: error - {e}", file=sys.stderr)
 
     # Scholar disabled by default due to aggressive anti-bot protection.
-    # To use scholar, run explicitly with -s scholar --browser.
+    # To use scholar, run explicitly with -s scholar.
     # try:
     #     papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
     #     all_papers.extend(papers)
@@ -1670,10 +1670,10 @@ examples:
   paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
   paper_cli.py find -t "CRISPR editing" -s pubmed
 
-  # Google Scholar (browser auto-starts when needed)
+  # Google Scholar (disabled by default, use -s scholar explicitly)
   paper_cli.py search -k "deep learning single cell" -s scholar -n 3
 
-  # CNSP journal scraping (browser auto-starts when needed)
+  # CNSP journal scraping (browser auto-starts)
   paper_cli.py search -k "CRISPR" -s cnsp -n 3
   paper_cli.py search -k "CRISPR" -s cnsp -n 3 --start-date 2026-05-01 --end-date 2026-05-13
   paper_cli.py search -k "genomic" -s cnsp -n 5 --incremental

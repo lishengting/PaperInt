@@ -39,8 +39,7 @@ When run without a subcommand, downloads all papers with status `searched` from
 the shared database:
 
 ```bash
-python3 scripts/paper_cli.py
-python3 scripts/paper_cli.py --browser   # enable browser for bioRxiv/PubMed
+python3 scripts/paper_cli.py                         # auto-mode (browser auto-starts when needed)
 ```
 
 ## Command Reference
@@ -63,7 +62,7 @@ Options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--browser` | off | Use Chrome for PDF downloads |
+| `--browser-only` | off | Use headed Chrome with real display for stubborn sites |
 | `--data-dir` | `data` | Output directory |
 | `--db` | from config | SQLite database path |
 

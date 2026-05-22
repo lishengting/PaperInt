@@ -63,8 +63,8 @@ mkdir -p data data/tmp
 # Search by keyword on arXiv
 python3 skills/bio-paper-search/scripts/paper_cli.py search -k "single cell RNA-seq" -n 5
 
-# Search across all sources (arXiv, bioRxiv, medRxiv, PubMed, Google Scholar)
-python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -n 10 --browser
+# Search across all sources (arXiv, bioRxiv, medRxiv, PubMed, Crossref, Europe PMC)
+python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -n 10
 
 # Semantic search via topic
 python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Deep learning for protein structure prediction"
@@ -79,8 +79,8 @@ python3 skills/bio-paper-downloader/scripts/paper_cli.py
 # Download a specific paper by URL
 python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
 
-# Download with browser (required for bioRxiv/medRxiv/publishers)
-python3 skills/bio-paper-downloader/scripts/paper_cli.py --browser
+# Download in auto-mode (browser auto-starts for bioRxiv/medRxiv/publishers)
+python3 skills/bio-paper-downloader/scripts/paper_cli.py
 ```
 
 ### Interpret

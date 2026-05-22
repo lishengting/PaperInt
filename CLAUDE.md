@@ -18,12 +18,12 @@ Each skill reads from and writes to a shared SQLite database (`data/papers.db`),
 ```bash
 # Search papers (writes to DB with status=searched)
 python3 skills/bio-paper-search/scripts/paper_cli.py search -k "methylation" -s arxiv -n 3
-python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -n 5 --browser
+python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -n 5
 python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq"
 
 # Download papers — auto-mode picks up all 'searched' from DB
 python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode
-python3 skills/bio-paper-downloader/scripts/paper_cli.py --browser          # with Chrome
+python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode (browser auto-starts when needed)
 python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
 
 # Interpreter runs within Claude Code following reference docs (3-phase pipeline)
@@ -97,11 +97,11 @@ Three phases driven by reference docs in `skills/bio-paper-interpreter/reference
 
 ### Multi-Source Search
 
-`search_all()` queries arXiv, bioRxiv, medRxiv, PubMed, and Google Scholar in parallel, then merges duplicates by DOI, arXiv ID, or title similarity (Jaccard ≥ 0.7). Source priority for deduplication: `pubmed > scholar > arxiv > medrxiv > biorxiv`.
+`search_all()` queries arXiv, bioRxiv, medRxiv, PubMed, Crossref, and Europe PMC in parallel, then merges duplicates by DOI, arXiv ID, or title similarity (Jaccard ≥ 0.7). Source priority for deduplication: `pubmed > crossref > europepmc > arxiv > medrxiv > biorxiv`.
 
 ### Browser-Based Downloads
 
-bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites. Both require `--browser` flag which launches Chrome via Playwright's CDP. Two standalone helper scripts handle this: `download_biorxiv_browser.py` and `download_publisher_pdf.py`.
+bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites. Chrome auto-starts via Playwright's CDP when needed. Two standalone helper scripts handle this: `download_biorxiv_browser.py` and `download_publisher_pdf.py`.
 
 ### Key Design Rules
 
@@ -109,11 +109,10 @@ bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites
 - **The filesystem is the state machine** for the interpreter — `data/execution_log.md` tracks per-paper phase progress. Recover by reading files, not chat memory.
 - **DB module caches connections** — `get_conn()` returns a singleton per path. Uses WAL mode.
 - **`INSERT OR IGNORE` for search results** — re-finding the same paper preserves the original `search_date`.
-- **Google Scholar and `all` source require `--browser`** — these use Playwright to scrape results.
 - **`data/` is gitignored** — all runtime artifacts (DB, PDFs, reports) live there.
 
 ### Dependencies
 
 - `python3`, `bash`, `pdftotext` (poppler-utils, optional fallback), `google-chrome`
-- Python: `PyYAML`, `pymupdf4llm`, `PyMuPDF`, `playwright` (for browser features)
+- Python: `PyYAML`, `pymupdf4llm`, `PyMuPDF`, `playwright`
 - Optional: `markdown` library (Phase 3 HTML conversion), LLM API key and endpoint (Path B interpretation, Phase 4 poster generation)
