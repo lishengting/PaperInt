@@ -427,6 +427,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         href.includes('format=refman') ||
                         href.includes('format=ris') ||
                         href.includes('format=bibtex') ||
+                        href.includes('/ris/') ||
+                        href.includes('/refman/') ||
+                        href.includes('/bibtex/') ||
+                        href.includes('/endnote/') ||
                         (text.includes('citation') && !text.includes('pdf'));
                     if (isPdf && !isCitation && href && !href.startsWith('#')) {
                         found.push({href: href, text: text});
@@ -467,7 +471,9 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     s -= 50
                 if 'citation' in t or 'citation-needed' in h:
                     s -= 200
-                if any(x in h for x in ('format=refman', 'format=ris', 'format=bibtex')):
+                if any(x in h for x in ('format=refman', 'format=ris', 'format=bibtex',
+                                   '/ris/', '/refman/', '/bibtex/',
+                                   '/endnote/', 'downloadcitation')):
                     s -= 200
                 s -= len(h)
                 return s
