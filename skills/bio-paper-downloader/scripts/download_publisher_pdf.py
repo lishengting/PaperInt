@@ -127,7 +127,8 @@ def _cleanup_orphan_chrome_and_xvfb():
             # Check if this is a Chrome with our temp profile or an Xvfb
             is_ours = ('paper_cli_chrome_' in cmdline or
                        'paper_cli_pub_chrome_' in cmdline or
-                       'paper_cli_scholar_chrome' in cmdline)
+                       'paper_cli_scholar_chrome' in cmdline or
+                       'chrome_profile' in cmdline)
             is_xvfb = cmdline.startswith('Xvfb') and any(
                 f':{d}' in cmdline for d in range(99, 111))
 
@@ -191,6 +192,9 @@ class ChromeInstance:
                 pass
 
         subprocess.run(['pkill', '-f', f'remote-debugging-port={self.port}'],
+                       capture_output=True)
+        # Also kill any Chrome still holding this profile (e.g. from crashed run)
+        subprocess.run(['pkill', '-f', f'user-data-dir={self.profile_dir}'],
                        capture_output=True)
         time.sleep(1)
         args = [
