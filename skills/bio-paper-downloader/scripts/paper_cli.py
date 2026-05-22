@@ -1072,14 +1072,21 @@ def detect_url(url, config):
             authors = ', '.join(a.get('name', '') for a in info.get('authors', [])[:5])
             pmc_id = next((a.get('value') for a in info.get('articleids', [])
                            if a.get('idtype') == 'pmc'), None)
+            doi = next((a.get('value') for a in info.get('articleids', [])
+                        if a.get('idtype') == 'doi'), None)
+            if not doi:
+                eloc = info.get('elocationid', '')
+                if eloc:
+                    m = re.search(r'10\.\d{4,}/[^\s]+', eloc)
+                    if m:
+                        doi = m.group(0)
             pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf" if pmc_id else ''
             return make_paper('pubmed', pmid, title, authors, '',
                               info.get('pubdate', ''), '',
                               pdf_url, url, pmid=pmid,
                               extra={'pmc_id': pmc_id,
                                      'journal': info.get('source', ''),
-                                     'doi': (info.get('elocationid', '')
-                                             .replace('doi: ', '')) if info.get('elocationid') else None})
+                                     'doi': doi})
         return make_paper('pubmed', pmid, f'PubMed:{pmid}', '', '', '', '',
                           '', url, pmid=pmid)
 
