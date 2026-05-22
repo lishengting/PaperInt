@@ -495,6 +495,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             """
 
             pdf_bytes = None
+            how = ''
 
             # Primary: JS fetch from current page context (no navigation needed
             # for same-domain PDFs; preserves article page session/referrer)
@@ -502,6 +503,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             if not isinstance(js_result, dict) or 'error' not in js_result:
                 pdf_bytes = base64.b64decode(js_result['data'])
+                how = 'fetch'
 
             # Fallback: navigate to PDF URL + response.body()
             if pdf_bytes is None:
@@ -518,6 +520,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         body = await goto_response.body()
                         if len(body) >= 10000 and body[:5] == b'%PDF-':
                             pdf_bytes = body
+                            how = 'goto'
                     except Exception:
                         pass
 
@@ -527,6 +530,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         js_result = await page.evaluate(fetch_js, [pdf_url])
                         if not isinstance(js_result, dict) or 'error' not in js_result:
                             pdf_bytes = base64.b64decode(js_result['data'])
+                            how = 'fetch (after goto)'
                     except Exception:
                         pass
 
@@ -551,6 +555,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     os.unlink(tmp_path)
                     if len(body) >= 10000 and body[:5] == b'%PDF-':
                         pdf_bytes = body
+                        how = 'download'
                 except Exception:
                     pass
 
@@ -571,7 +576,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             result['success'] = True
             result['file_path'] = str(output_path)
             result['file_size'] = len(pdf_bytes)
-            result['message'] = f'OK ({mode}): {len(pdf_bytes)} bytes'
+            result['message'] = f'OK ({how}): {len(pdf_bytes)} bytes'
             return result
 
     except ImportError:
