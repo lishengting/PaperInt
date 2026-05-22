@@ -419,6 +419,29 @@ def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> set
     return names
 
 
+def load_cns_journal_set(config: dict, config_path: str = 'config.yaml') -> set:
+    """Load CNS journal names (lowercase) from journals_config/*.json, excluding PLOS.
+
+    Resolves relative paths against the directory of config_path.
+    Returns a set of lowercase journal names.
+    """
+    cnsp_cfg = config.get('cnsp', {})
+    names: set = set()
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    for key in ('nature_journals', 'science_journals', 'cell_journals'):
+        rel = cnsp_cfg.get(key, '')
+        if not rel:
+            continue
+        jpath = rel if os.path.isabs(rel) else os.path.join(config_dir, rel)
+        if not os.path.exists(jpath):
+            continue
+        for j in json.load(open(jpath)):
+            name = (j.get('name', '') or '').replace(' (partner)', '')
+            if name:
+                names.add(name.lower())
+    return names
+
+
 def filter_cnsp_papers(papers: list, cnsp_names: set) -> list:
     """Filter papers to only those whose journal (from metadata_json) is in cnsp_names."""
     result = []

@@ -44,7 +44,8 @@ sys.path.insert(0, SKILL_DIR)
 
 from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
                       mark_interpreted, mark_interpret_failed, update_tags,
-                      load_cnsp_journal_set, filter_cnsp_papers)
+                      load_cnsp_journal_set, filter_cnsp_papers,
+                      load_cns_journal_set)
 
 from match_tags import match_tags
 from build_prompt import build_full_text_prompt, build_brief_prompt, build_abstract_only_prompt, load_config
@@ -449,6 +450,14 @@ def cmd_run(args, config):
             papers = filter_cnsp_papers(papers, cnsp_names)
             ts_print(f"CNSP filter: {before} -> {len(papers)} papers")
 
+        cns_only = getattr(args, 'cns', False)
+        if cns_only:
+            config['__config_path__'] = config.get('__config_path__', 'config.yaml')
+            cns_names = load_cns_journal_set(config)
+            before = len(papers)
+            papers = filter_cnsp_papers(papers, cns_names)
+            ts_print(f"CNS filter: {before} -> {len(papers)} papers")
+
         if limit:
             papers = papers[:limit]
 
@@ -490,6 +499,8 @@ def main():
                    help='Max number of papers to process')
     p.add_argument('--cnsp', action='store_true',
                    help='Only interpret papers published in C/N/S/P journals')
+    p.add_argument('--cns', action='store_true',
+                   help='Only interpret papers published in C/N/S journals (excludes PLOS)')
     p.add_argument('--retry-failed', action='store_true',
                    help='Retry papers with interpret_failed status')
     p.add_argument('--en', action='store_true',
@@ -523,6 +534,10 @@ def main():
             config['__config_path__'] = config.get('__config_path__', 'config.yaml')
             cnsp_names = load_cnsp_journal_set(config)
             papers = filter_cnsp_papers(papers, cnsp_names)
+        if args.cns:
+            config['__config_path__'] = config.get('__config_path__', 'config.yaml')
+            cns_names = load_cns_journal_set(config)
+            papers = filter_cnsp_papers(papers, cns_names)
         if args.limit:
             papers = papers[:args.limit]
         ts_print(f"Would process {len(papers)} paper(s):")

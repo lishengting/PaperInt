@@ -137,7 +137,8 @@ def _parse_dates(start_date_str: str, end_date_str: str) -> tuple[date, date]:
 def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
                 start_date: str = '', end_date: str = '',
                 cnsp_journals: list[str] | None = None,
-                chrome_port: int | None = None) -> list[dict]:
+                chrome_port: int | None = None,
+                cns_only: bool = False) -> list[dict]:
     """Search CNSP journals for articles matching keywords in a date range.
 
     Args:
@@ -148,6 +149,7 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
         end_date: YYYY-MM-DD end (default: today)
         cnsp_journals: optional filter list of journal names
         chrome_port: CDP port for Playwright browser
+        cns_only: if True, exclude PLOS journals (CNS only)
 
     Returns:
         List of normalized paper dicts (make_paper format)
@@ -159,7 +161,8 @@ def cnsp_search(keywords: list[str], config: dict, max_results: int = 10,
     all_articles: list[dict] = []
 
     # Scrape each journal type
-    for jtype in ['nature', 'science', 'cell', 'plos']:
+    jtypes = ['nature', 'science', 'cell'] if cns_only else ['nature', 'science', 'cell', 'plos']
+    for jtype in jtypes:
         cnsp_cfg = config.get('cnsp', {})
         if not cnsp_cfg.get(jtype, {}).get('enabled', True):
             print(f"{_ts()}   CNSP {jtype}: disabled in config")

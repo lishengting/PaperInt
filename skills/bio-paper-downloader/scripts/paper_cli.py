@@ -35,7 +35,8 @@ import log_utils; log_utils.install()
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
 from paper_db import (get_conn, get_db_path, get_papers_by_status,
                       is_downloaded, mark_downloaded, mark_download_failed,
-                      get_paper, get_stats, load_cnsp_journal_set, filter_cnsp_papers)
+                      get_paper, get_stats, load_cnsp_journal_set, filter_cnsp_papers,
+                      load_cns_journal_set)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -1158,7 +1159,7 @@ def cmd_get(args, config):
 
 
 def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
-             fallback_level=2, captcha_enabled=False, stealth_enabled=False):
+             cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
@@ -1171,6 +1172,12 @@ def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
         before = len(papers)
         papers = filter_cnsp_papers(papers, cnsp_names)
         print(f"CNSP filter: {before} -> {len(papers)} papers")
+
+    if cns_only:
+        cns_names = load_cns_journal_set(config, config.get('__config_path__', 'config.yaml'))
+        before = len(papers)
+        papers = filter_cnsp_papers(papers, cns_names)
+        print(f"CNS filter: {before} -> {len(papers)} papers")
 
     if limit:
         papers = papers[:limit]
@@ -1262,6 +1269,8 @@ def main():
                    help='Retry downloading papers with download_failed status')
     p.add_argument('--cnsp', action='store_true',
                    help='Only download papers published in C/N/S/P journals')
+    p.add_argument('--cns', action='store_true',
+                   help='Only download papers published in C/N/S journals (excludes PLOS)')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -1319,6 +1328,7 @@ def main():
         # Auto-mode: download all searched papers
         return cmd_auto(config, args.data_dir, limit=args.limit,
                         retry_failed=args.retry_failed, cnsp_only=args.cnsp,
+                        cns_only=args.cns,
                         fallback_level=args.fallback_level,
                         captcha_enabled=args.captcha,
                         stealth_enabled=args.stealth)

@@ -164,7 +164,32 @@ def cmd_list(args, config):
                     journal_map[abbrev.lower()] = code
         return journal_map
 
+    def _load_cns_map():
+        cnsp_cfg = config.get('cnsp', {})
+        flagships = {'Nature', 'Science', 'Cell'}
+        journal_map = {}
+        for key, letter in [('nature_journals', 'n'), ('science_journals', 's'),
+                            ('cell_journals', 'c')]:
+            rel = cnsp_cfg.get(key, '')
+            if not rel:
+                continue
+            jpath = rel if os.path.isabs(rel) else os.path.join(
+                os.path.dirname(os.path.abspath(args.config)), rel)
+            if not os.path.exists(jpath):
+                continue
+            for j in json.load(open(jpath)):
+                name = (j.get('name', '') or '').replace(' (partner)', '')
+                if not name:
+                    continue
+                code = letter.upper() if name in flagships else letter
+                journal_map[name.lower()] = code
+                abbrev = j.get('abbrev', '')
+                if abbrev:
+                    journal_map[abbrev.lower()] = code
+        return journal_map
+
     cnsp_map = _load_cnsp_map()
+    cns_map = _load_cns_map() if args.cns else None
 
     def _get_cnsp(journal_name):
         if not journal_name:
@@ -172,20 +197,22 @@ def cmd_list(args, config):
         key = journal_name.lower().replace('&amp;', '&')
         return cnsp_map.get(key, '')
 
-    # If --cnsp flag, load all matching rows and post-filter
-    if args.cnsp:
+    # If --cnsp or --cns flag, load all matching rows and post-filter
+    if args.cnsp or args.cns:
+        which = 'CNS' if args.cns else 'CNSP'
+        lookup_map = cns_map if args.cns else cnsp_map
         all_rows = conn.execute(sql + ' ORDER BY search_date DESC', params).fetchall()
-        # Filter to CNSP papers only
         filtered = []
         for r in all_rows:
             journal = _get_journal(r['metadata_json'])
-            cnsp = _get_cnsp(journal)
-            if cnsp:
-                filtered.append((r, cnsp, journal))
+            code = _get_cnsp(journal) if not args.cns else lookup_map.get(
+                (journal or '').lower().replace('&amp;', '&'), '')
+            if code:
+                filtered.append((r, code, journal))
         total = len(filtered)
         # Apply pagination after filtering
         page = filtered[args.offset:args.offset + args.limit]
-        rows = [r for r, cnsp, journal in page]
+        rows = [r for r, code, journal in page]
     else:
         count_sql = sql.replace(
             'SELECT paper_id, doi, title, source, status, search_date, metadata_json',
@@ -198,7 +225,7 @@ def cmd_list(args, config):
         rows = conn.execute(sql, params).fetchall()
 
     if not rows:
-        which = 'CNSP ' if args.cnsp else ''
+        which = 'CNS ' if args.cns else ('CNSP ' if args.cnsp else '')
         print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword) else ''}.")
         return 0
 
@@ -246,7 +273,7 @@ def cmd_list(args, config):
 
     showing = min(args.limit, len(rows))
     after = args.offset + showing
-    suffix = f" (CNSP)" if args.cnsp else ""
+    suffix = f" (CNS)" if args.cns else (f" (CNSP)" if args.cnsp else "")
     if total > args.limit:
         print(f"\nShowing {showing} of {total}{suffix} papers (page {(args.offset // args.limit) + 1})")
     else:
@@ -387,6 +414,8 @@ def main():
                     help='Pagination offset (default: 0)')
     lp.add_argument('--cnsp', action='store_true',
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
+    lp.add_argument('--cns', action='store_true',
+                    help='Only show papers whose journal is in CNS (Nature/Science/Cell, excluding PLOS)')
 
     # ---- delete ----
     dp = sub.add_parser('delete', help='Delete a paper record',

@@ -1492,9 +1492,11 @@ def cmd_search(args, config):
     elif source == 'cnsp':
         from cnsp import cnsp_search
         cnsp_journals = getattr(args, 'cnsp_journals', None) or None
+        cns_only = getattr(args, 'cns', False)
         papers = cnsp_search(keywords, config, max_results=num * 3,
                              start_date=start_date, end_date=end_date,
-                             cnsp_journals=cnsp_journals)
+                             cnsp_journals=cnsp_journals,
+                             cns_only=cns_only)
     else:
         print(f"{_ts()} Unknown source: {source}", file=sys.stderr)
         return 1
@@ -1725,6 +1727,8 @@ def main():
                     help='Auto-compute start_date from last crawl date for this source.')
     sp.add_argument('--cnsp-journals', nargs='+',
                     help='Limit CNSP search to specific journals (e.g., "Nature" "Nature Biotechnology").')
+    sp.add_argument('--cns', action='store_true',
+                    help='When using -s cnsp, search only CNS journals (Nature/Science/Cell, excluding PLOS).')
 
     # ---- find ----
     fp = sub.add_parser(
