@@ -1,64 +1,498 @@
 [
-    {"name": "American Journal of Human Genetics (partner)", "link": "https://www.cell.com/ajhg/home", "enabled": false, "abbrev": "Am J Hum Genet"},
-    {"name": "Biophysical Journal (partner)", "link": "https://www.cell.com/biophysj/home", "enabled": false, "abbrev": "Biophys J"},
-    {"name": "Biophysical Reports (partner)", "link": "https://www.cell.com/biophysreports/home", "enabled": false, "abbrev": "Biophys Rep (N Y)"},
-    {"name": "Cancer Cell", "link": "https://www.cell.com/cancer-cell/home", "enabled": false, "abbrev": "Cancer Cell"},
-    {"name": "Cell", "link": "https://www.cell.com/cell/home", "enabled": false, "abbrev": "Cell"},
-    {"name": "Cell Biomaterials", "link": "https://www.cell.com/cell-biomaterials/home", "enabled": false, "abbrev": "Cell Biomater"},
-    {"name": "Cell Genomics", "link": "https://www.cell.com/cell-genomics/home", "enabled": false, "abbrev": "Cell Genom"},
-    {"name": "Cell Host & Microbe", "link": "https://www.cell.com/cell-host-microbe/home", "enabled": false, "abbrev": "Cell Host Microbe"},
-    {"name": "Cell Host and Microbe", "link": "https://www.cell.com/cell-host-microbe/home", "enabled": false, "abbrev": "Cell Host Microbe"},
-    {"name": "Cell Metabolism", "link": "https://www.cell.com/cell-metabolism/home", "enabled": false, "abbrev": "Cell Metab"},
-    {"name": "Cell Reports", "link": "https://www.cell.com/cell-reports/home", "enabled": false, "abbrev": "Cell Rep"},
-    {"name": "Cell Reports Medicine", "link": "https://www.cell.com/cell-reports-medicine/home", "enabled": false, "abbrev": "Cell Rep Med"},
-    {"name": "Cell Reports Methods", "link": "https://www.cell.com/cell-reports-methods/home", "enabled": false, "abbrev": "Cell Rep Methods"},
-    {"name": "Cell Reports Physical Science", "link": "https://www.cell.com/cell-reports-physical-science/home", "enabled": false, "abbrev": "Cell Rep Phys Sci"},
-    {"name": "Cell Reports Sustainability", "link": "https://www.cell.com/cell-reports-sustainability/home", "enabled": false, "abbrev": "Cell Rep Sustain"},
-    {"name": "Cell Stem Cell", "link": "https://www.cell.com/cell-stem-cell/home", "enabled": false, "abbrev": "Cell Stem Cell"},
-    {"name": "Cell Systems", "link": "https://www.cell.com/cell-systems/home", "enabled": false, "abbrev": "Cell Syst"},
-    {"name": "Chem", "link": "https://www.cell.com/chem/home", "enabled": false, "abbrev": "Chem"},
-    {"name": "Chem Catalysis", "link": "https://www.cell.com/chem-catalysis/home", "enabled": false, "abbrev": "Chem Catal"},
-    {"name": "Current Biology", "link": "https://www.cell.com/current-biology/home", "enabled": false, "abbrev": "Curr Biol"},
-    {"name": "Developmental Cell", "link": "https://www.cell.com/developmental-cell/home", "enabled": false, "abbrev": "Dev Cell"},
-    {"name": "Device", "link": "https://www.cell.com/device/home", "enabled": false, "abbrev": "Device"},
-    {"name": "Heliyon", "link": "https://www.cell.com/heliyon/home", "enabled": false, "abbrev": "Heliyon"},
-    {"name": "Human Genetics and Genomics Advances (partner)", "link": "https://www.cell.com/hgg-advances/home", "enabled": false, "abbrev": "HGG Adv"},
-    {"name": "Immunity", "link": "https://www.cell.com/immunity/home", "enabled": false, "abbrev": "Immunity"},
-    {"name": "Joule", "link": "https://www.cell.com/joule/home", "enabled": false, "abbrev": "Joule"},
-    {"name": "Matter", "link": "https://www.cell.com/matter/home", "enabled": false, "abbrev": "Matter"},
-    {"name": "Med", "link": "https://www.cell.com/med/home", "enabled": false, "abbrev": "Med"},
-    {"name": "Molecular Cell", "link": "https://www.cell.com/molecular-cell/home", "enabled": false, "abbrev": "Mol Cell"},
-    {"name": "Molecular Plant (partner)", "link": "https://www.cell.com/molecular-plant/home", "enabled": false, "abbrev": "Mol Plant"},
-    {"name": "Molecular Therapy (partner)", "link": "https://www.cell.com/molecular-therapy-family/molecular-therapy/home", "enabled": false, "abbrev": "Mol Ther"},
-    {"name": "Molecular Therapy Methods & Clinical Development (partner)", "link": "https://www.cell.com/molecular-therapy-family/methods/home", "enabled": false, "abbrev": "Mol Ther Methods Clin Dev"},
-    {"name": "Molecular Therapy Nucleic Acids (partner)", "link": "https://www.cell.com/molecular-therapy-family/nucleic-acids/home", "enabled": false, "abbrev": "Mol Ther Nucleic Acids"},
-    {"name": "Molecular Therapy Oncology (partner)", "link": "https://www.cell.com/molecular-therapy-family/oncology/home", "enabled": false, "abbrev": "Mol Ther Oncol"},
-    {"name": "Neuron", "link": "https://www.cell.com/newton/home", "enabled": false, "abbrev": "Neuron"},
-    {"name": "Newton", "link": "https://www.cell.com/newton/home", "enabled": false, "abbrev": "Newton"},
-    {"name": "Nexus (partner)", "link": "https://www.cell.com/nexus/home", "enabled": false, "abbrev": "Nexus"},
-    {"name": "One Earth", "link": "https://www.cell.com/one-earth/home", "enabled": false, "abbrev": "One Earth"},
-    {"name": "Patterns", "link": "https://www.cell.com/patterns/home", "enabled": false, "abbrev": "Patterns (N Y)"},
-    {"name": "Plant Communications (partner)", "link": "https://www.cell.com/plant-communications/home", "enabled": false, "abbrev": "Plant Commun"},
-    {"name": "Stem Cell Reports (partner)", "link": "https://www.cell.com/stem-cell-reports/home", "enabled": false, "abbrev": "Stem Cell Reports"},
-    {"name": "Structure", "link": "https://www.cell.com/structure/home", "enabled": false, "abbrev": "Structure"},
-    {"name": "The Innovation (partner)", "link": "https://www.cell.com/the-innovation/home", "enabled": false, "abbrev": "Innovation (Camb)"},
-    {"name": "Trends in Biochemical Sciences", "link": "https://www.cell.com/trends/biochemical-sciences/home", "enabled": false, "abbrev": "Trends Biochem Sci"},
-    {"name": "Trends in Biotechnology", "link": "https://www.cell.com/trends/biotechnology/home", "enabled": false, "abbrev": "Trends Biotechnol"},
-    {"name": "Trends in Cancer", "link": "https://www.cell.com/trends/cancer/home", "enabled": false, "abbrev": "Trends Cancer"},
-    {"name": "Trends in Cell Biology", "link": "https://www.cell.com/trends/cell-biology/home", "enabled": false, "abbrev": "Trends Cell Biol"},
-    {"name": "Trends in Chemistry", "link": "https://www.cell.com/trends/chemistry/home", "enabled": false, "abbrev": "Trends Chem"},
-    {"name": "Trends in Cognitive Sciences", "link": "https://www.cell.com/trends/cognitive-sciences/home", "enabled": false, "abbrev": "Trends Cogn Sci"},
-    {"name": "Trends in Ecology & Evolution", "link": "https://www.cell.com/trends/ecology-evolution/home", "enabled": false, "abbrev": "Trends Ecol Evol"},
-    {"name": "Trends in Ecology and Evolution", "link": "https://www.cell.com/trends/ecology-evolution/home", "enabled": false, "abbrev": "Trends Ecol Evol"},
-    {"name": "Trends in Endocrinology & Metabolism", "link": "https://www.cell.com/trends/endocrinology-metabolism/home", "enabled": false, "abbrev": "Trends Endocrinol Metab"},
-    {"name": "Trends in Endocrinology and Metabolism", "link": "https://www.cell.com/trends/endocrinology-metabolism/home", "enabled": false, "abbrev": "Trends Endocrinol Metab"},
-    {"name": "Trends in Genetics", "link": "https://www.cell.com/trends/genetics/home", "enabled": false, "abbrev": "Trends Genet"},
-    {"name": "Trends in Immunology", "link": "https://www.cell.com/trends/immunology/home", "enabled": false, "abbrev": "Trends Immunol"},
-    {"name": "Trends in Microbiology", "link": "https://www.cell.com/trends/microbiology/home", "enabled": false, "abbrev": "Trends Microbiol"},
-    {"name": "Trends in Molecular Medicine", "link": "https://www.cell.com/trends/molecular-medicine/home", "enabled": false, "abbrev": "Trends Mol Med"},
-    {"name": "Trends in Neurosciences", "link": "https://www.cell.com/trends/neurosciences/home", "enabled": false, "abbrev": "Trends Neurosci"},
-    {"name": "Trends in Parasitology", "link": "https://www.cell.com/trends/parasitology/home", "enabled": false, "abbrev": "Trends Parasitol"},
-    {"name": "Trends in Pharmacological Sciences", "link": "https://www.cell.com/trends/pharmacological-sciences/home", "enabled": false, "abbrev": "Trends Pharmacol Sci"},
-    {"name": "Trends in Plant Science", "link": "https://www.cell.com/trends/plant-science/home", "enabled": false, "abbrev": "Trends Plant Sci"},
-    {"name": "iScience", "link": "https://www.cell.com/iscience/home", "enabled": false, "abbrev": "iScience"}
+  {
+    "name": "American Journal of Human Genetics (partner)",
+    "link": "https://www.cell.com/ajhg/home",
+    "enabled": false,
+    "abbrev": "Am J Hum Genet",
+    "issn_print": "0002-9297",
+    "issn_electronic": "1537-6605"
+  },
+  {
+    "name": "Biophysical Journal (partner)",
+    "link": "https://www.cell.com/biophysj/home",
+    "enabled": false,
+    "abbrev": "Biophys J",
+    "issn_print": "0006-3495",
+    "issn_electronic": "1542-0086"
+  },
+  {
+    "name": "Biophysical Reports (partner)",
+    "link": "https://www.cell.com/biophysreports/home",
+    "enabled": false,
+    "abbrev": "Biophys Rep (N Y)",
+    "issn_print": null,
+    "issn_electronic": "2667-0747"
+  },
+  {
+    "name": "Cancer Cell",
+    "link": "https://www.cell.com/cancer-cell/home",
+    "enabled": false,
+    "abbrev": "Cancer Cell",
+    "issn_print": "1535-6108",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell",
+    "link": "https://www.cell.com/cell/home",
+    "enabled": false,
+    "abbrev": "Cell",
+    "issn_print": "0092-8674",
+    "issn_electronic": "1097-4172"
+  },
+  {
+    "name": "Cell Biomaterials",
+    "link": "https://www.cell.com/cell-biomaterials/home",
+    "enabled": false,
+    "abbrev": "Cell Biomater",
+    "issn_print": "3050-5623",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Genomics",
+    "link": "https://www.cell.com/cell-genomics/home",
+    "enabled": false,
+    "abbrev": "Cell Genom",
+    "issn_print": "2666-979X",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Host & Microbe",
+    "link": "https://www.cell.com/cell-host-microbe/home",
+    "enabled": false,
+    "abbrev": "Cell Host Microbe",
+    "issn_print": "1931-3128",
+    "issn_electronic": "1934-6069"
+  },
+  {
+    "name": "Cell Host and Microbe",
+    "link": "https://www.cell.com/cell-host-microbe/home",
+    "enabled": false,
+    "abbrev": "Cell Host Microbe",
+    "issn_print": null,
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Metabolism",
+    "link": "https://www.cell.com/cell-metabolism/home",
+    "enabled": false,
+    "abbrev": "Cell Metab",
+    "issn_print": "1550-4131",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Reports",
+    "link": "https://www.cell.com/cell-reports/home",
+    "enabled": false,
+    "abbrev": "Cell Rep",
+    "issn_print": "2211-1247",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Reports Medicine",
+    "link": "https://www.cell.com/cell-reports-medicine/home",
+    "enabled": false,
+    "abbrev": "Cell Rep Med",
+    "issn_print": "2666-3791",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Reports Methods",
+    "link": "https://www.cell.com/cell-reports-methods/home",
+    "enabled": false,
+    "abbrev": "Cell Rep Methods",
+    "issn_print": "2667-2375",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Reports Physical Science",
+    "link": "https://www.cell.com/cell-reports-physical-science/home",
+    "enabled": false,
+    "abbrev": "Cell Rep Phys Sci",
+    "issn_print": "2666-3864",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Reports Sustainability",
+    "link": "https://www.cell.com/cell-reports-sustainability/home",
+    "enabled": false,
+    "abbrev": "Cell Rep Sustain",
+    "issn_print": "2949-7906",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Stem Cell",
+    "link": "https://www.cell.com/cell-stem-cell/home",
+    "enabled": false,
+    "abbrev": "Cell Stem Cell",
+    "issn_print": "2472-6990",
+    "issn_electronic": null
+  },
+  {
+    "name": "Cell Systems",
+    "link": "https://www.cell.com/cell-systems/home",
+    "enabled": false,
+    "abbrev": "Cell Syst",
+    "issn_print": "2405-4712",
+    "issn_electronic": null
+  },
+  {
+    "name": "Chem",
+    "link": "https://www.cell.com/chem/home",
+    "enabled": false,
+    "abbrev": "Chem",
+    "issn_print": "2451-9294",
+    "issn_electronic": "2451-9308"
+  },
+  {
+    "name": "Chem Catalysis",
+    "link": "https://www.cell.com/chem-catalysis/home",
+    "enabled": false,
+    "abbrev": "Chem Catal",
+    "issn_print": "2667-1093",
+    "issn_electronic": null
+  },
+  {
+    "name": "Current Biology",
+    "link": "https://www.cell.com/current-biology/home",
+    "enabled": false,
+    "abbrev": "Curr Biol",
+    "issn_print": "0960-9822",
+    "issn_electronic": null
+  },
+  {
+    "name": "Developmental Cell",
+    "link": "https://www.cell.com/developmental-cell/home",
+    "enabled": false,
+    "abbrev": "Dev Cell",
+    "issn_print": "1534-5807",
+    "issn_electronic": null
+  },
+  {
+    "name": "Device",
+    "link": "https://www.cell.com/device/home",
+    "enabled": false,
+    "abbrev": "Device",
+    "issn_print": "0216-9185",
+    "issn_electronic": "2746-8984"
+  },
+  {
+    "name": "Heliyon",
+    "link": "https://www.cell.com/heliyon/home",
+    "enabled": false,
+    "abbrev": "Heliyon",
+    "issn_print": "2405-8440",
+    "issn_electronic": null
+  },
+  {
+    "name": "Human Genetics and Genomics Advances (partner)",
+    "link": "https://www.cell.com/hgg-advances/home",
+    "enabled": false,
+    "abbrev": "HGG Adv",
+    "issn_print": null,
+    "issn_electronic": "2666-2477"
+  },
+  {
+    "name": "Immunity",
+    "link": "https://www.cell.com/immunity/home",
+    "enabled": false,
+    "abbrev": "Immunity",
+    "issn_print": "1074-7613",
+    "issn_electronic": null
+  },
+  {
+    "name": "Joule",
+    "link": "https://www.cell.com/joule/home",
+    "enabled": false,
+    "abbrev": "Joule",
+    "issn_print": "2542-4351",
+    "issn_electronic": null
+  },
+  {
+    "name": "Matter",
+    "link": "https://www.cell.com/matter/home",
+    "enabled": false,
+    "abbrev": "Matter",
+    "issn_print": "2297-8240",
+    "issn_electronic": null
+  },
+  {
+    "name": "Med",
+    "link": "https://www.cell.com/med/home",
+    "enabled": false,
+    "abbrev": "Med",
+    "issn_print": "1994-4195",
+    "issn_electronic": "2666-6340"
+  },
+  {
+    "name": "Molecular Cell",
+    "link": "https://www.cell.com/molecular-cell/home",
+    "enabled": false,
+    "abbrev": "Mol Cell",
+    "issn_print": "1097-2765",
+    "issn_electronic": null
+  },
+  {
+    "name": "Molecular Plant (partner)",
+    "link": "https://www.cell.com/molecular-plant/home",
+    "enabled": false,
+    "abbrev": "Mol Plant",
+    "issn_print": "1674-2052",
+    "issn_electronic": "1752-9867"
+  },
+  {
+    "name": "Molecular Therapy (partner)",
+    "link": "https://www.cell.com/molecular-therapy-family/molecular-therapy/home",
+    "enabled": false,
+    "abbrev": "Mol Ther",
+    "issn_print": "1525-0016",
+    "issn_electronic": "1525-0024"
+  },
+  {
+    "name": "Molecular Therapy Methods & Clinical Development (partner)",
+    "link": "https://www.cell.com/molecular-therapy-family/methods/home",
+    "enabled": false,
+    "abbrev": "Mol Ther Methods Clin Dev",
+    "issn_print": null,
+    "issn_electronic": "2329-0501"
+  },
+  {
+    "name": "Molecular Therapy Nucleic Acids (partner)",
+    "link": "https://www.cell.com/molecular-therapy-family/nucleic-acids/home",
+    "enabled": false,
+    "abbrev": "Mol Ther Nucleic Acids",
+    "issn_print": null,
+    "issn_electronic": "2162-2531"
+  },
+  {
+    "name": "Molecular Therapy Oncology (partner)",
+    "link": "https://www.cell.com/molecular-therapy-family/oncology/home",
+    "enabled": false,
+    "abbrev": "Mol Ther Oncol",
+    "issn_print": null,
+    "issn_electronic": "2950-3299"
+  },
+  {
+    "name": "Neuron",
+    "link": "https://www.cell.com/newton/home",
+    "enabled": false,
+    "abbrev": "Neuron",
+    "issn_print": "0896-6273",
+    "issn_electronic": "1097-4199"
+  },
+  {
+    "name": "Newton",
+    "link": "https://www.cell.com/newton/home",
+    "enabled": false,
+    "abbrev": "Newton",
+    "issn_print": "2950-6360",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nexus (partner)",
+    "link": "https://www.cell.com/nexus/home",
+    "enabled": false,
+    "abbrev": "Nexus",
+    "issn_print": null,
+    "issn_electronic": "2950-6352"
+  },
+  {
+    "name": "One Earth",
+    "link": "https://www.cell.com/one-earth/home",
+    "enabled": false,
+    "abbrev": "One Earth",
+    "issn_print": "2590-3322",
+    "issn_electronic": null
+  },
+  {
+    "name": "Patterns",
+    "link": "https://www.cell.com/patterns/home",
+    "enabled": false,
+    "abbrev": "Patterns (N Y)",
+    "issn_print": "2666-3899",
+    "issn_electronic": null
+  },
+  {
+    "name": "Plant Communications (partner)",
+    "link": "https://www.cell.com/plant-communications/home",
+    "enabled": false,
+    "abbrev": "Plant Commun",
+    "issn_print": null,
+    "issn_electronic": "2590-3462"
+  },
+  {
+    "name": "Stem Cell Reports (partner)",
+    "link": "https://www.cell.com/stem-cell-reports/home",
+    "enabled": false,
+    "abbrev": "Stem Cell Reports",
+    "issn_print": "2213-6711",
+    "issn_electronic": null
+  },
+  {
+    "name": "Structure",
+    "link": "https://www.cell.com/structure/home",
+    "enabled": false,
+    "abbrev": "Structure",
+    "issn_print": "0969-2126",
+    "issn_electronic": "1878-4186"
+  },
+  {
+    "name": "The Innovation (partner)",
+    "link": "https://www.cell.com/the-innovation/home",
+    "enabled": false,
+    "abbrev": "Innovation (Camb)",
+    "issn_print": "2055-4990",
+    "issn_electronic": "2666-6758"
+  },
+  {
+    "name": "Trends in Biochemical Sciences",
+    "link": "https://www.cell.com/trends/biochemical-sciences/home",
+    "enabled": false,
+    "abbrev": "Trends Biochem Sci",
+    "issn_print": "0968-0004",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Biotechnology",
+    "link": "https://www.cell.com/trends/biotechnology/home",
+    "enabled": false,
+    "abbrev": "Trends Biotechnol",
+    "issn_print": "0167-7799",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Cancer",
+    "link": "https://www.cell.com/trends/cancer/home",
+    "enabled": false,
+    "abbrev": "Trends Cancer",
+    "issn_print": "2405-8033",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Cell Biology",
+    "link": "https://www.cell.com/trends/cell-biology/home",
+    "enabled": false,
+    "abbrev": "Trends Cell Biol",
+    "issn_print": "0962-8924",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Chemistry",
+    "link": "https://www.cell.com/trends/chemistry/home",
+    "enabled": false,
+    "abbrev": "Trends Chem",
+    "issn_print": "2589-5974",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Cognitive Sciences",
+    "link": "https://www.cell.com/trends/cognitive-sciences/home",
+    "enabled": false,
+    "abbrev": "Trends Cogn Sci",
+    "issn_print": "1364-6613",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Ecology & Evolution",
+    "link": "https://www.cell.com/trends/ecology-evolution/home",
+    "enabled": false,
+    "abbrev": "Trends Ecol Evol",
+    "issn_print": "0169-5347",
+    "issn_electronic": "1872-8383"
+  },
+  {
+    "name": "Trends in Ecology and Evolution",
+    "link": "https://www.cell.com/trends/ecology-evolution/home",
+    "enabled": false,
+    "abbrev": "Trends Ecol Evol",
+    "issn_print": null,
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Endocrinology & Metabolism",
+    "link": "https://www.cell.com/trends/endocrinology-metabolism/home",
+    "enabled": false,
+    "abbrev": "Trends Endocrinol Metab",
+    "issn_print": "1043-2760",
+    "issn_electronic": "1879-3061"
+  },
+  {
+    "name": "Trends in Endocrinology and Metabolism",
+    "link": "https://www.cell.com/trends/endocrinology-metabolism/home",
+    "enabled": false,
+    "abbrev": "Trends Endocrinol Metab",
+    "issn_print": "1043-2760",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Genetics",
+    "link": "https://www.cell.com/trends/genetics/home",
+    "enabled": false,
+    "abbrev": "Trends Genet",
+    "issn_print": "0168-9525",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Immunology",
+    "link": "https://www.cell.com/trends/immunology/home",
+    "enabled": false,
+    "abbrev": "Trends Immunol",
+    "issn_print": "1471-4906",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Microbiology",
+    "link": "https://www.cell.com/trends/microbiology/home",
+    "enabled": false,
+    "abbrev": "Trends Microbiol",
+    "issn_print": "0966-842X",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Molecular Medicine",
+    "link": "https://www.cell.com/trends/molecular-medicine/home",
+    "enabled": false,
+    "abbrev": "Trends Mol Med",
+    "issn_print": "1471-4914",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Neurosciences",
+    "link": "https://www.cell.com/trends/neurosciences/home",
+    "enabled": false,
+    "abbrev": "Trends Neurosci",
+    "issn_print": "0166-2236",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Parasitology",
+    "link": "https://www.cell.com/trends/parasitology/home",
+    "enabled": false,
+    "abbrev": "Trends Parasitol",
+    "issn_print": "1471-4922",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Pharmacological Sciences",
+    "link": "https://www.cell.com/trends/pharmacological-sciences/home",
+    "enabled": false,
+    "abbrev": "Trends Pharmacol Sci",
+    "issn_print": "0165-6147",
+    "issn_electronic": null
+  },
+  {
+    "name": "Trends in Plant Science",
+    "link": "https://www.cell.com/trends/plant-science/home",
+    "enabled": false,
+    "abbrev": "Trends Plant Sci",
+    "issn_print": "1360-1385",
+    "issn_electronic": "1878-4372"
+  },
+  {
+    "name": "iScience",
+    "link": "https://www.cell.com/iscience/home",
+    "enabled": false,
+    "abbrev": "iScience",
+    "issn_print": "2589-0042",
+    "issn_electronic": null
+  }
 ]

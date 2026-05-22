@@ -3,84 +3,112 @@
     "name": "PLOS Biology",
     "link": "https://journals.plos.org/plosbiology/",
     "enabled": true,
-    "abbrev": "PLoS Biol"
+    "abbrev": "PLoS Biol",
+    "issn_print": "1544-9173",
+    "issn_electronic": "1545-7885"
   },
   {
     "name": "PLOS Climate",
     "link": "https://journals.plos.org/climate/",
     "enabled": false,
-    "abbrev": "PLOS Clim"
+    "abbrev": "PLOS Clim",
+    "issn_print": "2767-3200",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Complex Systems",
     "link": "https://journals.plos.org/complexsystems/",
     "enabled": false,
-    "abbrev": "PLOS Complex Syst"
+    "abbrev": "PLOS Complex Syst",
+    "issn_print": "2837-8830",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Computational Biology",
     "link": "https://journals.plos.org/ploscompbiol/",
     "enabled": true,
-    "abbrev": "PLoS Comput Biol"
+    "abbrev": "PLoS Comput Biol",
+    "issn_print": "1553-734X",
+    "issn_electronic": "1553-7358"
   },
   {
     "name": "PLOS Digital Health",
     "link": "https://journals.plos.org/digitalhealth/",
     "enabled": true,
-    "abbrev": "PLOS Digit Health"
+    "abbrev": "PLOS Digit Health",
+    "issn_print": "2767-3170",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Genetics",
     "link": "https://journals.plos.org/plosgenetics/",
     "enabled": true,
-    "abbrev": "PLoS Genet"
+    "abbrev": "PLoS Genet",
+    "issn_print": "1553-7390",
+    "issn_electronic": "1553-7404"
   },
   {
     "name": "PLOS Global Public Health",
     "link": "https://journals.plos.org/globalpublichealth/",
     "enabled": true,
-    "abbrev": "PLOS Glob Public Health"
+    "abbrev": "PLOS Glob Public Health",
+    "issn_print": "2767-3375",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Medicine",
     "link": "https://journals.plos.org/plosmedicine/",
     "enabled": true,
-    "abbrev": "PLoS Med"
+    "abbrev": "PLoS Med",
+    "issn_print": "1549-1277",
+    "issn_electronic": "1549-1676"
   },
   {
     "name": "PLOS Mental Health",
     "link": "https://journals.plos.org/mentalhealth/",
     "enabled": true,
-    "abbrev": "PLOS Ment Health"
+    "abbrev": "PLOS Ment Health",
+    "issn_print": "2837-8156",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Neglected Tropical Diseases",
     "link": "https://journals.plos.org/plosntds/",
     "enabled": true,
-    "abbrev": "PLoS Negl Trop Dis"
+    "abbrev": "PLoS Negl Trop Dis",
+    "issn_print": "1935-2735",
+    "issn_electronic": null
   },
   {
     "name": "PLOS One",
     "link": "https://journals.plos.org/plosone/",
     "enabled": true,
-    "abbrev": "PLoS One"
+    "abbrev": "PLoS One",
+    "issn_print": "1932-6203",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Pathogens",
     "link": "https://journals.plos.org/plospathogens/",
     "enabled": true,
-    "abbrev": "PLoS Pathog"
+    "abbrev": "PLoS Pathog",
+    "issn_print": "1553-7366",
+    "issn_electronic": "1553-7374"
   },
   {
     "name": "PLOS Sustainability and Transformation",
     "link": "https://journals.plos.org/sustainabilitytransformation/",
     "enabled": false,
-    "abbrev": "PLOS Sustain Transform"
+    "abbrev": "PLOS Sustain Transform",
+    "issn_print": "2767-3197",
+    "issn_electronic": null
   },
   {
     "name": "PLOS Water",
     "link": "https://journals.plos.org/water/",
     "enabled": false,
-    "abbrev": "PLOS Water"
+    "abbrev": "PLOS Water",
+    "issn_print": "2767-3219",
+    "issn_electronic": null
   }
 ]

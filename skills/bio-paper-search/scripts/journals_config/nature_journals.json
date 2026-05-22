@@ -1,308 +1,410 @@
 [
-    {
-        "name": "Cell Death & Differentiation",
-        "link": "https://www.nature.com/cdd/",
-        "enabled": true,
-        "abbrev": "Cell Death Differ"
-    },
-    {
-        "name": "Cell Death & Disease",
-        "link": "https://www.nature.com/cddis/",
-        "enabled": true,
-        "abbrev": "Cell Death Dis"
-    },
-    {
-        "name": "Communications Earth & Environment",
-        "link": "https://www.nature.com/commsenv/",
-        "enabled": false,
-        "abbrev": "Commun Earth Environ"
-    },
-    {
-        "name": "Communications Materials",
-        "link": "https://www.nature.com/commsmat/",
-        "enabled": false,
-        "abbrev": "Commun Mater"
-    },
-    {
-        "name": "Communications Medicine",
-        "link": "https://www.nature.com/commsmed/",
-        "enabled": true,
-        "abbrev": "Commun Med (Lond)"
-    },
-    {
-        "name": "Communications Physics",
-        "link": "https://www.nature.com/commsphys/",
-        "enabled": false,
-        "abbrev": "Commun Phys"
-    },
-    {
-        "name": "Nature",
-        "link": "https://www.nature.com/nature/",
-        "enabled": true,
-        "abbrev": "Nature"
-    },
-    {
-        "name": "Nature Aging",
-        "link": "https://www.nature.com/nataging/",
-        "enabled": true,
-        "abbrev": "Nat Aging"
-    },
-    {
-        "name": "Nature Astronomy",
-        "link": "https://www.nature.com/natastron/",
-        "enabled": false,
-        "abbrev": "Nat Astron"
-    },
-    {
-        "name": "Nature Biomedical Engineering",
-        "link": "https://www.nature.com/natbiomedeng/",
-        "enabled": true,
-        "abbrev": "Nat Biomed Eng"
-    },
-    {
-        "name": "Nature Biotechnology",
-        "link": "https://www.nature.com/nbt/",
-        "enabled": true,
-        "abbrev": "Nat Biotechnol"
-    },
-    {
-        "name": "Nature Cancer",
-        "link": "https://www.nature.com/natcancer/",
-        "enabled": true,
-        "abbrev": "Nat Cancer"
-    },
-    {
-        "name": "Nature Cardiovascular Research",
-        "link": "https://www.nature.com/natcardiovascres/",
-        "enabled": true,
-        "abbrev": "Nat Cardiovasc Res"
-    },
-    {
-        "name": "Nature Catalysis",
-        "link": "https://www.nature.com/natcatal/",
-        "enabled": false,
-        "abbrev": "Nat Catal"
-    },
-    {
-        "name": "Nature Cell Biology",
-        "link": "https://www.nature.com/ncb/",
-        "enabled": true,
-        "abbrev": "Nat Cell Biol"
-    },
-    {
-        "name": "Nature Chemical Biology",
-        "link": "https://www.nature.com/nchembio/",
-        "enabled": true,
-        "abbrev": "Nat Chem Biol"
-    },
-    {
-        "name": "Nature Chemical Engineering",
-        "link": "https://www.nature.com/natchemeng/",
-        "enabled": false,
-        "abbrev": "Nat Chem Eng"
-    },
-    {
-        "name": "Nature Chemistry",
-        "link": "https://www.nature.com/nchem/",
-        "enabled": false,
-        "abbrev": "Nat Chem"
-    },
-    {
-        "name": "Nature Cities",
-        "link": "https://www.nature.com/natcities/",
-        "enabled": false,
-        "abbrev": "Nat Cities"
-    },
-    {
-        "name": "Nature Climate Change",
-        "link": "https://www.nature.com/nclimate/",
-        "enabled": false,
-        "abbrev": "Nat Clim Chang"
-    },
-    {
-        "name": "Nature Communications",
-        "link": "https://www.nature.com/ncomms/",
-        "enabled": true,
-        "abbrev": "Nat Commun"
-    },
-    {
-        "name": "Nature Computational Science",
-        "link": "https://www.nature.com/natcomputsci/",
-        "enabled": false,
-        "abbrev": "Nat Comput Sci"
-    },
-    {
-        "name": "Nature Ecology & Evolution",
-        "link": "https://www.nature.com/natecolevol/",
-        "enabled": true,
-        "abbrev": "Nat Ecol Evol"
-    },
-    {
-        "name": "Nature Electronics",
-        "link": "https://www.nature.com/natelectron/",
-        "enabled": false,
-        "abbrev": "Nat Electron"
-    },
-    {
-        "name": "Nature Energy",
-        "link": "https://www.nature.com/nenergy/",
-        "enabled": false,
-        "abbrev": "Nat Energy"
-    },
-    {
-        "name": "Nature Food",
-        "link": "https://www.nature.com/natfood/",
-        "enabled": true,
-        "abbrev": "Nat Food"
-    },
-    {
-        "name": "Nature Genetics",
-        "link": "https://www.nature.com/ng/",
-        "enabled": true,
-        "abbrev": "Nat Genet"
-    },
-    {
-        "name": "Nature Geoscience",
-        "link": "https://www.nature.com/ngeo/",
-        "enabled": false,
-        "abbrev": "Nat Geosci"
-    },
-    {
-        "name": "Nature Human Behaviour",
-        "link": "https://www.nature.com/nathumbehav/",
-        "enabled": true,
-        "abbrev": "Nat Hum Behav"
-    },
-    {
-        "name": "Nature Immunology",
-        "link": "https://www.nature.com/ni/",
-        "enabled": true,
-        "abbrev": "Nat Immunol"
-    },
-    {
-        "name": "Nature Machine Intelligence",
-        "link": "https://www.nature.com/natmachintell/",
-        "enabled": false,
-        "abbrev": "Nat Mach Intell"
-    },
-    {
-        "name": "Nature Materials",
-        "link": "https://www.nature.com/nmat/",
-        "enabled": false,
-        "abbrev": "Nat Mater"
-    },
-    {
-        "name": "Nature Medicine",
-        "link": "https://www.nature.com/nm/",
-        "enabled": true,
-        "abbrev": "Nat Med"
-    },
-    {
-        "name": "Nature Mental Health",
-        "link": "https://www.nature.com/natmentalhealth/",
-        "enabled": true,
-        "abbrev": "Nat Ment Health"
-    },
-    {
-        "name": "Nature Metabolism",
-        "link": "https://www.nature.com/natmetab/",
-        "enabled": true,
-        "abbrev": "Nat Metab"
-    },
-    {
-        "name": "Nature Methods",
-        "link": "https://www.nature.com/nmeth/",
-        "enabled": true,
-        "abbrev": "Nat Methods"
-    },
-    {
-        "name": "Nature Microbiology",
-        "link": "https://www.nature.com/nmicrobiol/",
-        "enabled": true,
-        "abbrev": "Nat Microbiol"
-    },
-    {
-        "name": "Nature Nanotechnology",
-        "link": "https://www.nature.com/nnano/",
-        "enabled": false,
-        "abbrev": "Nat Nanotechnol"
-    },
-    {
-        "name": "Nature Neuroscience",
-        "link": "https://www.nature.com/neuro/",
-        "enabled": true,
-        "abbrev": "Nat Neurosci"
-    },
-    {
-        "name": "Nature Photonics",
-        "link": "https://www.nature.com/nphoton/",
-        "enabled": false,
-        "abbrev": "Nat Photonics"
-    },
-    {
-        "name": "Nature Physics",
-        "link": "https://www.nature.com/nphys/",
-        "enabled": false,
-        "abbrev": "Nat Phys"
-    },
-    {
-        "name": "Nature Plants",
-        "link": "https://www.nature.com/nplants/",
-        "enabled": true,
-        "abbrev": "Nat Plants"
-    },
-    {
-        "name": "Nature Protocols",
-        "link": "https://www.nature.com/nprot/",
-        "enabled": true,
-        "abbrev": "Nat Protoc"
-    },
-    {
-        "name": "Nature Sensors",
-        "link": "https://www.nature.com/natsensors/",
-        "enabled": false,
-        "abbrev": "Nat Sens"
-    },
-    {
-        "name": "Nature Structural & Molecular Biology",
-        "link": "https://www.nature.com/nsmb/",
-        "enabled": true,
-        "abbrev": "Nat Struct Mol Biol"
-    },
-    {
-        "name": "Nature Sustainability",
-        "link": "https://www.nature.com/natsustain/",
-        "enabled": false,
-        "abbrev": "Nat Sustain"
-    },
-    {
-        "name": "Nature Synthesis",
-        "link": "https://www.nature.com/natsynth/",
-        "enabled": false,
-        "abbrev": "Nat Synth"
-    },
-    {
-        "name": "Nature Water",
-        "link": "https://www.nature.com/natwater/",
-        "enabled": false,
-        "abbrev": "Nat Water"
-    },
-    {
-        "name": "Oncogene",
-        "link": "https://www.nature.com/onc/",
-        "enabled": true,
-        "abbrev": "Oncogene"
-    },
-    {
-        "name": "Oncogenesis",
-        "link": "https://www.nature.com/oncsis/",
-        "enabled": true,
-        "abbrev": "Oncogenesis"
-    },
-    {
-        "name": "Translational Psychiatry",
-        "link": "https://www.nature.com/tp/",
-        "enabled": true,
-        "abbrev": "Transl Psychiatry"
-    }
+  {
+    "name": "Cell Death & Differentiation",
+    "link": "https://www.nature.com/cdd/",
+    "enabled": true,
+    "abbrev": "Cell Death Differ",
+    "issn_print": "1350-9047",
+    "issn_electronic": "1476-5403"
+  },
+  {
+    "name": "Cell Death & Disease",
+    "link": "https://www.nature.com/cddis/",
+    "enabled": true,
+    "abbrev": "Cell Death Dis",
+    "issn_print": null,
+    "issn_electronic": "2041-4889"
+  },
+  {
+    "name": "Communications Earth & Environment",
+    "link": "https://www.nature.com/commsenv/",
+    "enabled": false,
+    "abbrev": "Commun Earth Environ",
+    "issn_print": null,
+    "issn_electronic": "2662-4435"
+  },
+  {
+    "name": "Communications Materials",
+    "link": "https://www.nature.com/commsmat/",
+    "enabled": false,
+    "abbrev": "Commun Mater",
+    "issn_print": "2662-4443",
+    "issn_electronic": null
+  },
+  {
+    "name": "Communications Medicine",
+    "link": "https://www.nature.com/commsmed/",
+    "enabled": true,
+    "abbrev": "Commun Med (Lond)",
+    "issn_print": "2730-664X",
+    "issn_electronic": null
+  },
+  {
+    "name": "Communications Physics",
+    "link": "https://www.nature.com/commsphys/",
+    "enabled": false,
+    "abbrev": "Commun Phys",
+    "issn_print": "2399-3650",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature",
+    "link": "https://www.nature.com/nature/",
+    "enabled": true,
+    "abbrev": "Nature",
+    "issn_print": "0028-0836",
+    "issn_electronic": "1476-4687"
+  },
+  {
+    "name": "Nature Aging",
+    "link": "https://www.nature.com/nataging/",
+    "enabled": true,
+    "abbrev": "Nat Aging",
+    "issn_print": "2662-8465",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Astronomy",
+    "link": "https://www.nature.com/natastron/",
+    "enabled": false,
+    "abbrev": "Nat Astron",
+    "issn_print": "2397-3366",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Biomedical Engineering",
+    "link": "https://www.nature.com/natbiomedeng/",
+    "enabled": true,
+    "abbrev": "Nat Biomed Eng",
+    "issn_print": "2157-846X",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Biotechnology",
+    "link": "https://www.nature.com/nbt/",
+    "enabled": true,
+    "abbrev": "Nat Biotechnol",
+    "issn_print": "1087-0156",
+    "issn_electronic": "1546-1696"
+  },
+  {
+    "name": "Nature Cancer",
+    "link": "https://www.nature.com/natcancer/",
+    "enabled": true,
+    "abbrev": "Nat Cancer",
+    "issn_print": "2662-1347",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Cardiovascular Research",
+    "link": "https://www.nature.com/natcardiovascres/",
+    "enabled": true,
+    "abbrev": "Nat Cardiovasc Res",
+    "issn_print": "2731-0590",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Catalysis",
+    "link": "https://www.nature.com/natcatal/",
+    "enabled": false,
+    "abbrev": "Nat Catal",
+    "issn_print": "2520-1158",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Cell Biology",
+    "link": "https://www.nature.com/ncb/",
+    "enabled": true,
+    "abbrev": "Nat Cell Biol",
+    "issn_print": "1465-7392",
+    "issn_electronic": "1476-4679"
+  },
+  {
+    "name": "Nature Chemical Biology",
+    "link": "https://www.nature.com/nchembio/",
+    "enabled": true,
+    "abbrev": "Nat Chem Biol",
+    "issn_print": "1552-4450",
+    "issn_electronic": "1552-4469"
+  },
+  {
+    "name": "Nature Chemical Engineering",
+    "link": "https://www.nature.com/natchemeng/",
+    "enabled": false,
+    "abbrev": "Nat Chem Eng",
+    "issn_print": "2948-1198",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Chemistry",
+    "link": "https://www.nature.com/nchem/",
+    "enabled": false,
+    "abbrev": "Nat Chem",
+    "issn_print": "1755-4330",
+    "issn_electronic": "1755-4349"
+  },
+  {
+    "name": "Nature Cities",
+    "link": "https://www.nature.com/natcities/",
+    "enabled": false,
+    "abbrev": "Nat Cities",
+    "issn_print": "2731-9997",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Climate Change",
+    "link": "https://www.nature.com/nclimate/",
+    "enabled": false,
+    "abbrev": "Nat Clim Chang",
+    "issn_print": "1758-678X",
+    "issn_electronic": "1758-6798"
+  },
+  {
+    "name": "Nature Communications",
+    "link": "https://www.nature.com/ncomms/",
+    "enabled": true,
+    "abbrev": "Nat Commun",
+    "issn_print": "2041-1723",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Computational Science",
+    "link": "https://www.nature.com/natcomputsci/",
+    "enabled": false,
+    "abbrev": "Nat Comput Sci",
+    "issn_print": "2662-8457",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Ecology & Evolution",
+    "link": "https://www.nature.com/natecolevol/",
+    "enabled": true,
+    "abbrev": "Nat Ecol Evol",
+    "issn_print": null,
+    "issn_electronic": "2397-334X"
+  },
+  {
+    "name": "Nature Electronics",
+    "link": "https://www.nature.com/natelectron/",
+    "enabled": false,
+    "abbrev": "Nat Electron",
+    "issn_print": "2520-1131",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Energy",
+    "link": "https://www.nature.com/nenergy/",
+    "enabled": false,
+    "abbrev": "Nat Energy",
+    "issn_print": "2058-7546",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Food",
+    "link": "https://www.nature.com/natfood/",
+    "enabled": true,
+    "abbrev": "Nat Food",
+    "issn_print": "2662-1355",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Genetics",
+    "link": "https://www.nature.com/ng/",
+    "enabled": true,
+    "abbrev": "Nat Genet",
+    "issn_print": "1061-4036",
+    "issn_electronic": "1546-1718"
+  },
+  {
+    "name": "Nature Geoscience",
+    "link": "https://www.nature.com/ngeo/",
+    "enabled": false,
+    "abbrev": "Nat Geosci",
+    "issn_print": "1752-0894",
+    "issn_electronic": "1752-0908"
+  },
+  {
+    "name": "Nature Human Behaviour",
+    "link": "https://www.nature.com/nathumbehav/",
+    "enabled": true,
+    "abbrev": "Nat Hum Behav",
+    "issn_print": "2397-3374",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Immunology",
+    "link": "https://www.nature.com/ni/",
+    "enabled": true,
+    "abbrev": "Nat Immunol",
+    "issn_print": "1529-2908",
+    "issn_electronic": "1529-2916"
+  },
+  {
+    "name": "Nature Machine Intelligence",
+    "link": "https://www.nature.com/natmachintell/",
+    "enabled": false,
+    "abbrev": "Nat Mach Intell",
+    "issn_print": "2522-5839",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Materials",
+    "link": "https://www.nature.com/nmat/",
+    "enabled": false,
+    "abbrev": "Nat Mater",
+    "issn_print": "1476-1122",
+    "issn_electronic": "1476-4660"
+  },
+  {
+    "name": "Nature Medicine",
+    "link": "https://www.nature.com/nm/",
+    "enabled": true,
+    "abbrev": "Nat Med",
+    "issn_print": "1078-8956",
+    "issn_electronic": "1744-7933"
+  },
+  {
+    "name": "Nature Mental Health",
+    "link": "https://www.nature.com/natmentalhealth/",
+    "enabled": true,
+    "abbrev": "Nat Ment Health",
+    "issn_print": "2731-6076",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Metabolism",
+    "link": "https://www.nature.com/natmetab/",
+    "enabled": true,
+    "abbrev": "Nat Metab",
+    "issn_print": "2522-5812",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Methods",
+    "link": "https://www.nature.com/nmeth/",
+    "enabled": true,
+    "abbrev": "Nat Methods",
+    "issn_print": "1548-7091",
+    "issn_electronic": "1548-7105"
+  },
+  {
+    "name": "Nature Microbiology",
+    "link": "https://www.nature.com/nmicrobiol/",
+    "enabled": true,
+    "abbrev": "Nat Microbiol",
+    "issn_print": "2058-5276",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Nanotechnology",
+    "link": "https://www.nature.com/nnano/",
+    "enabled": false,
+    "abbrev": "Nat Nanotechnol",
+    "issn_print": "1748-3387",
+    "issn_electronic": "1748-3395"
+  },
+  {
+    "name": "Nature Neuroscience",
+    "link": "https://www.nature.com/neuro/",
+    "enabled": true,
+    "abbrev": "Nat Neurosci",
+    "issn_print": "1097-6256",
+    "issn_electronic": "1546-1726"
+  },
+  {
+    "name": "Nature Photonics",
+    "link": "https://www.nature.com/nphoton/",
+    "enabled": false,
+    "abbrev": "Nat Photonics",
+    "issn_print": "1749-4885",
+    "issn_electronic": "1749-4893"
+  },
+  {
+    "name": "Nature Physics",
+    "link": "https://www.nature.com/nphys/",
+    "enabled": false,
+    "abbrev": "Nat Phys",
+    "issn_print": "1745-2473",
+    "issn_electronic": "1745-2481"
+  },
+  {
+    "name": "Nature Plants",
+    "link": "https://www.nature.com/nplants/",
+    "enabled": true,
+    "abbrev": "Nat Plants",
+    "issn_print": "2055-026X",
+    "issn_electronic": "2055-0278"
+  },
+  {
+    "name": "Nature Protocols",
+    "link": "https://www.nature.com/nprot/",
+    "enabled": true,
+    "abbrev": "Nat Protoc",
+    "issn_print": "1750-2799",
+    "issn_electronic": "1754-2189"
+  },
+  {
+    "name": "Nature Sensors",
+    "link": "https://www.nature.com/natsensors/",
+    "enabled": false,
+    "abbrev": "Nat Sens",
+    "issn_print": "3059-4499",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Structural & Molecular Biology",
+    "link": "https://www.nature.com/nsmb/",
+    "enabled": true,
+    "abbrev": "Nat Struct Mol Biol",
+    "issn_print": "1545-9993",
+    "issn_electronic": "1545-9985"
+  },
+  {
+    "name": "Nature Sustainability",
+    "link": "https://www.nature.com/natsustain/",
+    "enabled": false,
+    "abbrev": "Nat Sustain",
+    "issn_print": "2398-9629",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Synthesis",
+    "link": "https://www.nature.com/natsynth/",
+    "enabled": false,
+    "abbrev": "Nat Synth",
+    "issn_print": "2731-0582",
+    "issn_electronic": null
+  },
+  {
+    "name": "Nature Water",
+    "link": "https://www.nature.com/natwater/",
+    "enabled": false,
+    "abbrev": "Nat Water",
+    "issn_print": "2731-6084",
+    "issn_electronic": null
+  },
+  {
+    "name": "Oncogene",
+    "link": "https://www.nature.com/onc/",
+    "enabled": true,
+    "abbrev": "Oncogene",
+    "issn_print": "0950-9232",
+    "issn_electronic": "0950-9232"
+  },
+  {
+    "name": "Oncogenesis",
+    "link": "https://www.nature.com/oncsis/",
+    "enabled": true,
+    "abbrev": "Oncogenesis",
+    "issn_print": "2157-9024",
+    "issn_electronic": null
+  },
+  {
+    "name": "Translational Psychiatry",
+    "link": "https://www.nature.com/tp/",
+    "enabled": true,
+    "abbrev": "Transl Psychiatry",
+    "issn_print": "2158-3188",
+    "issn_electronic": null
+  }
 ]

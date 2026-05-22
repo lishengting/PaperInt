@@ -1,38 +1,50 @@
 [
-    {
-        "name": "Science",
-        "link": "https://www.science.org/journal/science",
-        "enabled": false,
-        "abbrev": "Science"
-    },
-    {
-        "name": "Science Advances",
-        "link": "https://www.science.org/journal/sciadv",
-        "enabled": false,
-        "abbrev": "Sci Adv"
-    },
-    {
-        "name": "Science Immunology",
-        "link": "https://www.science.org/journal/sciimmunol",
-        "enabled": false,
-        "abbrev": "Sci Immunol"
-    },
-    {
-        "name": "Science Robotics",
-        "link": "https://www.science.org/journal/scirobotics",
-        "enabled": false,
-        "abbrev": "Sci Robot"
-    },
-    {
-        "name": "Science Signaling",
-        "link": "https://www.science.org/journal/signaling",
-        "enabled": false,
-        "abbrev": "Sci Signal"
-    },
-    {
-        "name": "Science Translational Medicine",
-        "link": "https://www.science.org/journal/stm",
-        "enabled": false,
-        "abbrev": "Sci Transl Med"
-    }
+  {
+    "name": "Science",
+    "link": "https://www.science.org/journal/science",
+    "enabled": false,
+    "abbrev": "Science",
+    "issn_print": "0036-8075",
+    "issn_electronic": "1095-9203"
+  },
+  {
+    "name": "Science Advances",
+    "link": "https://www.science.org/journal/sciadv",
+    "enabled": false,
+    "abbrev": "Sci Adv",
+    "issn_print": "2375-2548",
+    "issn_electronic": "2375-2548"
+  },
+  {
+    "name": "Science Immunology",
+    "link": "https://www.science.org/journal/sciimmunol",
+    "enabled": false,
+    "abbrev": "Sci Immunol",
+    "issn_print": "2470-9468",
+    "issn_electronic": null
+  },
+  {
+    "name": "Science Robotics",
+    "link": "https://www.science.org/journal/scirobotics",
+    "enabled": false,
+    "abbrev": "Sci Robot",
+    "issn_print": "2470-9476",
+    "issn_electronic": null
+  },
+  {
+    "name": "Science Signaling",
+    "link": "https://www.science.org/journal/signaling",
+    "enabled": false,
+    "abbrev": "Sci Signal",
+    "issn_print": "1945-0877",
+    "issn_electronic": "1937-9145"
+  },
+  {
+    "name": "Science Translational Medicine",
+    "link": "https://www.science.org/journal/stm",
+    "enabled": false,
+    "abbrev": "Sci Transl Med",
+    "issn_print": "1946-6234",
+    "issn_electronic": "1946-6242"
+  }
 ]
