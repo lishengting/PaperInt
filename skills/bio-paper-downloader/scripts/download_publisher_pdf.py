@@ -440,8 +440,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     const href = a.getAttribute('href') || '';
                     const text = (a.innerText || '').toLowerCase().trim();
                     // Direct PDF, showPdf (Cell/Elsevier), /pdf/ path, or text hint
-                    const isPdf = href.endsWith('.pdf') ||
+                    const isPdf = href.includes('.pdf') ||
+                        href.endsWith('.pdf') ||
                         href.includes('showPdf') ||
+                        href.includes('pdfft') ||
                         href.includes('/pdf/') ||
                         href.includes('download') ||
                         text.includes('pdf') || text.includes('download');
@@ -725,8 +727,6 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         print(f"  [publisher] headed (xvfb) failed: {msg}", file=sys.stderr)
         if _is_fatal(msg):
             return result
-        if 'Anti-bot' in msg or 'No PDF links' in msg:
-            break
 
     if fallback_level < 3:
         return result
