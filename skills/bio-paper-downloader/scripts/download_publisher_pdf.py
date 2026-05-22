@@ -508,8 +508,13 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             pdf_bytes = base64.b64decode(js_result['data'])
 
-            if len(pdf_bytes) < 10000 or not pdf_bytes[:5] == b'%PDF-':
+            if len(pdf_bytes) < 10000:
                 result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
+                result['file_size'] = len(pdf_bytes)
+                return result
+            if pdf_bytes[:5] != b'%PDF-':
+                preview = pdf_bytes[:200].decode('latin-1', errors='replace').strip()
+                result['message'] = f'Not a valid PDF ({len(pdf_bytes)} bytes, starts with: {preview})'
                 result['file_size'] = len(pdf_bytes)
                 return result
 
