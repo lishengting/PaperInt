@@ -1098,6 +1098,24 @@ def detect_url(url, config):
         return make_paper('pubmed', paper_id, f'PMC:{pmc_id}', '', '', '', '',
                           pdf_url, url, pmid=pmid, extra={'pmc_id': pmc_id})
 
+    m = re.search(r'doi\.org/(10\.[^/]+/[^/\s?#]+)', url)
+    if m:
+        doi = m.group(1).rstrip('.')
+        # Try resolving DOI to get metadata
+        title = f'DOI:{doi}'
+        authors = ''
+        doi_url = f'https://doi.org/{doi}'
+        try:
+            from paper_info.resolver import resolve
+            info = resolve(doi)
+            if info:
+                title = info.get('title', title)
+                authors = info.get('authors', '') or ''
+        except Exception:
+            pass
+        return make_paper('crossref', doi, title, authors, '', '', '',
+                          '', doi_url, doi=doi)
+
     print(f"  Treating as generic PDF URL: {url}")
     name = url.split('/')[-1] or 'download'
     return make_paper('generic', sanitize(name), f'Download:{url}', '', '', '', '',
