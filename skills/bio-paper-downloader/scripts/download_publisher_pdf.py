@@ -534,14 +534,15 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             # (handles Content-Disposition:attachment where page cannot load the PDF)
             if pdf_bytes is None:
                 try:
+                    js_click = """([url]) => {
+                        const a = document.createElement('a');
+                        a.href = url; a.download = ''; a.target = '_blank';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    }"""
                     async with page.expect_download(timeout=timeout * 1000) as dl_info:
-                        await page.evaluate("([url]) => {
-                            const a = document.createElement('a');
-                            a.href = url; a.download = ''; a.target = '_blank';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                        }", [pdf_url])
+                        await page.evaluate(js_click, [pdf_url])
                     download = await dl_info.value
                     tmp_path = str(output_path) + '.tmpdl'
                     await download.save_as(tmp_path)
