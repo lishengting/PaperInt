@@ -1326,12 +1326,14 @@ def search_all(keywords, config, max_results=10, sort_by='date', chrome_port=Non
     except Exception as e:
         print(f"{_ts()}   europepmc: error - {e}", file=sys.stderr)
 
-    try:
-        papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
-        all_papers.extend(papers)
-        print(f"{_ts()}   scholar: {len(papers)} results")
-    except Exception as e:
-        print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
+    # Scholar disabled by default due to aggressive anti-bot protection.
+    # To use scholar, run explicitly with -s scholar --browser.
+    # try:
+    #     papers, _ = scholar_search(keywords, config, max_results=max_results, chrome_port=chrome_port)
+    #     all_papers.extend(papers)
+    #     print(f"{_ts()}   scholar: {len(papers)} results")
+    # except Exception as e:
+    #     print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
 
     try:
         from cnsp import cnsp_search
@@ -1616,12 +1618,13 @@ def cmd_find(args, config):
                 print(f"{_ts()}   europepmc: {len(papers)} results")
             except Exception as e:
                 print(f"{_ts()}   europepmc: error - {e}", file=sys.stderr)
-            try:
-                papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
-                all_papers.extend(papers)
-                print(f"{_ts()}   scholar: {len(papers)} results")
-            except Exception as e:
-                print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
+            # Scholar disabled by default due to aggressive anti-bot protection.
+            # try:
+            #     papers, _ = scholar_search_title(args.title, config, 10, chrome_port=_shared_chrome_port)
+            #     all_papers.extend(papers)
+            #     print(f"{_ts()}   scholar: {len(papers)} results")
+            # except Exception as e:
+            #     print(f"{_ts()}   scholar: error - {e}", file=sys.stderr)
 
             if all_papers:
                 merged = _merge_dedup(all_papers)
