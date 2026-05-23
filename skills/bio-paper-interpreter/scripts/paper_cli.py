@@ -136,6 +136,9 @@ def _log_phase2_tokens(val_usage, interpret_usage, brief_usage):
             parts.append(f"{label}={t}")
     if total > 0:
         ts_print(f"  Phase 2 tokens: {', '.join(parts)}, total={total}")
+
+
+def _validate_pdf_content_llm(config, pdf_text, paper):
     """Use LLM to check whether extracted PDF content matches the paper's title and abstract.
 
     Returns (passed: bool, confidence: float, reason: str, usage: dict).
@@ -151,8 +154,10 @@ def _log_phase2_tokens(val_usage, interpret_usage, brief_usage):
     pdf_sample = pdf_text[:header_chars]
 
     system_prompt = (
-        "You are a research paper validator. Your task is to determine whether "
-        "a given PDF content snippet matches the expected paper (by title and abstract)."
+        "You are a rigorous research paper validator. Your task is to determine whether "
+        "a given PDF content is a genuine research article that matches the expected paper. "
+        "You must reject corrections, errata, supplementary materials, editorials, "
+        "commentaries, advertisements, and any document that is not an original research paper."
     )
 
     formatted_title = title if title else '(not available)'
@@ -162,20 +167,30 @@ def _log_phase2_tokens(val_usage, interpret_usage, brief_usage):
         "I will give you:\n"
         "1. The expected paper title and abstract\n"
         "2. The first portion of text extracted from a downloaded PDF\n\n"
-        "Determine whether the PDF content is the actual paper described by the "
-        "title and abstract, or something else (e.g., Supplementary Materials, "
-        "a different paper, a publisher error page, etc.).\n\n"
-        "Consider:\n"
-        "- Does the PDF text mention the same research topic?\n"
-        "- Does the title or key terms from the title/abstract appear in the PDF?\n"
-        "- Does the PDF look like a full research article, or supplementary content?\n\n"
+        "First, classify the PDF document type as one of:\n"
+        "- research_article: a full original research paper with methods, results, figures\n"
+        "- author_correction: a correction or erratum to a previously published article\n"
+        "- supplementary_material: supplemental figures, tables, or methods\n"
+        "- editorial_commentary: opinion piece, editorial, commentary, or letter to editor\n"
+        "- advertisement: promotional or advertising content\n"
+        "- other: does not fit any category above\n\n"
+        "Then determine whether this PDF is the actual research paper. "
+        "Reject (match=false) if the document type is NOT research_article, "
+        "or if the content does not match the expected title/abstract.\n\n"
+        "Rejection criteria:\n"
+        "- The document type is NOT research_article\n"
+        "- The PDF is a correction, erratum, supplement, editorial, or advertisement\n"
+        "- The title/abstract don't match the PDF content\n"
+        "- The PDF lacks hallmarks of a research article (methods, results, data)\n\n"
         f"=== EXPECTED PAPER ===\n"
         f"Title: {formatted_title}\n"
         f"Abstract: {formatted_abstract}\n\n"
         f"=== PDF CONTENT (first {len(pdf_sample)} chars) ===\n"
         f"{pdf_sample}\n\n"
         "Respond with ONLY a JSON object (no markdown, no code fences):\n"
-        '{"match": true/false, "confidence": 0.0-1.0, "reason": "brief explanation in English"}'
+        '{"match": true/false, "confidence": 0.0-1.0, '
+        '"doc_type": "research_article|author_correction|supplementary_material|editorial_commentary|advertisement|other", '
+        '"reason": "brief explanation in English"}'
     )
 
     api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
@@ -242,7 +257,7 @@ def run_phase1(paper_path, paper, config, log_file):
     n_tags = len(tags.get('tag_ids', []))
     labels = ', '.join(tags.get('matched_labels', []))
     log_phase(log_file, paper_id, 1, 'COMPLETED', f'{n_tags} tags: {labels}')
-    return True
+    return True, f'{n_tags} tags: {labels}'
 
 
 def run_phase2(paper_path, paper, config, log_file):
@@ -255,7 +270,7 @@ def run_phase2(paper_path, paper, config, log_file):
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', f'no PDF file at {pdf_path}')
         mark_interpret_failed(get_conn(config), paper_id, f'no PDF file at {pdf_path}')
-        return False
+        return False, f'no PDF file at {pdf_path}'
 
     max_chars = cfg(config, 'download.pdf_text_max_chars', 100000)
     extractor_mode = cfg(config, 'download.pdf_extraction.extractor', 'auto')
@@ -291,7 +306,7 @@ def run_phase2(paper_path, paper, config, log_file):
         ts_print(f"  PDF extract failed: {last_error}", file=sys.stderr)
         log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {last_error}')
         mark_interpret_failed(get_conn(config), paper_id, f'PDF extract: {last_error}')
-        return False
+        return False, f'extract error: {last_error}'
 
     pdf_text = extract_data.get('markdown', '')
     extractor_used = extract_data.get('extractor', 'unknown')
@@ -303,7 +318,7 @@ def run_phase2(paper_path, paper, config, log_file):
                   f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
         mark_interpret_failed(get_conn(config), paper_id,
                               f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
-        return False
+        return False, f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})'
 
     # Validate PDF content matches paper via LLM (catch Supplementary Materials etc.)
     validation_enabled = cfg(config, 'interpreter.pdf_content_validation.enabled', True)
@@ -314,7 +329,7 @@ def run_phase2(paper_path, paper, config, log_file):
             if not passed:
                 log_phase(log_file, paper_id, 2, 'FAILED', reason)
                 mark_interpret_failed(get_conn(config), paper_id, reason)
-                return False
+                return False, reason
             ts_print(f"  PDF validation: {reason}")
         except Exception as e:
             ts_print(f"  PDF validation error (proceeding anyway): {e}", file=sys.stderr)
@@ -367,7 +382,7 @@ def run_phase2(paper_path, paper, config, log_file):
     if not interpret_ok and not brief_ok:
         log_phase(log_file, paper_id, 2, 'FAILED', 'both interpret and brief LLM calls failed')
         mark_interpret_failed(get_conn(config), paper_id, 'both interpret and brief LLM calls failed')
-        return False
+        return False, 'both interpret and brief LLM calls failed'
 
     # Save interpret.json
     if interpret_ok:
@@ -406,7 +421,7 @@ def run_phase2(paper_path, paper, config, log_file):
         extra.append('brief failed')
     log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}' + (f' ({", ".join(extra)})' if extra else ''))
     _log_phase2_tokens(val_usage, interpret_usage, brief_usage)
-    return True
+    return True, mode
 
 
 def run_phase3(paper_path, paper, config, log_file):
@@ -414,6 +429,7 @@ def run_phase3(paper_path, paper, config, log_file):
     safe_pid = sanitize(paper_id)
     script = os.path.join(SKILL_DIR, 'md_to_html.py')
     all_ok = True
+    last_error = None
 
     # Read representative image path from interpret.json if available
     rep_image_abs = None
@@ -448,14 +464,17 @@ def run_phase3(paper_path, paper, config, log_file):
                 err_msg = result.stderr.strip() or f'exit code {result.returncode}'
                 ts_print(f"  md_to_html error ({name}): {err_msg}", file=sys.stderr)
                 log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {err_msg[:100]}')
+                last_error = f'{name}: {err_msg[:100]}'
                 all_ok = False
         except Exception as e:
             log_phase(log_file, paper_id, 3, 'FAILED', f'{name}: {str(e)[:100]}')
+            last_error = f'{name}: {str(e)[:100]}'
             all_ok = False
 
     if all_ok:
         log_phase(log_file, paper_id, 3, 'COMPLETED', f'HTML saved: {paper_path}')
-    return all_ok
+        return True, 'OK'
+    return False, last_error or 'unknown error'
 
 
 def run_phase4(paper_path, paper, config, log_file, en=False):
@@ -470,7 +489,7 @@ def run_phase4(paper_path, paper, config, log_file, en=False):
 
     if not api_key:
         log_phase(log_file, paper_id, 4, 'SKIPPED', 'no API key')
-        return True
+        return True, 'no API key (skipped)'
 
     script = os.path.join(SKILL_DIR, 'generate_poster.py')
     meth_model = af_config.get('methodology_model') or cfg(config, 'llm.model', 'deepseek-v4-pro')
@@ -492,17 +511,17 @@ def run_phase4(paper_path, paper, config, log_file, en=False):
                                 env={**os.environ, 'PYTHONUNBUFFERED': '1'})
         if result.returncode != 0:
             log_phase(log_file, paper_id, 4, 'FAILED', f'exit code {result.returncode}')
-            return False
+            return False, f'exit code {result.returncode}'
     except subprocess.TimeoutExpired:
         log_phase(log_file, paper_id, 4, 'FAILED', 'timeout')
-        return False
+        return False, 'timeout'
     except Exception as e:
         log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
-        return False
+        return False, str(e)[:100]
 
     n = '6' if en else '3'
     log_phase(log_file, paper_id, 4, 'COMPLETED', f'{n} posters generated')
-    return True
+    return True, f'{n} posters generated'
 
 
 def process_paper(paper, config, phases, log_file, en=False):
@@ -527,20 +546,20 @@ def process_paper(paper, config, phases, log_file, en=False):
         log_phase(log_file, paper_id, phase, 'START')
 
         if phase == 1:
-            ok = run_phase1(paper_path, paper, config, log_file)
+            ok, msg = run_phase1(paper_path, paper, config, log_file)
         elif phase == 2:
-            ok = run_phase2(paper_path, paper, config, log_file)
+            ok, msg = run_phase2(paper_path, paper, config, log_file)
         elif phase == 3:
-            ok = run_phase3(paper_path, paper, config, log_file)
+            ok, msg = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok = run_phase4(paper_path, paper, config, log_file, en=en)
+            ok, msg = run_phase4(paper_path, paper, config, log_file, en=en)
             if ok:
                 run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
         if ok:
-            ts_print('OK')
+            ts_print(f'OK ({msg})')
         else:
-            ts_print('FAILED')
+            ts_print(f'FAILED: {msg}')
             break
 
 
