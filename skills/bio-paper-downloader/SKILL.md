@@ -28,10 +28,11 @@ download them. Or download directly by URL.
 ## Quick Start
 
 ```
-python3 scripts/paper_cli.py {get|auto} [options]
+python3 scripts/paper_cli.py {get|pdf} [options]
+# or no subcommand for auto-mode
 ```
 
-Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar` | `generic`
+Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `generic`
 
 ### Auto-mode (no arguments)
 
@@ -44,25 +45,57 @@ python3 scripts/paper_cli.py                         # auto-mode (browser auto-s
 
 ## Command Reference
 
-### get — download by URL
+### get — download by URL or paper ID
 
 ```bash
 python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
 python3 scripts/paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
 python3 scripts/paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+python3 scripts/paper_cli.py get -p "2301.00001"              # resolve URL from database
+python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -l   # preview only
+python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -f   # force re-download
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-u, --url` | (required) | Paper URL |
+| `-p, --paper-id` | (none) | Resolve URL from database by paper ID |
 | `-l, --list` | off | Parse and show info without downloading |
+| `-f, --force` | off | Force re-download even if already downloaded |
+| `--browser-only` | off | Bypass fallback logic: headed Chrome with real display (biorxiv/medrxiv only) |
+| `--fallback-level` | 2 | Browser fallback: 0=direct-HTTP, 1=headless, 2=+xvfb, 3=+system-display |
+| `--captcha` | off | Enable 2Captcha solving (costs money) |
+| `--stealth` | off | Enable playwright-stealth for browser downloads |
+
+### pdf — download PDF directly
+
+```bash
+python3 scripts/paper_cli.py pdf -u "https://example.com/paper.pdf"
+python3 scripts/paper_cli.py pdf -u "https://example.com/paper.pdf" -o my-paper.pdf
+```
+
+Raw PDF download — no database tracking, no metadata, like curl.
+
+Options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-u, --url` | (required) | PDF URL |
+| `-o, --output` | derived from URL | Output file path |
 
 ### Auto-mode options
 
+When run without a subcommand, downloads all papers with status `searched` from the database.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--browser-only` | off | Use headed Chrome with real display for stubborn sites |
+| `--limit, -n` | (no limit) | Max number of papers to download |
+| `--retry-failed` | off | Retry papers with `download_failed` status |
+| `--cnsp` | off | Only download papers published in C/N/S/P journals |
+| `--cns` | off | Only download papers published in C/N/S journals (excludes PLOS) |
+| `--fallback-level` | 2 | Browser fallback: 0=direct-HTTP, 1=headless, 2=+xvfb, 3=+system-display |
+| `--captcha` | off | Enable 2Captcha solving (costs money) |
+| `--stealth` | off | Enable playwright-stealth for browser downloads |
 | `--data-dir` | `data` | Output directory |
 | `--db` | from config | SQLite database path |
 
@@ -74,7 +107,7 @@ Options:
 | `biorxiv` | Browser | Cloudflare requires headed Chrome |
 | `medrxiv` | Browser | Cloudflare requires headed Chrome |
 | `pubmed` | Browser via DOI or PMC | Follows DOI to publisher, falls back to PMC OA |
-| `scholar` | Browser | Follows detected links |
+| `generic` | Direct HTTP | Any direct PDF URL |
 
 ## State Tracking
 

@@ -1,7 +1,7 @@
 ---
 name: bio-paper-db-viewer
 description: View papers and database statistics from the shared SQLite database. Browse papers by status, source, or keyword; display full paper details; see pipeline statistics.
-compatibility: Requires Python 3. Read-only — never modifies the database or config.
+compatibility: Requires Python 3. read commands are read-only; delete and set-status modify the database.
 metadata:
   skit:
     version: 0.1.0
@@ -27,7 +27,7 @@ statistics. This skill is read-only — it never modifies the database or config
 ## Quick Start
 
 ```
-python3 scripts/paper_cli.py {stats|list|show} [options]
+python3 scripts/paper_cli.py {stats|list|show|delete|set-status} [options]
 ```
 
 ## Command Reference
@@ -70,6 +70,8 @@ Options:
 | `-k, --keyword` | (none) | Filter papers whose title contains the keyword |
 | `-n, --limit` | 20 | Maximum results |
 | `--offset` | 0 | Pagination offset |
+| `--cnsp` | off | Only show papers in C/N/S/P journals |
+| `--cns` | off | Only show papers in C/N/S journals (excludes PLOS) |
 
 ### show — paper details
 
@@ -85,14 +87,45 @@ Options:
 |------|---------|-------------|
 | `-p, --paper-id` | (required) | Paper ID from the database (DOI, arXiv ID, PMID) |
 
+### delete — remove a paper record
+
+```bash
+python3 scripts/paper_cli.py delete -p s41467-026-70776-7
+```
+
+Removes a paper from the database by its ID.
+
+Options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p, --paper-id` | (required) | Paper ID to delete |
+
+### set-status — change paper status
+
+```bash
+python3 scripts/paper_cli.py set-status -p s41467-026-70776-7 -s downloaded
+python3 scripts/paper_cli.py set-status -p 2301.00001 2301.00002 -s searched
+```
+
+Change the status of one or more papers. Useful for manual recovery.
+
+Options:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p, --paper-id` | (required, 1+) | Paper ID(s) to update |
+| `-s, --status` | (required) | Target status: `searched`, `downloaded`, `download_failed`, `interpreted`, `skipped`, `interpret_failed` |
+
 ## Output
 
 - `stats` — text summary of database contents
 - `list` — tabular listing with paper_id, title, source, status, date
 - `show` — full field listing for one paper
+- `delete` — removes a paper record from the database
+- `set-status` — updates status for one or more papers
 
 ## Rules
 
-- Read-only — never modifies the database or config.yaml.
+- `stats`, `list`, and `show` are read-only — they never modify the database or config.yaml.
+- `delete` and `set-status` are write operations — they modify the database directly. Use with caution.
 - Uses the shared `scripts/paper_db.py` module for connections and lookups.
 - Database path from `config.yaml` `db.path`, overridable via `--db`.

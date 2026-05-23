@@ -423,7 +423,7 @@ def main():
 
     sub = p.add_subparsers(dest='cmd', required=True,
                            title='commands',
-                           description='"stats", "list", "show", or "delete"')
+                           description='"stats", "list", "show", "delete", or "set-status"')
 
     # ---- stats ----
     sub.add_parser('stats', help='Show database summary statistics',

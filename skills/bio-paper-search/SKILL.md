@@ -31,7 +31,7 @@ papers, and `bio-paper-interpreter` to interpret them.
 python3 scripts/paper_cli.py {search|find} [options]
 ```
 
-Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar` | `cnsp`
+Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `scholar` | `crossref` | `europepmc` | `cnsp` | `all`
 
 ## Command Reference
 
@@ -59,17 +59,19 @@ Options:
 | `-k, --keywords` | config | Comma-separated keywords |
 | `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `cnsp`, `all` |
 | `-n, --num` | config (1) | Number of papers |
-| `-l, --list` | off | Preview only (results always saved to DB) |
-| `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Supported by arxiv, biorxiv, medrxiv, pubmed, cnsp. |
+| `-l, --list` | off | Preview only, do not save to database |
+| `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Supported by arxiv, biorxiv, medrxiv, pubmed, crossref, europepmc, cnsp. |
 | `--end-date` | today | Search until this date (YYYY-MM-DD) |
 | `--incremental` | off | Auto-compute start_date from last crawl for this source |
 | `--cnsp-journals` | all enabled | Limit CNSP to specific journals (e.g., "Nature" "Science") |
+| `--cns` | off | When using `-s cnsp`, search only CNS journals (Nature/Science/Cell, excluding PLOS) |
 
-### find — search by title
+### find — search by title or DOI
 
 ```bash
 python3 scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
 python3 scripts/paper_cli.py find -t "CRISPR editing methylation" -s pubmed
+python3 scripts/paper_cli.py find -d "10.1038/s41586-023-00000-0"
 ```
 
 ## State
@@ -86,6 +88,8 @@ The downloader and interpreter skills read from this same database.
 | `medrxiv` | medRxiv API | Medical/clinical preprints |
 | `pubmed` | NCBI E-utilities | Published biomedical papers |
 | `scholar` | Google Scholar (HTML scrape) | Disabled by default; use `-s scholar` explicitly |
+| `crossref` | Crossref API | Published papers with DOIs |
+| `europepmc` | Europe PMC API | Open-access life science literature |
 | `cnsp` | Cell/Nature/Science/PLOS journal scraping | Scrapes articles by date range, then filters by keywords client-side. Browser auto-starts. |
 
 ## Rules
