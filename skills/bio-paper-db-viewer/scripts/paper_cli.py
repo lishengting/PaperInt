@@ -201,7 +201,7 @@ def cmd_list(args, config):
     if args.cnsp or args.cns:
         which = 'CNS' if args.cns else 'CNSP'
         lookup_map = cns_map if args.cns else cnsp_map
-        all_rows = conn.execute(sql + ' ORDER BY search_date DESC', params).fetchall()
+        all_rows = conn.execute(sql + ' ORDER BY search_date DESC, paper_id', params).fetchall()
         filtered = []
         for r in all_rows:
             journal = _get_journal(r['metadata_json'])
@@ -220,7 +220,7 @@ def cmd_list(args, config):
         )
         total = conn.execute(count_sql, params).fetchone()['cnt']
 
-        sql += ' ORDER BY search_date DESC LIMIT ? OFFSET ?'
+        sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
         params.extend([args.limit, args.offset])
         rows = conn.execute(sql, params).fetchall()
 
