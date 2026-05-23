@@ -23,6 +23,11 @@ from .plos import PLOSParser
 from .utils import filter_by_keywords, normalize_article, score_and_rank
 
 
+def _is_valid_doi(doi: str) -> bool:
+    """Check that a DOI string starts with the expected 10. prefix."""
+    return bool(doi and doi.strip().startswith('10.'))
+
+
 def _ts():
     return datetime.now().strftime('[%H:%M:%S]')
 
@@ -98,7 +103,7 @@ async def _scrape_journal_type(journal_type: str, config: dict,
                 )
                 for a in raw_articles:
                     normalized = normalize_article(a, journal_type, jname)
-                    if normalized.get('doi'):
+                    if normalized.get('doi') and _is_valid_doi(normalized['doi']):
                         all_articles.append(normalized)
 
                 print(f"{_ts()}     {len(raw_articles)} articles found")

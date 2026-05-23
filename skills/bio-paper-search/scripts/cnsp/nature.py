@@ -116,7 +116,7 @@ class NatureParser(CNSP_Parser):
         m = re.search(r'(10\.\d{4,}/[^\s&]+)', url)
         if m:
             return m.group(1).rstrip('.')
-        return url.split('/')[-1]
+        return ''
 
     def _fetch_abstract_and_authors(self, url: str) -> tuple[str, str]:
         """Fetch abstract and authors from a Nature article page."""

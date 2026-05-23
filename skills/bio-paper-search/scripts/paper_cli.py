@@ -521,6 +521,9 @@ def preprint_search(keywords, config, server='biorxiv', max_results=100, max_sca
             combined = f"{title} {abstract}"
             if any(kw in combined for kw in kw_lower):
                 doi = p.get('doi', '')
+                if not doi:
+                    print(f"{_ts()}   {server}: skipping paper with empty DOI: {p.get('title', '?')[:80]}", file=sys.stderr)
+                    continue
                 published_doi = p.get('published', '')
                 journal = ''
                 issn = ''

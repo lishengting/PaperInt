@@ -195,4 +195,4 @@ class ScienceParser(CNSP_Parser):
         m = re.search(r'(10\.\d{4,}/[^\s&?]+)', url)
         if m:
             return m.group(1)
-        return url.split('/')[-1]
+        return ''

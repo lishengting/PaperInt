@@ -107,7 +107,7 @@ def insert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
                     p.get('title', ''),
                     p.get('authors', ''),
                     p.get('abstract', ''),
-                    p.get('doi', ''),
+                    _sanitize_doi(p.get('doi', '')),
                     p.get('pmid', ''),
                     p.get('arxiv_id', ''),
                     p.get('source', ''),
@@ -134,7 +134,7 @@ def upsert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
     count = 0
     now = _now()
     for p in papers:
-        doi = (p.get('doi', '') or '').strip()
+        doi = _sanitize_doi(p.get('doi', '') or '')
         if not doi:
             # Fall back to INSERT OR IGNORE by paper_id
             try:
@@ -383,6 +383,21 @@ def _normalize_doi(doi: str) -> str | None:
     import re
     m = re.search(r'10\.\d{4,}/[^\s]+', doi)
     return m.group(0) if m else doi
+
+
+def _sanitize_doi(doi: str) -> str:
+    """Validate and clean a DOI for writing to the database.
+
+    Returns the DOI if it starts with '10.', empty string otherwise.
+    Logs a warning when rejecting an invalid DOI.
+    """
+    if not doi:
+        return ''
+    doi = doi.strip()
+    if doi.startswith('10.'):
+        return doi
+    print(f"  DB: rejecting invalid DOI (no 10. prefix): {doi[:80]}", file=__import__('sys').stderr)
+    return ''
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
