@@ -515,6 +515,7 @@ def process_paper(paper, config, phases, log_file, en=False):
             ts_print('OK')
         else:
             ts_print('FAILED')
+            break
 
 
 def cmd_run(args, config):
