@@ -6,6 +6,8 @@ Usage:
   paper_cli.py stats
   paper_cli.py list [-s STATUS] [--source SOURCE] [-k KEYWORD] [-n N] [--offset OFFSET]
   paper_cli.py show -p PAPER_ID
+  paper_cli.py delete -p PAPER_ID
+  paper_cli.py set-status -p PAPER_ID [PAPER_ID ...] -s STATUS
 """
 from __future__ import annotations
 

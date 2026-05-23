@@ -33,33 +33,33 @@ translation tasks.
 
 ### Path A — Claude Code Direct
 
-Claude Code reads the paper content, reference docs, and `config.yaml` directly,
-then interprets without any external API. This is the default when working inside
-Claude Code.
+Claude Code reads the paper content, reference docs, prompt templates under
+`references/prompts/`, and runtime settings from `config.yaml`, then interprets
+without any external API. This is the default when working inside Claude Code.
 
 ### Path B — External LLM Pipeline (CLI)
 
 ```bash
 # Auto-mode — interpret all downloaded papers
-python3 scripts/paper_cli.py
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py
 
 # Interpret a single paper
-python3 scripts/paper_cli.py run s41467-026-70776-7
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py run s41467-026-70776-7
 
 # Run specific phases only
-python3 scripts/paper_cli.py run s41467-026-70776-7 --phase 1,2
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py run s41467-026-70776-7 --phase 1,2
 
 # Force re-interpret
-python3 scripts/paper_cli.py run s41467-026-70776-7 --force
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py run s41467-026-70776-7 --force
 
 # Preview what would be processed
-python3 scripts/paper_cli.py --dry-run
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --dry-run
 
 # Limit papers, retry failed, or filter by journal
-python3 scripts/paper_cli.py --limit 5 --retry-failed
-python3 scripts/paper_cli.py --cnsp          # C/N/S/P journals only
-python3 scripts/paper_cli.py --cns           # C/N/S journals only (excludes PLOS)
-python3 scripts/paper_cli.py --en            # also generate English posters
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --limit 5 --retry-failed
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --cnsp          # C/N/S/P journals only
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --cns           # C/N/S journals only (excludes PLOS)
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --en            # also generate English posters
 ```
 
 Path B uses the configured LLM API endpoint (`config.yaml` → `llm.api_base_url`).
@@ -90,9 +90,10 @@ processing and automation.
 
 ### Path A: Claude Code Direct (default when using Claude Code)
 
-Claude Code reads the paper content and system prompts from `config.yaml`
-directly, then interprets without any external API. This is the default
-when the user is working inside Claude Code.
+Claude Code reads the paper content and prompt templates from
+`references/prompts/`, with runtime settings from `config.yaml`, then interprets
+without any external API. This is the default when the user is working inside
+Claude Code.
 
 ### Path B: External LLM Pipeline
 
@@ -145,18 +146,17 @@ for p in papers:
 
 | Phase | Output | Reference | Description |
 |-------|--------|-----------|-------------|
-| 1 Filter | `{paper_dir}/{paper_id}.skipped.json` (if rejected) | `references/01_filter.md` | Tag matching |
+| 1 Tag Match | matched tags stored in `data/papers.db` | `references/01_filter.md` | Topic tag matching; current CLI does not reject papers in Phase 1 |
 | 2 Interpret | `{paper_dir}/{paper_id}.interpret.md` + `.json` + `.brief.md` | `references/02_interpret.md` | PDF extraction + LLM interpretation + brief article |
 | 3 Convert | `{paper_dir}/{paper_id}.interpret.html` + `.brief.html` | `references/03_convert.md` | Markdown → standalone HTML |
 | 4 Poster | `{paper_dir}/{paper_id}.poster.*.svg` + `.png` | `references/04_poster.md` | SVG/PNG poster generation |
 
 State rules per paper:
 - No log entry for this paper: start Phase 1.
-- Last log is `Phase 1 - REJECTED`: paper is done (skipped).
 - Last log is `Phase 1 - COMPLETED`: start Phase 2.
 - Last log is `Phase 2 - COMPLETED`: start Phase 3.
 - Last log is `Phase 3 - COMPLETED`: start Phase 4.
-- Last log is `Phase 4 - COMPLETED`: paper is done (interpreted + rendered + poster).
+- Last log is `Phase 4 - COMPLETED` or `Phase 4 - SKIPPED`: paper is done.
 - Last log is `Phase N - FAILED`: diagnose and retry. Paper status set to `interpret_failed`.
 
 ## Logging
@@ -173,11 +173,11 @@ Use these status values:
 |--------|-----|
 | `START` | A phase began for a paper. |
 | `COMPLETED` | A phase completed and its required output exists. |
-| `REJECTED` | Phase 1 determined the paper is not relevant. |
+| `SKIPPED` | A phase was intentionally skipped, e.g. Phase 4 with no API key. |
 | `FAILED` | A phase or operation failed. |
 | `INFO` | Important context that affects future work. |
 
-Log phase starts/completions, rejections, and failures. Do not log pure
+Log phase starts, completions, skips, and failures. Do not log pure
 reads, directory creation, or simple checks unless the result changes
 how the paper should be handled.
 
@@ -188,7 +188,7 @@ Resolve scripts from this skill's `scripts/` directory.
 | Script | Purpose |
 |--------|---------|
 | `paper_cli.py` | Main entry point — orchestrates all four phases via external LLM (Path B) |
-| `filter_relevance.py` | Apply bioinformatics relevance keyword filter |
+| `filter_relevance.py` | Optional/manual keyword relevance filter; not part of the default `paper_cli.py` Phase 1 flow |
 | `match_tags.py` | Regex-based tag assignment from config definitions |
 | `extract_pdf.py` | Extract PDF → Markdown via pymupdf4llm (primary) or pdftotext (fallback); extract embedded images, select representative figure |
 | `build_prompt.py` | Template LLM system+user prompts (Path B only) |
@@ -210,7 +210,6 @@ Resolve scripts from this skill's `scripts/` directory.
 - `{paper_dir}/{paper_id}.poster.en.png` — English PNG poster (Phase 4, with `--en`)
 - `{paper_dir}/{paper_id}.poster.direct.zh.png` — Chinese direct text-to-image poster (Phase 4)
 - `{paper_dir}/{paper_id}.poster.direct.en.png` — English direct text-to-image poster (Phase 4, with `--en`)
-- `{paper_dir}/{paper_id}.skipped.json` — skip record for non-relevant papers
 - `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)
 - `{paper_dir}/{paper_id}.pdf` — downloaded paper PDF
 - `data/execution_log.md` — phase state log
@@ -219,12 +218,11 @@ Resolve scripts from this skill's `scripts/` directory.
 ## Rules
 
 - Run phases sequentially per paper; never skip Phase 1.
-- Phase 1 assigns topic tags via `match_tags.py`. No relevance rejection — all papers pass.
-- Phase 2 must check the article landing page and supplementary material tab
-  for preprints (medRxiv/bioRxiv); do not infer supplement absence from PDF
-  text alone.
+- Phase 1 assigns topic tags via `match_tags.py` and always continues to Phase 2 in the current CLI.
+- For Claude Code direct/manual interpretation, check the article landing page and supplementary material tab
+  for preprints (medRxiv/bioRxiv); the batch CLI validates PDF content via LLM but does not browse supplement pages.
 - Phase 2 validates PDF content via LLM to reject corrections, supplements, and non-articles.
-- Load prompts and keywords from `config.yaml`; never hardcode them.
+- Prompt templates come from `references/prompts/`; keywords, tags, extraction settings, and LLM runtime settings come from `config.yaml`.
 - Never modify `config.yaml`; it is shared across all skills.
 - Distinguish full-text vs abstract-only in output metadata (`mode` field).
 - Path A (Claude Code) requires no API key; Path B requires `LLM_API_KEY`.

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Bio Paper Downloader CLI — download papers from search results.
+Bio Paper Downloader CLI — download papers from search results, paper IDs, URLs, or direct PDFs.
 
-Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  generic
+Download mechanisms: arXiv direct HTTP, bioRxiv/medRxiv browser, PubMed/PMC/publisher browser fallback, and generic direct PDF.
 
 Usage:
   paper_cli.py get -u URL    # download by URL with metadata tracking
+  paper_cli.py get -p ID     # resolve URL from database and download
   paper_cli.py pdf -u URL    # download PDF directly, like curl
   paper_cli.py               # auto-mode: download all 'searched' papers from DB
 """

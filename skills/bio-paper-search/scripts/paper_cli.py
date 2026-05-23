@@ -2,13 +2,14 @@
 """
 Bio Paper Search CLI — search bioinformatics papers across multiple sources.
 
-Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  cnsp
+Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  crossref  |  europepmc  |  cnsp  |  all
 
 Usage:
   paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--start-date DATE] [--end-date DATE]
   paper_cli.py find   -t title    [-s source] [-l]
+  paper_cli.py find   -d DOI      [-l]
 
-Results are saved to the shared SQLite database (data/papers.db).
+Results are saved to the shared SQLite database (data/papers.db) unless `--list` is used.
 Use bio-paper-downloader to download found papers.
 """
 import argparse

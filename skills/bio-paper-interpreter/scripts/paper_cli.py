@@ -7,13 +7,13 @@ Usage:
   paper_cli.py --retry-failed           # retry papers with interpret_failed status
   paper_cli.py run <paper_id>           # interpret a single paper (skips if already done)
   paper_cli.py run <paper_id> --force   # force re-interpret even if already interpreted
-  paper_cli.py run <paper_id> --phase 1 # run only specified phases (1, 2, 3, or 1,2,3)
+  paper_cli.py run <paper_id> --phase 1 # run only specified phases (1, 2, 3, 4, or comma-separated)
 
 Four-phase pipeline:
   Phase 1: Tag matching
   Phase 2: PDF extraction + LLM interpretation (requires LLM_API_KEY)
   Phase 3: Markdown → styled HTML conversion
-  Phase 4: Poster generation (6 posters per paper)
+  Phase 4: Poster generation (3 Chinese posters by default, 6 bilingual with --en)
 """
 
 import argparse

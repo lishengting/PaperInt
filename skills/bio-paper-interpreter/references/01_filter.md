@@ -1,19 +1,26 @@
-# Phase 1: Filter
+# Phase 1: Tag Match
 
 ## Goal
-确定论文是否属于生物信息学领域，并为通过筛选的论文分配主题标签。
-不通过的论文记录跳过原因，不做解读。
+
+为已下载论文分配主题标签，并把匹配结果写入共享数据库。当前 `paper_cli.py`
+的 Phase 1 只执行标签匹配；不会因为相关性不足而拒绝论文，也不会写
+`skipped.json`。
+
+`filter_relevance.py` 仍可作为手动/辅助检查脚本使用，但它没有接入默认
+`paper_cli.py` Phase 1 流程。
 
 ## Input
 
-- 论文元数据 JSON（位于 paper 目录下的 `{paper_id}.metadata.json`）
-- `config.yaml`（关键词列表、标签定义）
+- 论文元数据 JSON：`{paper_dir}/{paper_id}.metadata.json`
+- 数据库中的 paper 行（由 `paper_cli.py` 读取）
+- `config.yaml` 中的 `tags.definitions`、`tags.base_tag_ids`、`tags.ai_parent_tag_id`
 
 找到 paper 目录：
+
 ```bash
 PAPER_DIR="data/$(python3 -c "
 import sys; sys.path.insert(0, 'scripts')
-from paper_db import get_conn, get_db_path, get_paper_dir
+from paper_db import get_conn, get_paper_dir
 import yaml
 config = yaml.safe_load(open('config.yaml'))
 conn = get_conn(config)
@@ -26,133 +33,74 @@ print(get_paper_dir(conn, '{paper_id}') or '')
 ### Step 1: Read Paper Metadata
 
 ```bash
-cat $PAPER_DIR/{paper_id}.metadata.json
+python3 - <<'PY'
+import json
+print(json.dumps(json.load(open('$PAPER_DIR/{paper_id}.metadata.json')), ensure_ascii=False, indent=2))
+PY
 ```
 
-确认 JSON 包含 `title`、`abstract`、`doi` 等字段。
+确认 JSON 包含 `title`、`abstract`、`doi` 等字段。`paper_cli.py` 会把 metadata
+和数据库中的 paper 字段合并后传给标签匹配逻辑。
 
-### Step 2: Run Relevance Filter
+### Step 2: Match Topic Tags
+
+默认 CLI 流程等价于运行 `match_tags.py`：
 
 ```bash
-cat $PAPER_DIR/{paper_id}.metadata.json | \
-  python3 scripts/filter_relevance.py --config config.yaml
+python3 skills/bio-paper-interpreter/scripts/match_tags.py \
+  --config config.yaml < $PAPER_DIR/{paper_id}.metadata.json
 ```
 
-脚本逻辑（详见 `scripts/filter_relevance.py`）：
-- 先检查排除关键词：任何命中 → 立即拒绝
-- 再统计包含关键词命中数：必须 ≥ `keywords.include_min_match`（默认 2）
-- 无标题且无摘要 → 拒绝
+脚本逻辑：
+- 用 `config.yaml` 中 `tags.definitions` 的正则模式匹配标题和摘要。
+- 基础标签（`tags.base_tag_ids`，默认 `[2, 9]`）始终包含。
+- 如果匹配到 ML/DL/LLM/AF 标签，自动添加 AI 父标签（`tags.ai_parent_tag_id`，默认 `1`）。
 
-脚本在 stdout 输出带 `relevance` 字段的 JSON，stderr 输出 `Relevance filter: {passed}/{total} passed`。
+### Step 3: Update Database
 
-### Step 3: Decision
+`paper_cli.py` 调用 `update_tags()` 把匹配结果写入 `papers.matched_tags`，然后记录：
 
-检查输出中的 `relevance.passed`：
+```text
+Phase 1 - COMPLETED: {paper_id} — {n} tags: {labels}
+```
 
-- **`false`** → 保存跳过记录并更新数据库，STOP：
+当前默认流程中，Phase 1 成功后总是继续 Phase 2。
+
+## Optional Manual Relevance Check
+
+如果需要在默认 CLI 之外手动检查关键词相关性，可以运行：
 
 ```bash
-cat > $PAPER_DIR/{paper_id}.skipped.json << 'EOF'
-{
-  "paper_id": "...",
-  "title": "...",
-  "skipped_at": "<ISO timestamp>",
-  "reason": "<relevance.reason>",
-  "include_matches": [...],
-  "exclude_matches": [...]
-}
-EOF
+python3 skills/bio-paper-interpreter/scripts/filter_relevance.py \
+  --config config.yaml < $PAPER_DIR/{paper_id}.metadata.json
 ```
 
-然后更新数据库状态：
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from paper_db import get_conn, get_db_path, update_relevance, mark_skipped
-import yaml, json
-config = yaml.safe_load(open('config.yaml'))
-conn = get_conn(config)
-relevance = json.loads(open('$PAPER_DIR/{paper_id}.metadata.json').read())
-# relevance data is in the filter_relevance.py output
-mark_skipped(conn, '{paper_id}')
-"
-```
-
-日志：`Phase 1 - REJECTED: {paper_id} — {reason}`
-
-- **`true`** → 继续 Step 4。
-
-### Step 4: Match Topic Tags
-
-```bash
-cat $PAPER_DIR/{paper_id}.metadata.json | \
-  python3 scripts/match_tags.py --config config.yaml
-```
-
-脚本逻辑（详见 `scripts/match_tags.py`）：
-- 用 `config.yaml` 中 `tags.definitions` 的正则模式匹配标题+摘要
-- 基础标签（`tags.base_tag_ids`，默认 [2, 9]）始终包含
-- 如果匹配到 ML/DL/LLM/AF 标签，自动添加 AI 父标签（`tags.ai_parent_tag_id`，默认 1）
-
-### Step 5: Check Tag Coverage
-
-如果只匹配到基础标签（2 个 base tags，无额外标签），说明论文主题特异性不足：
-
-```
-Phase 1 - INFO: {paper_id} only base tags — consider skipping
-```
-
-此时可选择跳过或继续。由 agent 或用户判断。
-
-### Step 6: Report and Update Database
-
-输出带 `relevance` 和 `matched_tags` 的完整 JSON 给下一阶段使用。
-
-更新数据库中的筛选结果：
-```bash
-python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-from paper_db import get_conn, get_db_path, update_relevance, update_tags
-import yaml, json
-config = yaml.safe_load(open('config.yaml'))
-conn = get_conn(config)
-# Parse the relevance and tags from the filter/match output
-update_relevance(conn, '{paper_id}', <relevance_dict>)
-update_tags(conn, '{paper_id}', <tags_dict>)
-"
-```
-
-日志：`Phase 1 - COMPLETED: {paper_id} — {n} tags: {labels}`
+该脚本会输出带 `relevance` 字段的 JSON，并根据 `config.yaml` 中的包含/排除关键词给出
+`passed`、`reason`、`include_matches`、`exclude_matches`。是否据此跳过论文需要人工或额外流程决定；
+默认 `paper_cli.py` 不会自动调用它。
 
 ## Output
 
-通过筛选后，paper JSON 包含：
-- `relevance` — 筛选结果（passed, reason, include_matches, exclude_matches）
-- `matched_tags` — 标签结果（tag_ids, matched_labels）
-
-不通过筛选：
-- `{paper_dir}/{paper_id}.skipped.json`
+- 数据库 `papers.matched_tags` 字段被更新。
+- `data/execution_log.md` 记录 `Phase 1 - COMPLETED`。
+- 不生成 Phase 1 文件输出。
 
 ## Rules
 
-1. 先筛选后解读 — 不跳过相关性检查
-2. 记录跳过原因 — `reason` 字段必须精确（`no_content` / `excluded` / `insufficient_matches_N_lt_M`）
-3. 关键词来自 config.yaml — 不硬编码
-4. 标签来自 config.yaml — 不自行定义
-5. 基础标签不视为"匹配不足"的唯一理由 — 由 agent 综合判断
-6. 不修改 config.yaml
-7. 跳过论文不视为错误 — `REJECTED` 是正常结束状态
+1. 默认 Phase 1 只做标签匹配，不做相关性拒绝。
+2. 标签来自 `config.yaml`，不要在文档或代码中硬编码新标签。
+3. 基础标签始终保留；额外标签由正则命中决定。
+4. 不修改 `config.yaml`。
+5. 手动运行 `filter_relevance.py` 时，要明确它是辅助检查，不是默认 CLI 状态机的一部分。
 
 ## Completion Check
 
 Phase 1 完成前确认：
-- [ ] 已运行 `filter_relevance.py`
-- [ ] 已运行 `match_tags.py`（如果通过筛选）
-- [ ] 跳过记录已保存（如果未通过）
-- [ ] 日志已写入 `execution_log.md`
-- [ ] 结果 JSON 包含 `relevance` 和 `matched_tags` 字段
+- [ ] 已运行标签匹配逻辑。
+- [ ] `papers.matched_tags` 已更新。
+- [ ] `data/execution_log.md` 已记录 `Phase 1 - COMPLETED`。
 
 ## Completion
-- 通过：输出带标签的 paper JSON，记录 `Phase 1 - COMPLETED`
-- 不通过：保存 `_skipped.json`，记录 `Phase 1 - REJECTED`
-- Git commit（如未被 gitignore）
+
+- 输出：数据库中的 matched tags。
+- 日志：`Phase 1 - COMPLETED: {paper_id} — {n} tags: {labels}`

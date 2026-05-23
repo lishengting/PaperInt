@@ -28,11 +28,11 @@ download them. Or download directly by URL.
 ## Quick Start
 
 ```
-python3 scripts/paper_cli.py {get|pdf} [options]
+python3 skills/bio-paper-downloader/scripts/paper_cli.py {get|pdf} [options]
 # or no subcommand for auto-mode
 ```
 
-Supported sources: `arxiv` | `biorxiv` | `medrxiv` | `pubmed` | `generic`
+Download mechanisms: arXiv direct HTTP, bioRxiv/medRxiv browser, PubMed/PMC/publisher browser fallback, and generic direct PDF URLs.
 
 ### Auto-mode (no arguments)
 
@@ -40,7 +40,7 @@ When run without a subcommand, downloads all papers with status `searched` from
 the shared database:
 
 ```bash
-python3 scripts/paper_cli.py                         # auto-mode (browser auto-starts when needed)
+python3 skills/bio-paper-downloader/scripts/paper_cli.py                         # auto-mode (browser auto-starts when needed)
 ```
 
 ## Command Reference
@@ -48,18 +48,18 @@ python3 scripts/paper_cli.py                         # auto-mode (browser auto-s
 ### get — download by URL or paper ID
 
 ```bash
-python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
-python3 scripts/paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
-python3 scripts/paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
-python3 scripts/paper_cli.py get -p "2301.00001"              # resolve URL from database
-python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -l   # preview only
-python3 scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -f   # force re-download
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://www.biorxiv.org/content/10.1101/2025.01.01.123456"
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -p "2301.00001"              # resolve URL from database
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -l   # preview only
+python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001" -f   # force re-download
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-u, --url` | (required) | Paper URL |
+| `-u, --url` | (one of `--url`/`--paper-id`) | Paper URL |
 | `-p, --paper-id` | (none) | Resolve URL from database by paper ID |
 | `-l, --list` | off | Parse and show info without downloading |
 | `-f, --force` | off | Force re-download even if already downloaded |
@@ -71,8 +71,8 @@ Options:
 ### pdf — download PDF directly
 
 ```bash
-python3 scripts/paper_cli.py pdf -u "https://example.com/paper.pdf"
-python3 scripts/paper_cli.py pdf -u "https://example.com/paper.pdf" -o my-paper.pdf
+python3 skills/bio-paper-downloader/scripts/paper_cli.py pdf -u "https://example.com/paper.pdf"
+python3 skills/bio-paper-downloader/scripts/paper_cli.py pdf -u "https://example.com/paper.pdf" -o my-paper.pdf
 ```
 
 Raw PDF download — no database tracking, no metadata, like curl.

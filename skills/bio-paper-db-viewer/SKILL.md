@@ -22,12 +22,13 @@ metadata:
 
 Use this skill to inspect the shared SQLite database (`data/papers.db`). Browse
 papers by status, source, or keyword; see per-paper details; check pipeline
-statistics. This skill is read-only — it never modifies the database or config.
+statistics. `stats`, `list`, and `show` are read-only. `delete` and `set-status`
+are admin operations that modify the database and require explicit user intent.
 
 ## Quick Start
 
 ```
-python3 scripts/paper_cli.py {stats|list|show|delete|set-status} [options]
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py {stats|list|show|delete|set-status} [options]
 ```
 
 ## Command Reference
@@ -35,7 +36,7 @@ python3 scripts/paper_cli.py {stats|list|show|delete|set-status} [options]
 ### stats — database summary
 
 ```bash
-python3 scripts/paper_cli.py stats
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py stats
 ```
 
 Displays total papers, counts by status, counts by source, date range, and
@@ -47,25 +48,25 @@ Options: `--config` (default: config.yaml), `--db` (override database path).
 
 ```bash
 # All papers (most recent 20)
-python3 scripts/paper_cli.py list
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list
 
 # Filter by status
-python3 scripts/paper_cli.py list -s downloaded -n 10
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded -n 10
 
 # Filter by source
-python3 scripts/paper_cli.py list --source nature
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --source nature
 
 # Filter by keyword in title
-python3 scripts/paper_cli.py list -k "microbiome"
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -k "microbiome"
 
 # Combined filters with pagination
-python3 scripts/paper_cli.py list -s downloaded --source arxiv -k "CRISPR" -n 10 --offset 20
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded --source arxiv -k "CRISPR" -n 10 --offset 20
 ```
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `skipped` |
+| `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed`, `skipped` |
 | `--source` | (all) | Filter by source: `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `nature`, `science`, `cell`, `plos` |
 | `-k, --keyword` | (none) | Filter papers whose title contains the keyword |
 | `-n, --limit` | 20 | Maximum results |
@@ -76,7 +77,7 @@ Options:
 ### show — paper details
 
 ```bash
-python3 scripts/paper_cli.py show -p s41467-026-70776-7
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py show -p s41467-026-70776-7
 ```
 
 Displays all non-empty fields for a single paper: title, authors, abstract, DOI,
@@ -90,7 +91,7 @@ Options:
 ### delete — remove a paper record
 
 ```bash
-python3 scripts/paper_cli.py delete -p s41467-026-70776-7
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py delete -p s41467-026-70776-7
 ```
 
 Removes a paper from the database by its ID.
@@ -103,8 +104,8 @@ Options:
 ### set-status — change paper status
 
 ```bash
-python3 scripts/paper_cli.py set-status -p s41467-026-70776-7 -s downloaded
-python3 scripts/paper_cli.py set-status -p 2301.00001 2301.00002 -s searched
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py set-status -p s41467-026-70776-7 -s downloaded
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py set-status -p 2301.00001 2301.00002 -s searched
 ```
 
 Change the status of one or more papers. Useful for manual recovery.

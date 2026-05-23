@@ -1,57 +1,79 @@
 # Phase 3: Convert
 
 ## Goal
+
 将 Phase 2 生成的 Markdown 解读报告转换为带样式的独立 HTML 文件，
 可直接在浏览器中打开阅读或发布到网页平台。
 
+当前 CLI 会转换已存在的两类输入：
+- `{paper_dir}/{paper_id}.interpret.md` → `{paper_dir}/{paper_id}.interpret.html`
+- `{paper_dir}/{paper_id}.brief.md` → `{paper_dir}/{paper_id}.brief.html`
+
+如果 Phase 4 已生成 `{paper_id}.poster.zh.png`，`paper_cli.py` 会在 Phase 4 后重新运行
+Phase 3，把中文 poster 嵌入 HTML。
+
 ## Input
+
 - Phase 2 输出的 `{paper_dir}/{paper_id}.interpret.md`
+- Phase 2 输出的 `{paper_dir}/{paper_id}.brief.md`（如果生成成功）
+- `{paper_dir}/{paper_id}.interpret.json` 中记录的 representative image（如果存在）
+- `{paper_dir}/{paper_id}.poster.zh.png`（如果 Phase 4 已生成）
 
 找到 paper 目录：
+
 ```bash
-PAPER_DIR="data/$(python3 -c "import json; s=json.load(open('data/downloaded.json')); print(s.get('paper_dirs',{}).get('{paper_id}',''))")"
+PAPER_DIR="data/$(python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from paper_db import get_conn, get_paper_dir
+import yaml
+config = yaml.safe_load(open('config.yaml'))
+conn = get_conn(config)
+print(get_paper_dir(conn, '{paper_id}') or '')
+")"
 ```
 
 ## Workflow
 
-### Step 1: Verify Input
+### Step 1: Verify Inputs
 
-确认 Phase 2 的 `.interpret.md` 文件存在：
+确认至少一个 Phase 2 Markdown 文件存在：
+
 ```bash
-ls $PAPER_DIR/{paper_id}.interpret.md
+ls $PAPER_DIR/{paper_id}.interpret.md $PAPER_DIR/{paper_id}.brief.md
 ```
 
-### Step 2: Convert to HTML
+### Step 2: Convert Interpretation HTML
 
 ```bash
-python3 scripts/md_to_html.py \
+python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
+  --input $PAPER_DIR/{paper_id}.interpret.md \
+  --output $PAPER_DIR/{paper_id}.interpret.html
+```
+
+如果有代表性图表或 poster，可追加：
+
+```bash
+python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
   --input $PAPER_DIR/{paper_id}.interpret.md \
   --output $PAPER_DIR/{paper_id}.interpret.html \
-  --image $PAPER_DIR/images/fig_xxx.png   # 代表性图表（可选）
+  --image $PAPER_DIR/images/fig_xxx.png \
+  --poster $PAPER_DIR/{paper_id}.poster.zh.png
 ```
 
-`--image` 标志接受代表性图表的路径。如果提供且文件存在，图片将以 base64
-内嵌到 HTML 中（无外部依赖），显示在正文之前。
-
-脚本使用 Python `markdown` 库（版本 ≥ 3.0，系统已安装），启用以下扩展：
-- `tables` — Markdown 表格 → HTML table
-- `fenced_code` — 围栏代码块（``` ```）
-- `codehilite` — 代码语法高亮
-- `toc` — 自动生成目录
-- `smarty` — 智能引号/破折号
-
-输出为包含内嵌 CSS 的独立 HTML 文件，支持亮色/暗色主题自动切换。
-
-### Step 3: Verify Output
+### Step 3: Convert Brief HTML
 
 ```bash
-# 检查文件大小（应显著大于原 .md 文件）
-wc -c $PAPER_DIR/{paper_id}.interpret.html
+python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
+  --input $PAPER_DIR/{paper_id}.brief.md \
+  --output $PAPER_DIR/{paper_id}.brief.html
 ```
+
+`paper_cli.py` 自动对 `interpret` 和 `brief` 两个 Markdown 输入循环转换，缺失的输入会跳过。
 
 ## Output
 
-- `data/interpreted/{paper_id}.html` — 带样式的独立 HTML 文件
+- `{paper_dir}/{paper_id}.interpret.html` — 结构化解读 HTML
+- `{paper_dir}/{paper_id}.brief.html` — 文章体简报 HTML
 
 ## CSS 特性
 
@@ -59,20 +81,24 @@ wc -c $PAPER_DIR/{paper_id}.interpret.html
 - 响应式布局，适合桌面和移动端阅读
 - 表格斑马纹、代码块高亮、引用块样式
 - 系统字体栈（SF / Segoe UI / Helvetica）
+- 可内嵌代表性图表和中文 poster，无外部资源依赖
 
 ## Rules
 
-1. Phase 3 仅在 Phase 2 COMPLETED 后执行
-2. HTML 覆盖写入（幂等操作）
-3. 使用 `scripts/md_to_html.py`，不手动拼接 HTML
-4. 不修改 `.md` 源文件
+1. Phase 3 仅在 Phase 2 COMPLETED 后执行。
+2. HTML 覆盖写入，操作幂等。
+3. 使用 `skills/bio-paper-interpreter/scripts/md_to_html.py`，不手动拼接 HTML。
+4. 不修改 `.md` 源文件。
+5. Phase 4 生成 poster 后，`paper_cli.py` 会重新运行 Phase 3 以嵌入 poster。
 
 ## Completion Check
 
-- [ ] `.interpret.html` 文件已生成
-- [ ] 文件大小合理（> 10KB）
-- [ ] 日志已写入 `execution_log.md`
+- [ ] `.interpret.html` 已生成（如果 `.interpret.md` 存在）
+- [ ] `.brief.html` 已生成（如果 `.brief.md` 存在）
+- [ ] 文件大小合理（通常显著大于原 `.md` 文件）
+- [ ] 日志已写入 `data/execution_log.md`
 
 ## Completion
-- 输出 `{paper_dir}/{paper_id}.interpret.html`
-- 日志：`Phase 3 - COMPLETED: {paper_id} — HTML generated`
+
+- 输出：`{paper_dir}/{paper_id}.interpret.html` 和/或 `{paper_dir}/{paper_id}.brief.html`
+- 日志：`Phase 3 - COMPLETED: {paper_id} — HTML saved: {paper_dir}`

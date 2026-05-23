@@ -1,13 +1,14 @@
 # Phase 2: Interpret
 
 ## Goal
-从论文 PDF 或元数据中提取信息，生成结构化中文解读报告，输出到
-`{paper_dir}/{paper_id}.interpret.md`（主输出）和 `.interpret.json`（结构化元数据）。
+从论文 PDF 和元数据中提取信息，生成结构化中文解读报告和文章体简报，输出到
+`{paper_dir}/{paper_id}.interpret.md`、`{paper_dir}/{paper_id}.brief.md` 和 `.interpret.json`。
 
 ## Input
-- Phase 1 输出的 paper JSON（含 `relevance`、`matched_tags`）
-- PDF 文件 `{paper_dir}/{paper_id}.pdf`（如果存在）
-- `config.yaml`（system prompts、LLM 配置、pdf_text_max_chars）
+- Phase 1 写入数据库的 `matched_tags`
+- PDF 文件 `{paper_dir}/{paper_id}.pdf`
+- `config.yaml`（LLM 端点/模型、PDF 提取配置、`pdf_text_max_chars`）
+- `references/prompts/interpret.yaml` 和 `references/prompts/brief.yaml`（prompt 模板）
 
 找到 paper 目录：
 ```bash
@@ -27,7 +28,7 @@ print(get_paper_dir(conn, '{paper_id}') or '')
 
 ```bash
 # Primary method (pymupdf4llm → Markdown + images):
-python3 scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
+python3 skills/bio-paper-interpreter/scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
   --max-chars 100000 \
   --image-path $PAPER_DIR/images/ \
   --json > /tmp/{paper_id}_extract.json
@@ -36,8 +37,8 @@ python3 scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
 ```
 
 检查提取结果：
-- **> 1000 字符** → full_text 模式（深度解读）
-- **≤ 1000 字符或无 PDF** → abstract_only 模式（基于标题+摘要）
+- **≥ 1000 字符** → full_text 模式（深度解读）
+- **< 1000 字符或无 PDF** → 标记为 `interpret_failed`；当前 CLI 不回退到 abstract-only 模式
 
 #### Image Extraction
 
@@ -53,10 +54,11 @@ python3 scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
 
 ### Step 2: Determine Interpretation Path
 
-- **Path A (Claude Code Direct)**: Claude 直接读取论文内容和 system prompt，
+- **Path A (Claude Code Direct)**: Claude 直接读取论文内容和 `references/prompts/` 中的 prompt 模板，
   生成解读。不需要外部 LLM API。
-- **Path B (External LLM Pipeline)**: 运行 `build_prompt.py` 构建提示词，
-  调用 `config.yaml` 中配置的 LLM API 生成解读。需要 `LLM_API_KEY` 环境变量。
+- **Path B (External LLM Pipeline)**: `paper_cli.py` 在进程内构建 prompt 并调用
+  `config.yaml` 中配置的 LLM API。需要 `LLM_API_KEY` 环境变量。下面的
+  `build_prompt.py` + curl 示例仅用于手动调试。
 
 ### Step 3: Read System Prompt
 
@@ -64,11 +66,11 @@ python3 scripts/extract_pdf.py $PAPER_DIR/{paper_id}.pdf \
 - 结构化解读: `references/prompts/interpret.yaml` — 系统提示词 + 用户提示词模板
 - 文章体简报: `references/prompts/brief.yaml` — 系统提示词 + 用户提示词模板
 
-**不再从 `config.yaml` 读取 system_prompts**。所有 prompt 模板统一放在技能目录内，`build_prompt.py` 自动从 YAML 加载。
+**Prompt 模板不再从 `config.yaml` 读取**。所有 prompt 模板统一放在技能目录内，`build_prompt.py` 自动从 YAML 加载。
 
 ### Step 4: Collect Paper Resources
 
-**必须检查**（参照 `01_reader.md` 的资源发现流程）：
+**必须检查**（见下方资源发现清单）：
 
 1. **论文元数据** — title, authors, doi, date, category, abstract
 2. **论文正文** — 从 PDF 提取的全文内容
@@ -90,12 +92,15 @@ Claude 直接解读论文，**严格按照下方 Output 模板**生成结构化�
 - **Interpretation Insights**: 附加的批判性分析——创新点、局限性、实践意义
 - **精炼总结**: 3-5 条 bullet points
 
-### Step 6: Interpret (Path B — External LLM)
+### Step 6: Interpret (Path B — External LLM, manual debugging)
+
+`paper_cli.py` 默认在进程内构建 prompt 并调用 LLM；下面的命令用于手动调试同一套
+prompt 模板。
 
 ```bash
 # Build prompts
 cat $PAPER_DIR/{paper_id}.metadata.json | \
-  python3 scripts/build_prompt.py \
+  python3 skills/bio-paper-interpreter/scripts/build_prompt.py \
   --config config.yaml \
   --mode full_text \
   --pdf-text-file /tmp/{paper_id}_text.txt > /tmp/{paper_id}_prompt.json
@@ -144,7 +149,7 @@ cat > $PAPER_DIR/{paper_id}.interpret.json << 'EOF'
   "content": "<full markdown from .md file>",
   "tags": [<matched tag ids>],
   "tag_labels": [<matched tag labels>],
-  "mode": "full_text | abstract_only",
+  "mode": "full_text",
   "interpreted_at": "<ISO timestamp>"
 }
 EOF
@@ -169,7 +174,7 @@ Phase 3 将两者转换为 HTML：
 > **来源**: [source] | [date]
 > **DOI**: [doi]
 > **标签**: #tag1 #tag2
-> **解读模式**: full_text | abstract_only
+> **解读模式**: full_text
 
 ---
 
@@ -239,12 +244,12 @@ Phase 3 将两者转换为 HTML：
 
 1. **结构化优先** — 严格按 Output 模板输出，每个 section 不能省略
 2. **论文声明与解读分析分离** — Paper Understanding 写论文内容；Interpretation Insights 写分析判断
-3. **明确标注来源** — 全文模式写"根据论文第X节"，摘要模式写"根据摘要推断"
-4. **不遗漏资源** — 必须检查论文页面、补充材料 tab、代码仓库和数据可用性声明
+3. **明确标注来源** — 尽量写明“根据论文第X节/图X/表X”，无法定位时明确说明来源范围
+4. **不遗漏资源** — Claude Code direct/manual 解读应检查论文页面、补充材料 tab、代码仓库和数据可用性声明；批处理 CLI 主要依据 PDF 提取内容和 PDF validation
 5. **表格完整** — 所有表格必须填写；不确定的标注 "Not specified" 或 "TBD"
 6. **PDF 截断** — 按 `config.yaml` 中 `download.pdf_text_max_chars`（默认 100000）截断
-7. **模式区分** — JSON 中 `mode` 字段必须准确标记 `full_text` 或 `abstract_only`
-8. **Prompt 来自 config** — 不硬编码 system prompt
+7. **模式区分** — 当前批处理 CLI 只在 PDF 文本充足时进入 `full_text`；文本不足会标记 `interpret_failed`
+8. **Prompt 模板来自 `references/prompts/`** — 不硬编码 system prompt
 9. **不修改 config.yaml**
 10. **精炼总结** — 3-5 条 bullet points，每条 ≤30 字
 11. **引用位置** — 所有声明注明章节/图表/URL
@@ -256,15 +261,15 @@ Phase 2 完成前确认：
 - [ ] PDF 内容已提取（如有 PDF）
 - [ ] 图片已提取到 `{paper_dir}/images/`（如适用）
 - [ ] 代表性图表路径已记录到 `.interpret.json`
-- [ ] 模式已确定（full_text / abstract_only）
-- [ ] 论文页面和补充材料 tab 已检查（对预印本）
+- [ ] 模式已确定为 full_text，或文本不足时已标记 `interpret_failed`
+- [ ] Claude Code direct/manual 解读已检查论文页面和补充材料 tab（对预印本）
 - [ ] 所有 Output 模板中的 section 已填写
 - [ ] `.interpret.md` 文件已保存到 `{paper_dir}/{paper_id}.interpret.md`
 - [ ] `.interpret.json` 文件已保存到 `{paper_dir}/{paper_id}.interpret.json`
 - [ ] 日志已写入 `execution_log.md`
 
 ## Completion
-- 输出 `{paper_dir}/{paper_id}.interpret.md` + `.interpret.json`
+- 输出 `{paper_dir}/{paper_id}.interpret.md` + `{paper_dir}/{paper_id}.brief.md` + `.interpret.json`
 - 更新数据库状态：`python3 -c "import sys; sys.path.insert(0, 'scripts'); from paper_db import get_conn, get_db_path, mark_interpreted; import yaml; c=yaml.safe_load(open('config.yaml')); mark_interpreted(get_conn(c), '{paper_id}')"`
 - 日志：`Phase 2 - COMPLETED: {paper_id} — {mode}, {n} tags`
 - Git commit（如未被 gitignore）

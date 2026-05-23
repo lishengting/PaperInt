@@ -85,11 +85,12 @@ python3 skills/bio-paper-downloader/scripts/paper_cli.py
 
 ### Interpret
 
-The interpreter runs within Claude Code following reference docs in `skills/bio-paper-interpreter/references/`. Three-phase pipeline:
+The interpreter can run through Claude Code or the CLI following reference docs in `skills/bio-paper-interpreter/references/`. Four-phase pipeline:
 
-1. **Interpret** — extract PDF to Markdown, generate Chinese interpretation report via LLM
-2. **Convert** — render styled HTML with dark/light mode
-3. **Poster** — generate SVG/PNG posters (English + Chinese)
+1. **Tag Match** — assign topic tags from metadata and store them in the database
+2. **Interpret** — extract PDF text, validate PDF content, generate Chinese interpretation and brief via LLM
+3. **Convert** — render styled HTML with dark/light mode
+4. **Poster** — generate SVG/PNG posters; default Chinese output, bilingual with `--en`
 
 ### Query the database
 
@@ -122,22 +123,26 @@ data/{Title_Slug}/
   {paper_id}.metadata.json
   {paper_id}.info.md           # comprehensive dossier
   {paper_id}.interpret.md      # Chinese interpretation report
-  {paper_id}.interpret.html    # styled HTML
+  {paper_id}.brief.md          # article-style Chinese brief
+  {paper_id}.interpret.html    # styled interpretation HTML
+  {paper_id}.brief.html        # styled brief HTML
   {paper_id}.interpret.json    # structured metadata
   {paper_id}.poster.zh.svg     # Chinese poster
-  {paper_id}.poster.en.svg     # English poster
+  {paper_id}.poster.en.svg     # English poster (with --en)
   {paper_id}.poster.zh.png     # rendered PNG
-  {paper_id}.poster.en.png     # rendered PNG
+  {paper_id}.poster.en.png     # rendered PNG (with --en)
+  {paper_id}.poster.direct.zh.png # direct text-to-image PNG
+  {paper_id}.poster.direct.en.png # direct text-to-image PNG (with --en)
   images/                      # extracted PDF images
 ```
 
 ### Multi-Source Deduplication
 
-Papers from arXiv, bioRxiv, medRxiv, PubMed, and Google Scholar are merged by DOI, arXiv ID, or title similarity (Jaccard ≥ 0.7). Source priority: `pubmed > scholar > arxiv > medrxiv > biorxiv`.
+Papers from arXiv, bioRxiv, medRxiv, PubMed, Crossref, Europe PMC, and related journal/publisher sources are merged by DOI, arXiv ID, or title similarity (Jaccard ≥ 0.7). Source priority: `pubmed > crossref > europepmc > scholar > arxiv > medrxiv > biorxiv`.
 
 ## Configuration
 
-All settings live in `config.yaml` at the project root — APIs, keywords, tags, LLM models, prompts. Never hardcode values in scripts.
+Runtime settings live in `config.yaml` at the project root — APIs, keywords, tags, LLM models, database paths, and extraction settings. Interpreter prompt templates live under `skills/bio-paper-interpreter/references/prompts/`. Never hardcode values in scripts.
 
 Key config points:
 
