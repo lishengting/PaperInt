@@ -83,7 +83,7 @@ def ts_print(*args, file=None, end='\n', flush=False):
 
 
 def _call_llm(config, system_prompt, user_prompt):
-    """Call the configured LLM and return the response text."""
+    """Call the configured LLM and return (response_text, usage_dict)."""
     api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
     model = cfg(config, 'llm.model', 'qwen3-235b-a22b')
     temperature = cfg(config, 'llm.temperature', 0.3)
@@ -116,20 +116,36 @@ def _call_llm(config, system_prompt, user_prompt):
     ts_print(f"  Calling LLM: {model} ({url})...")
     resp = urllib.request.urlopen(req, timeout=timeout)
     resp_data = json.loads(resp.read().decode('utf-8'))
-    return resp_data['choices'][0]['message']['content']
+    usage = resp_data.get('usage', {})
+    return resp_data['choices'][0]['message']['content'], {
+        'prompt_tokens': usage.get('prompt_tokens', 0),
+        'completion_tokens': usage.get('completion_tokens', 0),
+        'total_tokens': usage.get('total_tokens', 0),
+    }
 
 
-def _validate_pdf_content_llm(config, pdf_text, paper):
+def _log_phase2_tokens(val_usage, interpret_usage, brief_usage):
+    """Print token usage summary for Phase 2 LLM calls."""
+    parts = []
+    total = 0
+    for label, usage in [('validate', val_usage), ('interpret', interpret_usage),
+                          ('brief', brief_usage)]:
+        if usage:
+            t = usage.get('total_tokens', 0)
+            total += t
+            parts.append(f"{label}={t}")
+    if total > 0:
+        ts_print(f"  Phase 2 tokens: {', '.join(parts)}, total={total}")
     """Use LLM to check whether extracted PDF content matches the paper's title and abstract.
 
-    Returns (passed: bool, confidence: float, reason: str).
+    Returns (passed: bool, confidence: float, reason: str, usage: dict).
     """
     title = (paper.get('title') or '').strip()
     abstract = (paper.get('abstract') or '').strip()
     if not title and not abstract:
-        return True, 1.0, 'no title or abstract to validate'
+        return True, 1.0, 'no title or abstract to validate', {}
     if not pdf_text or len(pdf_text.strip()) < 200:
-        return True, 1.0, 'PDF text too short to validate'
+        return True, 1.0, 'PDF text too short to validate', {}
 
     header_chars = cfg(config, 'interpreter.pdf_content_validation.header_chars', 4000)
     pdf_sample = pdf_text[:header_chars]
@@ -199,7 +215,13 @@ def _validate_pdf_content_llm(config, pdf_text, paper):
     match = result.get('match', False)
     confidence = float(result.get('confidence', 0.5))
     reason = result.get('reason', 'no reason provided')
-    return match, confidence, reason
+    usage_raw = resp_data.get('usage', {})
+    usage = {
+        'prompt_tokens': usage_raw.get('prompt_tokens', 0),
+        'completion_tokens': usage_raw.get('completion_tokens', 0),
+        'total_tokens': usage_raw.get('total_tokens', 0),
+    }
+    return match, confidence, reason, usage
 
 
 def run_phase1(paper_path, paper, config, log_file):
@@ -285,9 +307,10 @@ def run_phase2(paper_path, paper, config, log_file):
 
     # Validate PDF content matches paper via LLM (catch Supplementary Materials etc.)
     validation_enabled = cfg(config, 'interpreter.pdf_content_validation.enabled', True)
+    val_usage = None
     if validation_enabled:
         try:
-            passed, confidence, reason = _validate_pdf_content_llm(config, pdf_text, paper)
+            passed, confidence, reason, val_usage = _validate_pdf_content_llm(config, pdf_text, paper)
             if not passed:
                 log_phase(log_file, paper_id, 2, 'FAILED', reason)
                 mark_interpret_failed(get_conn(config), paper_id, reason)
@@ -313,9 +336,10 @@ def run_phase2(paper_path, paper, config, log_file):
 
     # Generate structured interpretation (.interpret.md)
     interpret_prompt = build_full_text_prompt(paper_data, config, pdf_text, extract_meta)
+    interpret_usage = None
     try:
-        interpret_content = _call_llm(config, interpret_prompt['system_prompt'],
-                                      interpret_prompt['user_prompt'])
+        interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
+                                                        interpret_prompt['user_prompt'])
         md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
         with open(md_path, 'w') as f:
             f.write(interpret_content)
@@ -327,9 +351,10 @@ def run_phase2(paper_path, paper, config, log_file):
 
     # Generate brief article (.brief.md)
     brief_prompt = build_brief_prompt(paper_data, config, pdf_text, extract_meta)
+    brief_usage = None
     try:
-        brief_content = _call_llm(config, brief_prompt['system_prompt'],
-                                  brief_prompt['user_prompt'])
+        brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
+                                                brief_prompt['user_prompt'])
         brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
         with open(brief_path, 'w') as f:
             f.write(brief_content)
@@ -380,6 +405,7 @@ def run_phase2(paper_path, paper, config, log_file):
     if not brief_ok:
         extra.append('brief failed')
     log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}' + (f' ({", ".join(extra)})' if extra else ''))
+    _log_phase2_tokens(val_usage, interpret_usage, brief_usage)
     return True
 
 
