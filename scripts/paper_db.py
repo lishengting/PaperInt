@@ -223,8 +223,8 @@ def upsert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
 
 def get_papers_by_status(conn: sqlite3.Connection, status: str,
                          limit: int = None) -> list[dict]:
-    """Return papers with the given status, ordered by search_date desc."""
-    sql = "SELECT * FROM papers WHERE status = ? ORDER BY search_date DESC"
+    """Return papers with the given status, ordered by search_date desc, paper_id."""
+    sql = "SELECT * FROM papers WHERE status = ? ORDER BY search_date DESC, paper_id"
     if limit:
         sql += f" LIMIT {int(limit)}"
     rows = conn.execute(sql, (status,)).fetchall()
