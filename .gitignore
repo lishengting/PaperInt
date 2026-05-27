@@ -1,5 +1,7 @@
 # Output data (runtime artifacts)
 data/
+data.*
+*.log
 
 # Python cache
 __pycache__/
