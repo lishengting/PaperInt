@@ -436,6 +436,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             try:
                 pdf_links = await _safe_eval(page, '''() => {
                 const found = [];
+                const addCandidate = (href, text) => {
+                    if (!href || href.startsWith('#')) return;
+                    found.push({href: href, text: (text || '').toLowerCase().trim()});
+                };
                 document.querySelectorAll('a').forEach(a => {
                     const href = a.getAttribute('href') || '';
                     const text = (a.innerText || '').toLowerCase().trim();
@@ -456,10 +460,22 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                         href.includes('/bibtex/') ||
                         href.includes('/endnote/') ||
                         (text.includes('citation') && !text.includes('pdf'));
-                    if (isPdf && !isCitation && href && !href.startsWith('#')) {
-                        found.push({href: href, text: text});
+                    if (isPdf && !isCitation) {
+                        addCandidate(href, text);
                     }
                 });
+                document.querySelectorAll('meta, link').forEach(el => {
+                    const href = el.getAttribute('href') || el.getAttribute('content') || '';
+                    const name = el.getAttribute('name') || el.getAttribute('property') || el.getAttribute('rel') || '';
+                    if (href.includes('.pdf') || name.toLowerCase().includes('pdf')) {
+                        addCandidate(href, name);
+                    }
+                });
+                if (location.hostname.endsWith('nature.com') &&
+                    location.pathname.startsWith('/articles/') &&
+                    !location.pathname.endsWith('.pdf')) {
+                    addCandidate(location.origin + location.pathname + '.pdf', 'nature article pdf fallback');
+                }
                 return found;
             }''')
             except Exception:
@@ -487,6 +503,10 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 h = link['href']
                 if 'download pdf' in t:
                     s += 100
+                if 'citation_pdf_url' in t:
+                    s += 90
+                if 'nature article pdf fallback' in t:
+                    s += 70
                 if 'showpdf' in h.lower():
                     s += 80
                 if 'supplement' in t or 'esm' in h.lower():
@@ -539,14 +559,25 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             pdf_bytes = None
             how = ''
+            last_non_pdf = None
+
+            def _accept_pdf(candidate, method):
+                nonlocal pdf_bytes, how, last_non_pdf
+                if not candidate:
+                    return False
+                if len(candidate) >= 10000 and candidate[:5] == b'%PDF-':
+                    pdf_bytes = candidate
+                    how = method
+                    return True
+                last_non_pdf = candidate
+                return False
 
             # Primary: JS fetch from current page context (no navigation needed
             # for same-domain PDFs; preserves article page session/referrer)
             js_result = await page.evaluate(fetch_js, [pdf_url])
 
             if not isinstance(js_result, dict) or 'error' not in js_result:
-                pdf_bytes = base64.b64decode(js_result['data'])
-                how = 'fetch'
+                _accept_pdf(base64.b64decode(js_result['data']), 'fetch')
 
             # Fallback: navigate to PDF URL + response.body()
             if pdf_bytes is None:
@@ -561,9 +592,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 if goto_response is not None:
                     try:
                         body = await goto_response.body()
-                        if len(body) >= 10000 and body[:5] == b'%PDF-':
-                            pdf_bytes = body
-                            how = 'goto'
+                        _accept_pdf(body, 'goto')
                     except Exception:
                         pass
 
@@ -572,8 +601,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     try:
                         js_result = await page.evaluate(fetch_js, [pdf_url])
                         if not isinstance(js_result, dict) or 'error' not in js_result:
-                            pdf_bytes = base64.b64decode(js_result['data'])
-                            how = 'fetch (after goto)'
+                            _accept_pdf(base64.b64decode(js_result['data']), 'fetch (after goto)')
                     except Exception:
                         pass
 
@@ -599,9 +627,20 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                     if len(body) >= 10000 and body[:5] == b'%PDF-':
                         pdf_bytes = body
                         how = 'download'
+                    else:
+                        last_non_pdf = body
                 except Exception:
                     pass
 
+            if pdf_bytes is None:
+                if last_non_pdf:
+                    preview = last_non_pdf[:200].decode('latin-1', errors='replace')
+                    preview = ' '.join(preview.split())
+                    result['message'] = f'Not a valid PDF ({len(last_non_pdf)} bytes, starts with: {preview})'
+                    result['file_size'] = len(last_non_pdf)
+                else:
+                    result['message'] = 'PDF download failed'
+                return result
             if len(pdf_bytes) < 10000:
                 result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
                 result['file_size'] = len(pdf_bytes)
@@ -678,10 +717,12 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         """Chrome startup failures — retrying won't help."""
         return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
 
-    # Try headless first (up to 2 attempts), break immediately on anti-bot
+    # Try headless first (up to 2 attempts), retrying with stealth when available
     for attempt in range(2):
+        attempt_stealth = stealth_enabled or (attempt > 0 and _STEALTH_AVAILABLE)
         if attempt > 0:
-            print(f"  [publisher] headless retry 2/2 after 5s...", file=sys.stderr)
+            suffix = ' with stealth' if attempt_stealth and not stealth_enabled else ''
+            print(f"  [publisher] headless retry 2/2{suffix} after 5s...", file=sys.stderr)
             time.sleep(5)
 
         result = await _do_download_via_publisher(doi_url, output_path,
@@ -691,7 +732,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=stealth_enabled)
+                                                    stealth_enabled=attempt_stealth)
         if result['success']:
             # ...
             return result
@@ -705,7 +746,9 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         return result
 
     # Fallback to Xvfb headed (3 attempts)
-    print(f"  [publisher] falling back to headed Chrome (Xvfb)...", file=sys.stderr)
+    headed_stealth = stealth_enabled or _STEALTH_AVAILABLE
+    suffix = ', stealth' if headed_stealth and not stealth_enabled else ''
+    print(f"  [publisher] falling back to headed Chrome (Xvfb{suffix})...", file=sys.stderr)
     for attempt in range(3):
         if attempt > 0:
             print(f"  [publisher] headed retry {attempt+1}/3 after 5s...", file=sys.stderr)
@@ -718,7 +761,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait, xvfb=True,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=stealth_enabled)
+                                                    stealth_enabled=headed_stealth)
         if result['success']:
             # ...
             return result
@@ -738,7 +781,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         os.environ.pop('DISPLAY', None)
 
     # Fallback to system display headed (3 attempts)
-    print(f"  [publisher] falling back to headed Chrome (system display)...", file=sys.stderr)
+    print(f"  [publisher] falling back to headed Chrome (system display{suffix})...", file=sys.stderr)
     for attempt in range(3):
         if attempt > 0:
             print(f"  [publisher] headed (system) retry {attempt+1}/3 after 5s...", file=sys.stderr)
@@ -751,7 +794,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait, xvfb=False,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=stealth_enabled)
+                                                    stealth_enabled=headed_stealth)
         if result['success']:
             # ...
             return result
