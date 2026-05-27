@@ -5,7 +5,7 @@ Bio Paper Search CLI — search bioinformatics papers across multiple sources.
 Sources:  arxiv  |  biorxiv  |  medrxiv  |  pubmed  |  scholar  |  crossref  |  europepmc  |  cnsp  |  all
 
 Usage:
-  paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--start-date DATE] [--end-date DATE]
+  paper_cli.py search [-k keywords] [-s source] [-n N] [-l] [--start-date DATE] [--end-date DATE] [--days N]
   paper_cli.py find   -t title    [-s source] [-l]
   paper_cli.py find   -d DOI      [-l]
 
@@ -1458,7 +1458,7 @@ def cmd_search(args, config):
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(',') if k.strip()]
 
-    has_date_range = bool(getattr(args, 'start_date', None) or getattr(args, 'incremental', False))
+    has_date_range = bool(getattr(args, 'start_date', None) or getattr(args, 'incremental', False) or getattr(args, 'days', None))
     unlimited = args.num is None and has_date_range
     if unlimited:
         num = 999999
@@ -1471,7 +1471,11 @@ def cmd_search(args, config):
     # Resolve date range for sources that support it
     start_date, end_date = None, None
     if source in ('arxiv', 'biorxiv', 'medrxiv', 'pubmed', 'crossref', 'europepmc', 'cnsp', 'all'):
-        start_date, end_date = _resolve_start_date(args, config, source)
+        if getattr(args, 'days', None):
+            start_date = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
+            end_date = datetime.now().strftime('%Y-%m-%d')
+        else:
+            start_date, end_date = _resolve_start_date(args, config, source)
         if start_date:
             print(f"{_ts()} Date range: {start_date} — {end_date}")
 
@@ -1727,7 +1731,7 @@ def main():
                     help='Paper source to search (default: search.default_source from config)')
     sp.add_argument('-n', '--num', type=int,
                     help='Max number of papers to return. '
-                         'When --start-date or --incremental is set and -n is omitted, '
+                         'When --days, --start-date, or --incremental is set and -n is omitted, '
                          'returns all papers in range. '
                          '(default: search.default_num from config)')
     sp.add_argument('-l', '--list', action='store_true',
@@ -1735,6 +1739,8 @@ def main():
     sp.add_argument('--start-date', help='Search from this date (YYYY-MM-DD). '
                     'Supported by arxiv, biorxiv, medrxiv, pubmed, crossref, europepmc, cnsp.')
     sp.add_argument('--end-date', help='Search until this date (YYYY-MM-DD). Default: today.')
+    sp.add_argument('--days', type=int,
+                    help='Search papers from the last N days (sets --start-date to N days ago).')
     sp.add_argument('--incremental', action='store_true',
                     help='Auto-compute start_date from last crawl date for this source.')
     sp.add_argument('--cnsp-journals', nargs='+',
