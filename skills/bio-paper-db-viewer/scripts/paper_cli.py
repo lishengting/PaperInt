@@ -109,6 +109,9 @@ def cmd_stats(args, config):
 def cmd_list(args, config):
     conn = get_conn(config)
 
+    if args.all:
+        args.limit = sys.maxsize
+
     sql = 'SELECT paper_id, doi, title, source, status, search_date, metadata_json FROM papers WHERE 1=1'
     params: list = []
 
@@ -397,6 +400,9 @@ examples:
   # List all papers (most recent 20)
   paper_cli.py list
 
+  # List all papers without limit
+  paper_cli.py list --all
+
   # List papers by status
   paper_cli.py list -s downloaded -n 10
 
@@ -444,6 +450,8 @@ def main():
                     help='Maximum results (default: 20)')
     lp.add_argument('--offset', type=int, default=0,
                     help='Pagination offset (default: 0)')
+    lp.add_argument('--all', action='store_true',
+                    help='List all matching papers (overrides -n)')
     lp.add_argument('--cnsp', action='store_true',
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
     lp.add_argument('--cns', action='store_true',
