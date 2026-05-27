@@ -68,7 +68,7 @@ def cmd_stats(args, config):
 
     # Status breakdown
     print("By status:")
-    for st in ('searched', 'downloaded', 'download_failed', 'interpreted'):
+    for st in ('searched', 'downloaded', 'download_failed', 'interpreted', 'interpret_failed'):
         cnt = status_counts.get(st, 0)
         if cnt > 0 or st in ('searched', 'downloaded'):
             print(f"  {st:<20} {cnt:>4}")
@@ -473,7 +473,7 @@ def main():
     lp = sub.add_parser('list', help='List papers with optional filters',
                         description='List papers from the database with optional filtering by status, source, and keyword.')
     lp.add_argument('-s', '--status', default=None,
-                    help='Filter by status: searched, downloaded, download_failed, interpreted')
+                    help='Filter by status: searched, downloaded, download_failed, interpreted, interpret_failed')
     lp.add_argument('--source', default=None,
                     help='Filter by source: arxiv, biorxiv, medrxiv, pubmed, scholar, nature, science, cell, plos')
     lp.add_argument('-k', '--keyword', default=None,
