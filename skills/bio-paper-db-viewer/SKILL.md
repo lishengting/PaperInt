@@ -56,8 +56,11 @@ python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded -n 10
 # Filter by source
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --source nature
 
-# Filter by keyword across title, abstract, journal, source, identifiers, and path
+# Filter by keyword across title, abstract, journal, source, identifiers, path, and source terms
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -k "microbiome"
+
+# Filter by search provenance (papers saved by a matching search query)
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --found-by "microbiome"
 
 # Combined filters with pagination
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded --source arxiv -k "CRISPR" -n 10 --offset 20
@@ -68,7 +71,8 @@ Options:
 |------|---------|-------------|
 | `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed` |
 | `--source` | (all) | Filter by source: `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `nature`, `science`, `cell`, `plos` |
-| `-k, --keyword` | (none) | Filter papers whose title, abstract, journal, source, identifiers, or path contains the keyword |
+| `-k, --keyword` | (none) | Filter papers whose title, abstract, journal, source, identifiers, path, or source terms contain the keyword |
+| `--found-by` | (none) | Filter papers saved by a search whose query, keywords, or matched evidence contains this keyword |
 | `-n, --limit` | 20 | Maximum results |
 | `--offset` | 0 | Pagination offset |
 | `--cnsp` | off | Only show papers in C/N/S/P journals |
@@ -81,12 +85,15 @@ python3 skills/bio-paper-db-viewer/scripts/paper_cli.py show -p s41467-026-70776
 ```
 
 Displays all non-empty fields for a single paper: title, authors, abstract, DOI,
-source, status, dates, directory, and any parsed JSON fields (relevance, tags).
+source, status, dates, directory, parsed JSON fields (relevance, tags), PubMed
+source metadata (MeSH headings, PubMed keywords, publication types, chemicals),
+and recent search provenance when available.
 
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-p, --paper-id` | (required) | Paper ID from the database (DOI, arXiv ID, PMID) |
+| `--explain` | (none) | Focus search provenance evidence on one keyword |
 
 ### delete — remove a paper record
 

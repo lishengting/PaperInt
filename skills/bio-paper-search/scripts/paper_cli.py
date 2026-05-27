@@ -719,16 +719,97 @@ def pubmed_api(endpoint, params, config):
 BATCH_SIZE = 1000
 
 
-def pubmed_fetch_abstracts(pmids, config):
+def _node_text(node) -> str:
+    if node is None:
+        return ''
+    return re.sub(r'\s+', ' ', ''.join(node.itertext())).strip()
+
+
+def _parse_pubmed_article(article) -> tuple[str, dict]:
+    pmid = _node_text(article.find('./MedlineCitation/PMID'))
+    if not pmid:
+        return '', {}
+
+    abstract_parts = []
+    for node in article.findall('./MedlineCitation/Article/Abstract/AbstractText'):
+        text = _node_text(node)
+        if not text:
+            continue
+        label = node.attrib.get('Label') or node.attrib.get('NlmCategory')
+        abstract_parts.append(f'{label}: {text}' if label else text)
+
+    mesh_headings = []
+    for heading in article.findall('./MedlineCitation/MeshHeadingList/MeshHeading'):
+        descriptor = heading.find('DescriptorName')
+        if descriptor is None:
+            continue
+        qualifiers = []
+        for qualifier in heading.findall('QualifierName'):
+            name = _node_text(qualifier)
+            if name:
+                qualifiers.append({
+                    'name': name,
+                    'ui': qualifier.attrib.get('UI', ''),
+                    'major_topic': qualifier.attrib.get('MajorTopicYN') == 'Y',
+                })
+        mesh_headings.append({
+            'descriptor': _node_text(descriptor),
+            'ui': descriptor.attrib.get('UI', ''),
+            'major_topic': descriptor.attrib.get('MajorTopicYN') == 'Y',
+            'qualifiers': qualifiers,
+        })
+
+    pubmed_keywords = []
+    for keyword_list in article.findall('./MedlineCitation/KeywordList'):
+        owner = keyword_list.attrib.get('Owner', '')
+        for keyword in keyword_list.findall('Keyword'):
+            term = _node_text(keyword)
+            if term:
+                pubmed_keywords.append({
+                    'term': term,
+                    'owner': owner,
+                    'major_topic': keyword.attrib.get('MajorTopicYN') == 'Y',
+                })
+
+    publication_types = []
+    for pub_type in article.findall('./MedlineCitation/Article/PublicationTypeList/PublicationType'):
+        term = _node_text(pub_type)
+        if term:
+            publication_types.append({
+                'term': term,
+                'ui': pub_type.attrib.get('UI', ''),
+            })
+
+    chemicals = []
+    for chemical in article.findall('./MedlineCitation/ChemicalList/Chemical'):
+        substance = chemical.find('NameOfSubstance')
+        name = _node_text(substance)
+        if name:
+            chemicals.append({
+                'name': name,
+                'ui': substance.attrib.get('UI', '') if substance is not None else '',
+                'registry_number': _node_text(chemical.find('RegistryNumber')),
+            })
+
+    return pmid, {
+        'abstract': ' '.join(abstract_parts),
+        'mesh_headings': mesh_headings,
+        'pubmed_keywords': pubmed_keywords,
+        'publication_types': publication_types,
+        'chemicals': chemicals,
+    }
+
+
+def pubmed_fetch_details(pmids, config):
     if not pmids:
         return {}
-    abstracts = {}
+    details = {}
     url = f"{PUBMED_BASE}/efetch.fcgi"
     for i in range(0, len(pmids), BATCH_SIZE):
         batch = pmids[i:i + BATCH_SIZE]
         params = urllib.parse.urlencode({
             'db': 'pubmed', 'id': ','.join(batch),
-            'rettype': 'abstract', 'retmode': 'xml',
+            'retmode': 'xml',
             'tool': 'PaperInt',
             'email': cfg(config, 'download.user_agent', ''),
         })
@@ -738,19 +819,21 @@ def pubmed_fetch_abstracts(pmids, config):
                 xml_text = r.read().decode('utf-8')
         except Exception as e:
             print(f"{_ts()}   PubMed efetch error: {e}", file=sys.stderr)
-            if not abstracts:
+            if not details:
                 return {}
             continue
 
-        for m in re.finditer(
-            r'<PubmedArticle>.*?<PMID[^>]*>(\d+)</PMID>.*?<Abstract>(.*?)</Abstract>',
-            xml_text, re.DOTALL
-        ):
-            pmid = m.group(1)
-            abs_text = re.sub(r'<[^>]+>', ' ', m.group(2)).strip()
-            abs_text = re.sub(r'\s+', ' ', abs_text)
-            abstracts[pmid] = abs_text
-    return abstracts
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as e:
+            print(f"{_ts()}   PubMed XML parse error: {e}", file=sys.stderr)
+            continue
+
+        for article in root.findall('.//PubmedArticle'):
+            pmid, data = _parse_pubmed_article(article)
+            if pmid:
+                details[pmid] = data
+    return details
 
 
 def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=None):
@@ -770,6 +853,7 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
 
     idlist = sr.get('esearchresult', {}).get('idlist', [])
     total = int(sr.get('esearchresult', {}).get('count', 0))
+    query_translation = sr.get('esearchresult', {}).get('querytranslation', '')
 
     if not idlist:
         return [], total
@@ -779,15 +863,16 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
         return [], total
 
     papers = []
-    abstracts_map = pubmed_fetch_abstracts(idlist, config)
+    details_map = pubmed_fetch_details(idlist, config)
     for pmid in idlist:
         info = sm.get('result', {}).get(pmid, {})
         if not info:
             continue
+        details = details_map.get(pmid, {})
         title = info.get('title', '')
         authors = ', '.join(
             a.get('name', '') for a in info.get('authors', [])[:5])
-        abstract = abstracts_map.get(pmid, '')
+        abstract = details.get('abstract', '')
 
         pmc_id = None
         doi = None
@@ -813,12 +898,22 @@ def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=No
 
         issns = info.get('issn', '') or info.get('essn', '') or ''
 
+        extra = {
+            'pmc_id': pmc_id,
+            'journal': info.get('source', ''),
+            'issn': issns,
+            'doi': doi,
+            'pubmed_query_translation': query_translation,
+        }
+        for key in ('mesh_headings', 'pubmed_keywords', 'publication_types', 'chemicals'):
+            if details.get(key):
+                extra[key] = details[key]
+
         papers.append(make_paper(
             'pubmed', pmid, title, authors, abstract,
             info.get('pubdate', ''), '',
             pdf_url, abs_url, pmid=pmid,
-            extra={'pmc_id': pmc_id, 'journal': info.get('source', ''),
-                   'issn': issns, 'doi': doi}))
+            extra=extra))
 
     return papers, total
 
@@ -1395,18 +1490,18 @@ def _show_results(papers):
         print(f"   URL: {p.get('abs_url', '')}\n")
 
 
-def _save_to_db(papers, config):
+def _save_to_db(papers, config, search_context=None):
     """Save search results to the shared database."""
     conn = get_conn(config)
-    n = insert_search_results(conn, papers)
+    n = insert_search_results(conn, papers, search_context=search_context)
     print(f"{_ts()} Saved: {n} new paper(s) to database ({len(papers) - n} already existed)")
     return n
 
 
-def _save_to_db_upsert(papers, config):
+def _save_to_db_upsert(papers, config, search_context=None):
     """Save search results with upsert-by-DOI (for CNSP source)."""
     conn = get_conn(config)
-    n = upsert_search_results(conn, papers)
+    n = upsert_search_results(conn, papers, search_context=search_context)
     print(f"{_ts()} Saved/updated: {n} paper(s) to database")
     return n
 
@@ -1449,6 +1544,61 @@ def _resolve_start_date(args, config, source):
         return (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d'), end_date
 
     return None, None
+
+
+def _query_for_context(source, keywords, start_date=None, end_date=None):
+    if source == 'pubmed':
+        return ' AND '.join(f'{kw}[All Fields]' for kw in keywords)
+    if source == 'arxiv':
+        q = ' AND '.join(f'all:"{kw}"' for kw in keywords)
+        if start_date:
+            s = start_date.replace('-', '') + '000000'
+            e = (end_date or datetime.now().strftime('%Y-%m-%d')).replace('-', '') + '235959'
+            q += f' AND submittedDate:[{s} TO {e}]'
+        return q
+    if source == 'crossref':
+        return ' '.join(keywords)
+    if source == 'europepmc':
+        parts = [f'"{kw}"' if ' ' in kw else kw for kw in keywords]
+        q = ' AND '.join(parts)
+        if start_date:
+            end = end_date or datetime.now().strftime('%Y-%m-%d')
+            q += f' AND FIRST_PDATE:[{start_date} TO {end}]'
+        return q
+    if source in ('biorxiv', 'medrxiv', 'cnsp'):
+        return ' OR '.join(keywords)
+    if source == 'all':
+        return 'all sources: ' + ', '.join(keywords)
+    return ', '.join(keywords)
+
+
+def _build_search_context(args, source, keywords, start_date, end_date, num, scanned, papers):
+    query_translation = ''
+    if source == 'pubmed' and papers:
+        query_translation = papers[0].get('pubmed_query_translation', '')
+    return {
+        'source': source,
+        'query': _query_for_context(source, keywords, start_date, end_date),
+        'query_translation': query_translation,
+        'keywords': keywords,
+        'start_date': start_date,
+        'end_date': end_date,
+        'requested_limit': num,
+        'total_results': scanned or None,
+        'result_count': len(papers),
+        'args': {
+            'cmd': args.cmd,
+            'source': source,
+            'keywords': keywords,
+            'num': getattr(args, 'num', None),
+            'start_date': getattr(args, 'start_date', None),
+            'end_date': getattr(args, 'end_date', None),
+            'days': getattr(args, 'days', None),
+            'incremental': getattr(args, 'incremental', False),
+            'cnsp_journals': getattr(args, 'cnsp_journals', None),
+            'cns': getattr(args, 'cns', False),
+        },
+    }
 
 
 def cmd_search(args, config):
@@ -1527,10 +1677,12 @@ def cmd_search(args, config):
 
     _show_results(papers)
     if not args.list:
+        search_context = _build_search_context(
+            args, source, keywords, start_date, end_date, num, scanned, papers)
         if source == 'cnsp':
-            _save_to_db_upsert(papers, config)
+            _save_to_db_upsert(papers, config, search_context)
         else:
-            _save_to_db(papers, config)
+            _save_to_db(papers, config, search_context)
     _kill_shared_chrome()
     return 0
 

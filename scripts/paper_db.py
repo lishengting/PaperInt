@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS papers (
     download_date   TEXT,
     interpret_date  TEXT,
     metadata_json   TEXT,
+    source_terms_text TEXT,
     oa_has_pdf      INTEGER DEFAULT 0,
     error_message   TEXT,
     relevance       TEXT,
@@ -50,6 +51,39 @@ CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
 CREATE INDEX IF NOT EXISTS idx_papers_paper_id ON papers(paper_id);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_papers_search_date ON papers(search_date);
+
+CREATE TABLE IF NOT EXISTS search_runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    source            TEXT NOT NULL,
+    query             TEXT,
+    query_translation TEXT,
+    keywords_json     TEXT,
+    start_date        TEXT,
+    end_date          TEXT,
+    requested_limit   INTEGER,
+    total_results     INTEGER,
+    result_count      INTEGER,
+    saved_count       INTEGER,
+    args_json         TEXT,
+    searched_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS paper_search_hits (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                INTEGER NOT NULL,
+    paper_id              TEXT NOT NULL,
+    source                TEXT,
+    rank                  INTEGER,
+    matched_keywords_json TEXT,
+    hit_metadata_json     TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(run_id, paper_id),
+    FOREIGN KEY(run_id) REFERENCES search_runs(id),
+    FOREIGN KEY(paper_id) REFERENCES papers(paper_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_runs_source_date ON search_runs(source, searched_at);
+CREATE INDEX IF NOT EXISTS idx_paper_search_hits_paper_id ON paper_search_hits(paper_id);
 """
 
 # ---------------------------------------------------------------------------
@@ -87,7 +121,16 @@ def get_conn(config: dict) -> sqlite3.Connection:
         _conn.commit()
     except sqlite3.OperationalError:
         pass
+    # Auto-migration: add source_terms_text column for existing databases
+    try:
+        _conn.execute("ALTER TABLE papers ADD COLUMN source_terms_text TEXT")
+        _conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_source_terms_text ON papers(source_terms_text)")
+    _conn.commit()
     _backfill_path_prefix(_conn)
+    _backfill_source_terms_text(_conn)
 
     _db_path = path
     return _conn
@@ -97,40 +140,376 @@ def _now() -> str:
     return datetime.now().isoformat()
 
 
+def _is_empty(value) -> bool:
+    return value is None or value == '' or value == [] or value == {}
+
+
+def _load_metadata(value) -> dict:
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        result = {k: v for k, v in value.items() if k != 'metadata_json'}
+        nested = _load_metadata(value.get('metadata_json'))
+        for key, nested_value in nested.items():
+            if _is_empty(result.get(key)) and not _is_empty(nested_value):
+                result[key] = nested_value
+        return result
+    if not isinstance(value, str):
+        return {}
+    try:
+        data = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return _load_metadata(data)
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _merge_list_values(existing, new) -> list:
+    merged = []
+    seen = set()
+    for item in _as_list(existing) + _as_list(new):
+        if _is_empty(item):
+            continue
+        try:
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            key = str(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _merge_metadata(existing_json, new_paper: dict) -> dict:
+    existing = _load_metadata(existing_json)
+    new_data = _load_metadata(new_paper)
+    for key, value in new_data.items():
+        if key == '_score' or _is_empty(value):
+            continue
+        if key in existing and not _is_empty(existing[key]):
+            if isinstance(existing[key], list) or isinstance(value, list):
+                existing[key] = _merge_list_values(existing[key], value)
+            elif isinstance(existing[key], dict) and isinstance(value, dict):
+                nested = dict(existing[key])
+                for nk, nv in value.items():
+                    if not _is_empty(nv) and _is_empty(nested.get(nk)):
+                        nested[nk] = nv
+                existing[key] = nested
+            continue
+        existing[key] = value
+    return existing
+
+
+def _add_source_term(terms: list[str], value) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        value = str(value)
+    if not isinstance(value, str):
+        return
+    value = ' '.join(value.split())
+    if value:
+        terms.append(value)
+
+
+def _mesh_labels(metadata: dict) -> list[str]:
+    labels = []
+    for mesh in _as_list(metadata.get('mesh_headings') or metadata.get('mesh_terms')):
+        if isinstance(mesh, dict):
+            descriptor = mesh.get('descriptor') or mesh.get('name') or mesh.get('term')
+            _add_source_term(labels, descriptor)
+            _add_source_term(labels, mesh.get('ui'))
+            for qualifier in _as_list(mesh.get('qualifiers')):
+                if isinstance(qualifier, dict):
+                    _add_source_term(labels, qualifier.get('name') or qualifier.get('term'))
+                    _add_source_term(labels, qualifier.get('ui'))
+                else:
+                    _add_source_term(labels, qualifier)
+        else:
+            _add_source_term(labels, mesh)
+    return labels
+
+
+def _keyword_labels(metadata: dict) -> list[str]:
+    labels = []
+    for key in ('pubmed_keywords', 'keywords'):
+        for keyword in _as_list(metadata.get(key)):
+            if isinstance(keyword, dict):
+                _add_source_term(labels, keyword.get('term') or keyword.get('name'))
+                _add_source_term(labels, keyword.get('owner'))
+            else:
+                _add_source_term(labels, keyword)
+    return labels
+
+
+def _publication_type_labels(metadata: dict) -> list[str]:
+    labels = []
+    for pub_type in _as_list(metadata.get('publication_types')):
+        if isinstance(pub_type, dict):
+            _add_source_term(labels, pub_type.get('term') or pub_type.get('name'))
+            _add_source_term(labels, pub_type.get('ui'))
+        else:
+            _add_source_term(labels, pub_type)
+    return labels
+
+
+def _chemical_labels(metadata: dict) -> list[str]:
+    labels = []
+    for chemical in _as_list(metadata.get('chemicals')):
+        if isinstance(chemical, dict):
+            _add_source_term(labels, chemical.get('name') or chemical.get('term'))
+            _add_source_term(labels, chemical.get('registry_number'))
+            _add_source_term(labels, chemical.get('ui'))
+        else:
+            _add_source_term(labels, chemical)
+    return labels
+
+
+def _source_terms_text(paper_or_metadata: dict) -> str:
+    metadata = _load_metadata(paper_or_metadata)
+    terms = []
+    for key in ('journal', 'issn', 'category', 'abbrev'):
+        _add_source_term(terms, metadata.get(key))
+    terms.extend(_mesh_labels(metadata))
+    terms.extend(_keyword_labels(metadata))
+    terms.extend(_publication_type_labels(metadata))
+    terms.extend(_chemical_labels(metadata))
+
+    unique = []
+    seen = set()
+    for term in terms:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(term)
+    return ' | '.join(unique)
+
+
+def _match_search_keywords(paper_or_metadata: dict, keywords: list[str]) -> dict:
+    metadata = _load_metadata(paper_or_metadata)
+    fields = {
+        'title': [metadata.get('title', '')],
+        'abstract': [metadata.get('abstract', '')],
+        'journal': [metadata.get('journal', '')],
+        'source': [metadata.get('source', '')],
+        'mesh_headings': _mesh_labels(metadata),
+        'pubmed_keywords': _keyword_labels(metadata),
+        'publication_types': _publication_type_labels(metadata),
+        'chemicals': _chemical_labels(metadata),
+    }
+    source_terms = metadata.get('source_terms_text') or _source_terms_text(metadata)
+    if source_terms:
+        fields['source_terms_text'] = [source_terms]
+
+    matches = {}
+    for keyword in keywords or []:
+        keyword = str(keyword).strip()
+        if not keyword:
+            continue
+        needle = keyword.lower()
+        field_matches = {}
+        for field, values in fields.items():
+            hits = []
+            for value in values:
+                value = str(value or '')
+                if needle in value.lower():
+                    hits.append(value[:300])
+            if hits:
+                field_matches[field] = hits[:5]
+        if field_matches:
+            matches[keyword] = field_matches
+    return matches
+
+
+def _paper_source_url(paper: dict) -> str:
+    return paper.get('source_url') or paper.get('abs_url') or ''
+
+
+def _paper_metadata_json(paper: dict) -> str:
+    return json.dumps(_merge_metadata(None, paper), ensure_ascii=False)
+
+
+def _merge_existing_paper(conn: sqlite3.Connection, existing: sqlite3.Row,
+                          paper: dict, now: str) -> str:
+    updates = {}
+    field_map = {
+        'title': paper.get('title', ''),
+        'authors': paper.get('authors', ''),
+        'abstract': paper.get('abstract', ''),
+        'doi': _sanitize_doi(paper.get('doi', '') or ''),
+        'pmid': paper.get('pmid', ''),
+        'arxiv_id': paper.get('arxiv_id', ''),
+        'source': paper.get('source', ''),
+        'source_url': _paper_source_url(paper),
+        'pdf_url': paper.get('pdf_url', ''),
+    }
+    for field, new_value in field_map.items():
+        if new_value and not (existing[field] or '').strip():
+            updates[field] = new_value
+
+    merged_metadata = _merge_metadata(existing['metadata_json'], paper)
+    updates['metadata_json'] = json.dumps(merged_metadata, ensure_ascii=False)
+    updates['source_terms_text'] = _source_terms_text(merged_metadata)
+    updates['updated_at'] = now
+
+    set_clause = ', '.join(f"{field} = ?" for field in updates)
+    values = list(updates.values()) + [existing['paper_id']]
+    conn.execute(f"UPDATE papers SET {set_clause} WHERE paper_id = ?", values)
+    return existing['paper_id']
+
+
+def _insert_or_merge_paper(conn: sqlite3.Connection, paper: dict, now: str,
+                           by_doi: bool = False) -> tuple[str, bool]:
+    doi = _sanitize_doi(paper.get('doi', '') or '')
+    if by_doi and doi:
+        existing = conn.execute("SELECT * FROM papers WHERE doi = ?", (doi,)).fetchone()
+        if existing:
+            return _merge_existing_paper(conn, existing, paper, now), False
+
+    paper_id = paper.get('paper_id') or doi
+    if not paper_id:
+        return '', False
+
+    metadata = _merge_metadata(None, paper)
+    source_terms = _source_terms_text(metadata)
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO papers
+               (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
+                source, source_url, pdf_url, status, search_date, metadata_json,
+                source_terms_text)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?, ?)""",
+            (
+                paper_id,
+                paper.get('title', ''),
+                paper.get('authors', ''),
+                paper.get('abstract', ''),
+                doi,
+                paper.get('pmid', ''),
+                paper.get('arxiv_id', ''),
+                paper.get('source', ''),
+                _paper_source_url(paper),
+                paper.get('pdf_url', ''),
+                now,
+                json.dumps(metadata, ensure_ascii=False),
+                source_terms,
+            ),
+        )
+    except Exception:
+        raise
+
+    inserted = conn.execute("SELECT changes()").fetchone()[0] > 0
+    if inserted:
+        return paper_id, True
+
+    existing = conn.execute("SELECT * FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+    if existing:
+        return _merge_existing_paper(conn, existing, paper, now), False
+    return paper_id, False
+
+
+def _json_or_none(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _create_search_run(conn: sqlite3.Connection, search_context: dict | None) -> int | None:
+    if not search_context:
+        return None
+    conn.execute(
+        """INSERT INTO search_runs
+           (source, query, query_translation, keywords_json, start_date, end_date,
+            requested_limit, total_results, result_count, saved_count, args_json,
+            searched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            search_context.get('source') or '',
+            search_context.get('query'),
+            search_context.get('query_translation'),
+            _json_or_none(search_context.get('keywords')),
+            search_context.get('start_date'),
+            search_context.get('end_date'),
+            search_context.get('requested_limit'),
+            search_context.get('total_results'),
+            search_context.get('result_count'),
+            search_context.get('saved_count'),
+            _json_or_none(search_context.get('args')),
+            search_context.get('searched_at') or _now(),
+        ),
+    )
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def _update_search_run_saved_count(conn: sqlite3.Connection, run_id: int | None,
+                                   saved_count: int) -> None:
+    if run_id is None:
+        return
+    conn.execute("UPDATE search_runs SET saved_count = ? WHERE id = ?", (saved_count, run_id))
+
+
+def _record_search_hit(conn: sqlite3.Connection, run_id: int | None, paper_id: str,
+                       paper: dict, rank: int, keywords: list[str]) -> None:
+    if run_id is None or not paper_id:
+        return
+    metadata = _merge_metadata(None, paper)
+    if not metadata.get('source_terms_text'):
+        metadata['source_terms_text'] = _source_terms_text(metadata)
+    matched = _match_search_keywords(metadata, keywords)
+    hit_metadata = {
+        key: paper.get(key)
+        for key in ('title', 'doi', 'pmid', 'arxiv_id', 'source', 'date', 'abs_url', 'pdf_url')
+        if paper.get(key)
+    }
+    conn.execute(
+        """INSERT OR IGNORE INTO paper_search_hits
+           (run_id, paper_id, source, rank, matched_keywords_json, hit_metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            run_id,
+            paper_id,
+            paper.get('source', ''),
+            rank,
+            json.dumps(matched, ensure_ascii=False),
+            json.dumps(hit_metadata, ensure_ascii=False),
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Search skill operations
 # ---------------------------------------------------------------------------
 
-def insert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
-    """Insert search results with status='searched'. Skips duplicates. Returns count inserted."""
+def insert_search_results(conn: sqlite3.Connection, papers: list[dict],
+                          search_context: dict | None = None) -> int:
+    """Insert search results with status='searched'. Returns count inserted."""
     count = 0
     now = _now()
-    for p in papers:
+    run_id = _create_search_run(conn, search_context)
+    keywords = (search_context or {}).get('keywords') or []
+    saved_count = 0
+    for rank, p in enumerate(papers, 1):
         try:
-            conn.execute(
-                """INSERT OR IGNORE INTO papers
-                   (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
-                    source, source_url, pdf_url, status, search_date, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
-                (
-                    p.get('paper_id', ''),
-                    p.get('title', ''),
-                    p.get('authors', ''),
-                    p.get('abstract', ''),
-                    _sanitize_doi(p.get('doi', '')),
-                    p.get('pmid', ''),
-                    p.get('arxiv_id', ''),
-                    p.get('source', ''),
-                    p.get('abs_url', ''),
-                    p.get('pdf_url', ''),
-                    now,
-                    json.dumps(p, ensure_ascii=False),
-                ),
-            )
-            if conn.execute("SELECT changes()").fetchone()[0] > 0:
+            paper_id, inserted = _insert_or_merge_paper(conn, p, now)
+            if inserted:
                 count += 1
+            if paper_id:
+                _record_search_hit(conn, run_id, paper_id, p, rank, keywords)
+                saved_count += 1
         except Exception as e:
             print(f"  DB insert error for {p.get('paper_id', '?')}: {e}", file=__import__('sys').stderr)
+    _update_search_run_saved_count(conn, run_id, saved_count)
     conn.commit()
     return count
 
@@ -139,90 +518,26 @@ def insert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
 # Upsert by DOI (for CNSP and other DOI-based sources)
 # ---------------------------------------------------------------------------
 
-def upsert_search_results(conn: sqlite3.Connection, papers: list[dict]) -> int:
+def upsert_search_results(conn: sqlite3.Connection, papers: list[dict],
+                          search_context: dict | None = None) -> int:
     """Insert or update by DOI. Fills blank fields in existing records. Returns count affected."""
     count = 0
     now = _now()
-    for p in papers:
-        doi = _sanitize_doi(p.get('doi', '') or '')
-        if not doi:
-            # Fall back to INSERT OR IGNORE by paper_id
-            try:
-                conn.execute(
-                    """INSERT OR IGNORE INTO papers
-                       (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
-                        source, source_url, pdf_url, status, search_date, metadata_json)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
-                    (
-                        p.get('paper_id', ''),
-                        p.get('title', ''),
-                        p.get('authors', ''),
-                        p.get('abstract', ''),
-                        doi,
-                        p.get('pmid', ''),
-                        p.get('arxiv_id', ''),
-                        p.get('source', ''),
-                        p.get('abs_url', ''),
-                        p.get('pdf_url', ''),
-                        now,
-                        json.dumps(p, ensure_ascii=False),
-                    ),
-                )
-                if conn.execute("SELECT changes()").fetchone()[0] > 0:
-                    count += 1
-            except Exception as e:
-                print(f"  DB insert error for {p.get('paper_id', '?')}: {e}", file=__import__('sys').stderr)
-            continue
-
-        existing = conn.execute(
-            "SELECT id, paper_id, title, authors, abstract, pdf_url, source_url FROM papers WHERE doi = ?",
-            (doi,),
-        ).fetchone()
-
-        if existing:
-            updates = {}
-            for field in ['title', 'authors', 'abstract', 'pdf_url']:
-                existing_val = (existing[field] or '').strip()
-                new_val = (p.get(field, '') or '').strip()
-                if new_val and not existing_val:
-                    updates[field] = new_val
-            if p.get('abs_url', '').strip():
-                existing_source_url = (existing['source_url'] or '').strip()
-                if not existing_source_url:
-                    updates['source_url'] = p['abs_url']
-            if updates:
-                updates['updated_at'] = now
-                set_clause = ', '.join(f"{k} = ?" for k in updates)
-                values = list(updates.values()) + [doi]
-                conn.execute(
-                    f"UPDATE papers SET {set_clause} WHERE doi = ?", values,
-                )
-            count += 1
-        else:
-            try:
-                conn.execute(
-                    """INSERT INTO papers
-                       (paper_id, title, authors, abstract, doi, pmid, arxiv_id,
-                        source, source_url, pdf_url, status, search_date, metadata_json)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searched', ?, ?)""",
-                    (
-                        doi,
-                        p.get('title', ''),
-                        p.get('authors', ''),
-                        p.get('abstract', ''),
-                        doi,
-                        p.get('pmid', ''),
-                        p.get('arxiv_id', ''),
-                        p.get('source', ''),
-                        p.get('abs_url', ''),
-                        p.get('pdf_url', ''),
-                        now,
-                        json.dumps(p, ensure_ascii=False),
-                    ),
-                )
+    run_id = _create_search_run(conn, search_context)
+    keywords = (search_context or {}).get('keywords') or []
+    saved_count = 0
+    for rank, p in enumerate(papers, 1):
+        try:
+            doi = _sanitize_doi(p.get('doi', '') or '')
+            paper_id, inserted = _insert_or_merge_paper(conn, p, now, by_doi=bool(doi))
+            if paper_id:
                 count += 1
-            except Exception as e:
-                print(f"  DB insert error for {doi}: {e}", file=__import__('sys').stderr)
+                _record_search_hit(conn, run_id, paper_id, p, rank, keywords)
+                saved_count += 1
+        except Exception as e:
+            ident = p.get('doi') or p.get('paper_id') or '?'
+            print(f"  DB insert error for {ident}: {e}", file=__import__('sys').stderr)
+    _update_search_run_saved_count(conn, run_id, saved_count)
     conn.commit()
     return count
 
@@ -366,6 +681,34 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     return {r['status']: r['cnt'] for r in rows}
 
 
+def get_search_history(conn: sqlite3.Connection, paper_id: str, limit: int = 10) -> list[dict]:
+    """Return recent search runs that produced this paper."""
+    rows = conn.execute(
+        """SELECT h.rank, h.source as hit_source, h.matched_keywords_json,
+                  h.hit_metadata_json, h.created_at,
+                  r.source, r.query, r.query_translation, r.keywords_json,
+                  r.start_date, r.end_date, r.requested_limit,
+                  r.total_results, r.result_count, r.saved_count, r.searched_at
+           FROM paper_search_hits h
+           JOIN search_runs r ON r.id = h.run_id
+           WHERE h.paper_id = ?
+           ORDER BY r.searched_at DESC, h.id DESC
+           LIMIT ?""",
+        (paper_id, int(limit)),
+    ).fetchall()
+    history = []
+    for row in rows:
+        item = dict(row)
+        for key in ('matched_keywords_json', 'hit_metadata_json', 'keywords_json'):
+            if item.get(key):
+                try:
+                    item[key[:-5] if key.endswith('_json') else key] = json.loads(item[key])
+                except json.JSONDecodeError:
+                    pass
+        history.append(item)
+    return history
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -417,6 +760,20 @@ def _backfill_path_prefix(conn: sqlite3.Connection) -> None:
         pp = f"{row['dir_name']}/{_sanitize_path(row['paper_id'])}"
         conn.execute("UPDATE papers SET path_prefix = ? WHERE paper_id = ?",
                      (pp, row['paper_id']))
+    if rows:
+        conn.commit()
+
+
+def _backfill_source_terms_text(conn: sqlite3.Connection) -> None:
+    """Backfill source_terms_text from metadata_json for rows that do not have it."""
+    rows = conn.execute(
+        "SELECT paper_id, metadata_json FROM papers WHERE source_terms_text IS NULL OR source_terms_text = ''"
+    ).fetchall()
+    for row in rows:
+        source_terms = _source_terms_text(_load_metadata(row['metadata_json']))
+        if source_terms:
+            conn.execute("UPDATE papers SET source_terms_text = ? WHERE paper_id = ?",
+                         (source_terms, row['paper_id']))
     if rows:
         conn.commit()
 

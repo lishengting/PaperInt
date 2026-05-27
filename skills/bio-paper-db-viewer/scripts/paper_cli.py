@@ -4,7 +4,7 @@ Bio Paper DB Viewer CLI — view papers and statistics from the SQLite database.
 
 Usage:
   paper_cli.py stats
-  paper_cli.py list [-s STATUS] [--source SOURCE] [-k KEYWORD] [-n N] [--offset OFFSET]
+  paper_cli.py list [-s STATUS] [--source SOURCE] [-k KEYWORD] [--found-by KEYWORD] [-n N] [--offset OFFSET]
   paper_cli.py show -p PAPER_ID
   paper_cli.py delete -p PAPER_ID
   paper_cli.py set-status -p PAPER_ID [PAPER_ID ...] -s STATUS
@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 # Reach up three levels to the project-root scripts/ directory
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  '..', '..', '..', 'scripts'))
-from paper_db import get_conn, get_stats, get_paper, _row_to_dict
+from paper_db import get_conn, get_stats, get_paper, get_search_history, _row_to_dict
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ def cmd_stats(args, config):
 
 KEYWORD_SEARCH_COLUMNS = (
     'title', 'abstract', 'source', 'doi', 'pmid', 'paper_id', 'arxiv_id',
-    'path_prefix', 'dir_name', 'source_url', 'pdf_url',
+    'path_prefix', 'dir_name', 'source_url', 'pdf_url', 'source_terms_text',
 )
 
 
@@ -123,6 +123,40 @@ def _append_keyword_filter(sql: str, params: list, keyword: str) -> str:
     )
     params.extend([pattern] * len(clauses))
     return sql + ' AND (' + ' OR '.join(clauses) + ')'
+
+
+def _append_found_by_filter(sql: str, params: list, keyword: str) -> str:
+    pattern = f'%{keyword}%'
+    params.extend([pattern, pattern, pattern, pattern])
+    return sql + """ AND EXISTS (
+        SELECT 1
+        FROM paper_search_hits h
+        JOIN search_runs r ON r.id = h.run_id
+        WHERE h.paper_id = papers.paper_id
+          AND (
+              COALESCE(r.keywords_json, '') LIKE ?
+              OR COALESCE(r.query, '') LIKE ?
+              OR COALESCE(r.query_translation, '') LIKE ?
+              OR COALESCE(h.matched_keywords_json, '') LIKE ?
+          )
+    )"""
+
+
+def _print_json_section(label: str, value) -> None:
+    if not value:
+        return
+    print(f"\n{label}:")
+    print(json.dumps(value, indent=2, ensure_ascii=False))
+
+
+def _filter_explain_matches(matches, explain):
+    if not explain or not isinstance(matches, dict):
+        return matches
+    needle = explain.lower()
+    return {
+        key: value for key, value in matches.items()
+        if needle in key.lower() or needle in json.dumps(value, ensure_ascii=False).lower()
+    }
 
 
 def cmd_list(args, config):
@@ -142,6 +176,8 @@ def cmd_list(args, config):
             json_params.append(args.source)
         if args.keyword:
             json_sql = _append_keyword_filter(json_sql, json_params, args.keyword)
+        if args.found_by:
+            json_sql = _append_found_by_filter(json_sql, json_params, args.found_by)
 
         json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
         json_params.extend([args.limit, args.offset])
@@ -167,6 +203,8 @@ def cmd_list(args, config):
         params.append(args.source)
     if args.keyword:
         sql = _append_keyword_filter(sql, params, args.keyword)
+    if args.found_by:
+        sql = _append_found_by_filter(sql, params, args.found_by)
 
     # Parse journal from metadata_json for each row
     def _get_journal(metadata_json):
@@ -274,7 +312,7 @@ def cmd_list(args, config):
 
     if not rows:
         which = 'CNS ' if args.cns else ('CNSP ' if args.cnsp else '')
-        print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword) else ''}.")
+        print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword or args.found_by) else ''}.")
         return 0
 
     # Column widths
@@ -386,6 +424,33 @@ def cmd_show(args, config):
             print(f"\n{label}:")
             print(json.dumps(value, indent=2, ensure_ascii=False))
 
+    for json_field, label in (
+        ('mesh_headings', 'PubMed MeSH Headings'),
+        ('pubmed_keywords', 'PubMed Keywords'),
+        ('publication_types', 'Publication Types'),
+        ('chemicals', 'Chemicals'),
+    ):
+        _print_json_section(label, paper.get(json_field))
+
+    history = get_search_history(conn, paper['paper_id'])
+    if history:
+        print("\nSearch provenance:")
+        for item in history:
+            rank = f" rank {item['rank']}" if item.get('rank') else ''
+            print(f"  {item.get('searched_at', '')}  {item.get('source', '')}{rank}")
+            if item.get('keywords'):
+                print(f"    keywords: {', '.join(str(k) for k in item['keywords'])}")
+            if item.get('query'):
+                print(f"    query: {item['query']}")
+            if item.get('query_translation'):
+                print(f"    query translation: {item['query_translation']}")
+            if item.get('start_date') or item.get('end_date'):
+                print(f"    date range: {item.get('start_date') or '?'} — {item.get('end_date') or '?'}")
+            matches = _filter_explain_matches(item.get('matched_keywords'), getattr(args, 'explain', None))
+            if matches:
+                print("    matched keyword evidence:")
+                print(json.dumps(matches, indent=6, ensure_ascii=False))
+
     print(f"{'─' * 70}")
     return 0
 
@@ -494,7 +559,9 @@ def main():
     lp.add_argument('--source', default=None,
                     help='Filter by source: arxiv, biorxiv, medrxiv, pubmed, scholar, nature, science, cell, plos')
     lp.add_argument('-k', '--keyword', default=None,
-                    help='Filter papers whose title, abstract, journal, source, DOI, PMID, ID, or path contains the keyword')
+                    help='Filter papers whose title, abstract, journal, source, DOI, PMID, ID, path, or source terms contain the keyword')
+    lp.add_argument('--found-by', default=None,
+                    help='Filter papers saved by a search whose query, keywords, or matched evidence contains this keyword')
     lp.add_argument('-n', '--limit', type=int, default=20,
                     help='Maximum results (default: 20)')
     lp.add_argument('--offset', type=int, default=0,
@@ -529,6 +596,8 @@ def main():
                         description='Display all available fields for a single paper by its ID.')
     sp.add_argument('-p', '--paper-id', required=True,
                     help='Paper ID from the database (e.g., DOI, arXiv ID)')
+    sp.add_argument('--explain', default=None,
+                    help='When showing search provenance, focus matched evidence on this keyword')
 
     args = p.parse_args()
     config = load_config(args.config)

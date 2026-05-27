@@ -50,9 +50,9 @@ python3 scripts/migrate_json_to_db.py
 
 ### Shared Database (`scripts/paper_db.py`)
 
-Single `papers` table in SQLite at `data/papers.db`. All three skills import `paper_db` via `sys.path.insert(0, 'scripts')`. Key API:
+The shared SQLite DB at `data/papers.db` has a canonical `papers` table plus search provenance tables (`search_runs`, `paper_search_hits`). All three skills import `paper_db` via `sys.path.insert(0, 'scripts')`. Key API:
 
-- **Search**: `insert_search_results(conn, papers)` — INSERT OR IGNORE with status='searched'
+- **Search**: `insert_search_results(conn, papers, search_context=None)` — inserts new rows, merges metadata for existing rows, and records provenance when context is provided
 - **Downloader**: `get_papers_by_status(conn, 'searched')`, `mark_downloaded(conn, pid, dir_name, meta)`, `mark_download_failed(conn, pid, err)`
 - **Interpreter**: `get_papers_by_status(conn, 'downloaded')`, `update_tags(conn, pid, data)`, `mark_interpreted(conn, pid)`, `mark_interpret_failed(conn, pid, err)`; `update_relevance()` is available for manual relevance-filter flows
 - **Shared**: `get_paper_dir(conn, pid)` — returns the directory name under `data/`, `get_stats(conn)`
