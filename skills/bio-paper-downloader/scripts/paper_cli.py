@@ -127,7 +127,7 @@ def delay(config):
 
 
 def sanitize(name):
-    return re.sub(r'[/\\:*?"<>|]', '_', str(name))[:200]
+    return re.sub(r"[/\\:*?\"<>|']", '_', str(name))[:200]
 
 
 def title_to_dirname(title):

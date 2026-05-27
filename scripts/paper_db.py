@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS papers (
     source_url      TEXT,
     pdf_url         TEXT,
     dir_name        TEXT,
+    path_prefix     TEXT,
     status          TEXT NOT NULL DEFAULT 'searched',
     search_date     TEXT,
     download_date   TEXT,
@@ -79,6 +80,15 @@ def get_conn(config: dict) -> sqlite3.Connection:
     _conn.execute("PRAGMA foreign_keys=ON")
     _conn.executescript(SCHEMA)
     _conn.commit()
+
+    # Auto-migration: add path_prefix column for existing databases
+    try:
+        _conn.execute("ALTER TABLE papers ADD COLUMN path_prefix TEXT")
+        _conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    _backfill_path_prefix(_conn)
+
     _db_path = path
     return _conn
 
@@ -244,6 +254,7 @@ def mark_downloaded(conn: sqlite3.Connection, paper_id: str, dir_name: str,
                     metadata_updates: dict = None) -> None:
     """Mark a paper as downloaded: set status, dir_name, download_date, merge metadata."""
     now = _now()
+    pp = f"{dir_name}/{_sanitize_path(paper_id)}"
     if metadata_updates:
         existing = conn.execute(
             "SELECT metadata_json FROM papers WHERE paper_id = ?", (paper_id,)
@@ -254,13 +265,13 @@ def mark_downloaded(conn: sqlite3.Connection, paper_id: str, dir_name: str,
         else:
             meta = metadata_updates
         conn.execute(
-            "UPDATE papers SET status='downloaded', dir_name=?, download_date=?, metadata_json=?, error_message=NULL, updated_at=? WHERE paper_id=?",
-            (dir_name, now, json.dumps(meta, ensure_ascii=False), now, paper_id),
+            "UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?, metadata_json=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            (dir_name, pp, now, json.dumps(meta, ensure_ascii=False), now, paper_id),
         )
     else:
         conn.execute(
-            "UPDATE papers SET status='downloaded', dir_name=?, download_date=?, error_message=NULL, updated_at=? WHERE paper_id=?",
-            (dir_name, now, now, paper_id),
+            "UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            (dir_name, pp, now, now, paper_id),
         )
     conn.commit()
 
@@ -270,9 +281,10 @@ def mark_download_failed(conn: sqlite3.Connection, paper_id: str, error: str,
     """Mark a paper download as failed."""
     now = _now()
     if dir_name:
+        pp = f"{dir_name}/{_sanitize_path(paper_id)}"
         conn.execute(
-            "UPDATE papers SET status='download_failed', error_message=?, dir_name=?, updated_at=? WHERE paper_id=?",
-            (error, dir_name, now, paper_id),
+            "UPDATE papers SET status='download_failed', error_message=?, dir_name=?, path_prefix=?, updated_at=? WHERE paper_id=?",
+            (error, dir_name, pp, now, paper_id),
         )
     else:
         conn.execute(
@@ -398,6 +410,25 @@ def _sanitize_doi(doi: str) -> str:
         return doi
     print(f"  DB: rejecting invalid DOI (no 10. prefix): {doi[:80]}", file=__import__('sys').stderr)
     return ''
+
+
+def _sanitize_path(name: str) -> str:
+    """Replace filesystem-unsafe characters with underscores, truncate to 200."""
+    import re
+    return re.sub(r"[/\\:*?\"<>|']", '_', str(name))[:200]
+
+
+def _backfill_path_prefix(conn: sqlite3.Connection) -> None:
+    """Backfill path_prefix for rows that have dir_name but no path_prefix."""
+    rows = conn.execute(
+        "SELECT paper_id, dir_name FROM papers WHERE dir_name IS NOT NULL AND path_prefix IS NULL"
+    ).fetchall()
+    for row in rows:
+        pp = f"{row['dir_name']}/{_sanitize_path(row['paper_id'])}"
+        conn.execute("UPDATE papers SET path_prefix = ? WHERE paper_id = ?",
+                     (pp, row['paper_id']))
+    if rows:
+        conn.commit()
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

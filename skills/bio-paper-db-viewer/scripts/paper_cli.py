@@ -112,7 +112,7 @@ def cmd_list(args, config):
     if args.all:
         args.limit = sys.maxsize
 
-    sql = 'SELECT paper_id, doi, title, source, status, search_date, metadata_json FROM papers WHERE 1=1'
+    sql = 'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json FROM papers WHERE 1=1'
     params: list = []
 
     if args.status:
@@ -239,13 +239,14 @@ def cmd_list(args, config):
     id_w = 36
     src_w = 8
     st_w = 17
+    pp_w = 40
     date_w = 19
     cnsp_w = 4
     j_w = 20
     issn_w = 10
 
-    header = f"{'DOI':<{doi_w}} {'Paper ID':<{id_w}} {'Title':<50} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Date':<{date_w}} {'Journal':<{j_w}} {'ISSN':<{issn_w}}"
-    sep = f"{'─' * doi_w} {'─' * id_w} {'─' * 50} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * date_w} {'─' * j_w} {'─' * issn_w}"
+    header = f"{'DOI':<{doi_w}} {'Paper ID':<{id_w}} {'Title':<50} {'Source':<{src_w}} {'CNSP':<{cnsp_w}} {'Status':<{st_w}} {'Path':<{pp_w}} {'Date':<{date_w}} {'Journal':<{j_w}} {'ISSN':<{issn_w}}"
+    sep = f"{'─' * doi_w} {'─' * id_w} {'─' * 50} {'─' * src_w} {'─' * cnsp_w} {'─' * st_w} {'─' * pp_w} {'─' * date_w} {'─' * j_w} {'─' * issn_w}"
     print(header)
     print(sep)
 
@@ -263,6 +264,9 @@ def cmd_list(args, config):
         if len(source) > src_w:
             source = source[:src_w - 1]
         status = r['status'] or ''
+        pp = r['path_prefix'] or ''
+        if len(pp) > pp_w - 2:
+            pp = pp[:pp_w - 5] + '...'
         date_str = r['search_date'] or ''
         if len(date_str) > date_w:
             date_str = date_str[:date_w]
@@ -274,7 +278,7 @@ def cmd_list(args, config):
         if len(issn) > issn_w:
             issn = issn[:issn_w]
 
-        print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {date_str:<{date_w}} {journal:<{j_w}} {issn:<{issn_w}}")
+        print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {pp:<{pp_w}} {date_str:<{date_w}} {journal:<{j_w}} {issn:<{issn_w}}")
 
     showing = min(args.limit, len(rows))
     after = args.offset + showing
