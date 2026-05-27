@@ -5,7 +5,7 @@ Shared SQLite database module for the PaperInt skills pipeline.
 Used by: bio-paper-search, bio-paper-downloader, bio-paper-interpreter
 
 Schema: a single `papers` table tracking each paper through the pipeline:
-  searched -> downloaded (or download_failed) -> interpreted (or skipped)
+  searched -> downloaded (or download_failed) -> interpreted
 """
 
 import json
@@ -314,16 +314,6 @@ def mark_interpret_failed(conn: sqlite3.Connection, paper_id: str, error: str) -
     conn.execute(
         "UPDATE papers SET status='interpret_failed', error_message=?, updated_at=? WHERE paper_id=?",
         (error, now, paper_id),
-    )
-    conn.commit()
-
-
-def mark_skipped(conn: sqlite3.Connection, paper_id: str) -> None:
-    """Mark a paper as skipped (not bioinformatics-relevant)."""
-    now = _now()
-    conn.execute(
-        "UPDATE papers SET status='skipped', updated_at=? WHERE paper_id=?",
-        (now, paper_id),
     )
     conn.commit()
 

@@ -3,8 +3,7 @@
 ## Goal
 
 为已下载论文分配主题标签，并把匹配结果写入共享数据库。当前 `paper_cli.py`
-的 Phase 1 只执行标签匹配；不会因为相关性不足而拒绝论文，也不会写
-`skipped.json`。
+的 Phase 1 只执行标签匹配；不会因为相关性不足而拒绝论文。
 
 `filter_relevance.py` 仍可作为手动/辅助检查脚本使用，但它没有接入默认
 `paper_cli.py` Phase 1 流程。

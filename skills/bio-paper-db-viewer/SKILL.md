@@ -66,7 +66,7 @@ python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded --sou
 Options:
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed`, `skipped` |
+| `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed` |
 | `--source` | (all) | Filter by source: `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `nature`, `science`, `cell`, `plos` |
 | `-k, --keyword` | (none) | Filter papers whose title contains the keyword |
 | `-n, --limit` | 20 | Maximum results |
@@ -114,7 +114,7 @@ Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-p, --paper-id` | (required, 1+) | Paper ID(s) to update |
-| `-s, --status` | (required) | Target status: `searched`, `downloaded`, `download_failed`, `interpreted`, `skipped`, `interpret_failed` |
+| `-s, --status` | (required) | Target status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed` |
 
 ## Output
 

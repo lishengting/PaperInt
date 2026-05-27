@@ -8,7 +8,7 @@ PaperInt is a bioinformatics paper intelligence pipeline with three sequentially
 
 ```
 bio-paper-search ──→ bio-paper-downloader ──→ bio-paper-interpreter
-    (searched)          (downloaded)            (interpreted/skipped)
+    (searched)          (downloaded)            (interpreted)
 ```
 
 Each skill reads from and writes to a shared SQLite database (`data/papers.db`), advancing papers through statuses. The `config.yaml` at the project root is the single source of truth for APIs, keywords, tags, LLM settings, database paths, and extraction settings; interpreter prompt templates live under `skills/bio-paper-interpreter/references/prompts/` — never hardcode these values.
@@ -54,10 +54,10 @@ Single `papers` table in SQLite at `data/papers.db`. All three skills import `pa
 
 - **Search**: `insert_search_results(conn, papers)` — INSERT OR IGNORE with status='searched'
 - **Downloader**: `get_papers_by_status(conn, 'searched')`, `mark_downloaded(conn, pid, dir_name, meta)`, `mark_download_failed(conn, pid, err)`
-- **Interpreter**: `get_papers_by_status(conn, 'downloaded')`, `update_tags(conn, pid, data)`, `mark_interpreted(conn, pid)`, `mark_interpret_failed(conn, pid, err)`; `mark_skipped()` and `update_relevance()` are available for manual relevance-filter flows
+- **Interpreter**: `get_papers_by_status(conn, 'downloaded')`, `update_tags(conn, pid, data)`, `mark_interpreted(conn, pid)`, `mark_interpret_failed(conn, pid, err)`; `update_relevance()` is available for manual relevance-filter flows
 - **Shared**: `get_paper_dir(conn, pid)` — returns the directory name under `data/`, `get_stats(conn)`
 
-Status values: `searched` → `downloaded` | `download_failed` → `interpreted` | `interpret_failed` | `skipped`
+Status values: `searched` → `downloaded` | `download_failed` → `interpreted` | `interpret_failed`
 
 ### Data Directory Structure
 
@@ -71,7 +71,6 @@ data/{Title_Slug}/
   {paper_id}.interpret.json    # structured metadata (Phase 2)
   {paper_id}.interpret.html    # styled standalone HTML (Phase 3)
   {paper_id}.brief.html        # styled brief HTML (Phase 3)
-  {paper_id}.skipped.json      # optional/manual skip record if relevance filter is run outside default CLI
   images/                      # extracted PDF images (if pymupdf4llm used)
     *.png
   {paper_id}.poster.en.svg       # English one-shot SVG poster (Phase 4)
