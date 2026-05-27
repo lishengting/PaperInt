@@ -56,7 +56,7 @@ python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded -n 10
 # Filter by source
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --source nature
 
-# Filter by keyword in title
+# Filter by keyword across title, abstract, journal, source, identifiers, and path
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -k "microbiome"
 
 # Combined filters with pagination
@@ -68,7 +68,7 @@ Options:
 |------|---------|-------------|
 | `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed` |
 | `--source` | (all) | Filter by source: `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `nature`, `science`, `cell`, `plos` |
-| `-k, --keyword` | (none) | Filter papers whose title contains the keyword |
+| `-k, --keyword` | (none) | Filter papers whose title, abstract, journal, source, identifiers, or path contains the keyword |
 | `-n, --limit` | 20 | Maximum results |
 | `--offset` | 0 | Pagination offset |
 | `--cnsp` | off | Only show papers in C/N/S/P journals |

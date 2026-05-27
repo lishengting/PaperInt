@@ -106,6 +106,25 @@ def cmd_stats(args, config):
 # list
 # ---------------------------------------------------------------------------
 
+KEYWORD_SEARCH_COLUMNS = (
+    'title', 'abstract', 'source', 'doi', 'pmid', 'paper_id', 'arxiv_id',
+    'path_prefix', 'dir_name', 'source_url', 'pdf_url',
+)
+
+
+def _append_keyword_filter(sql: str, params: list, keyword: str) -> str:
+    pattern = f'%{keyword}%'
+    clauses = [f"COALESCE({column}, '') LIKE ?" for column in KEYWORD_SEARCH_COLUMNS]
+    clauses.append(
+        "COALESCE("
+        "CASE WHEN metadata_json IS NOT NULL AND json_valid(metadata_json) "
+        "THEN json_extract(metadata_json, '$.journal') ELSE '' END, ''"
+        ") LIKE ?"
+    )
+    params.extend([pattern] * len(clauses))
+    return sql + ' AND (' + ' OR '.join(clauses) + ')'
+
+
 def cmd_list(args, config):
     conn = get_conn(config)
 
@@ -122,8 +141,7 @@ def cmd_list(args, config):
             json_sql += ' AND source = ?'
             json_params.append(args.source)
         if args.keyword:
-            json_sql += ' AND title LIKE ?'
-            json_params.append(f'%{args.keyword}%')
+            json_sql = _append_keyword_filter(json_sql, json_params, args.keyword)
 
         json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
         json_params.extend([args.limit, args.offset])
@@ -148,8 +166,7 @@ def cmd_list(args, config):
         sql += ' AND source = ?'
         params.append(args.source)
     if args.keyword:
-        sql += ' AND title LIKE ?'
-        params.append(f'%{args.keyword}%')
+        sql = _append_keyword_filter(sql, params, args.keyword)
 
     # Parse journal from metadata_json for each row
     def _get_journal(metadata_json):
@@ -477,7 +494,7 @@ def main():
     lp.add_argument('--source', default=None,
                     help='Filter by source: arxiv, biorxiv, medrxiv, pubmed, scholar, nature, science, cell, plos')
     lp.add_argument('-k', '--keyword', default=None,
-                    help='Filter papers whose title contains the keyword')
+                    help='Filter papers whose title, abstract, journal, source, DOI, PMID, ID, or path contains the keyword')
     lp.add_argument('-n', '--limit', type=int, default=20,
                     help='Maximum results (default: 20)')
     lp.add_argument('--offset', type=int, default=0,
