@@ -717,6 +717,7 @@ def pubmed_api(endpoint, params, config):
 
 
 BATCH_SIZE = 1000
+PUBMED_RETMAX_LIMIT = 9999
 
 
 def _node_text(node) -> str:
@@ -838,23 +839,43 @@ def pubmed_fetch_details(pmids, config):
 
 def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=None):
     query = ' AND '.join(f'{kw}[All Fields]' for kw in keywords)
-    params = {
-        'db': 'pubmed', 'term': query, 'retmax': str(max_results),
-        'sort': 'pub+date', 'datetype': 'pdat',
+    base_params = {
+        'db': 'pubmed', 'term': query,
+        'sort': 'pub date', 'datetype': 'pdat',
     }
     if start_date:
-        params['mindate'] = start_date
-        params['maxdate'] = end_date or datetime.now().strftime('%Y-%m-%d')
-    esearch_url = f"{PUBMED_BASE}/esearch.fcgi?{urllib.parse.urlencode(params)}"
-    print(f"{_ts()}   PubMed API: {esearch_url}")
-    sr = pubmed_api('esearch.fcgi', params, config)
-    if not sr:
-        return [], 0
+        base_params['mindate'] = start_date
+        base_params['maxdate'] = end_date or datetime.now().strftime('%Y-%m-%d')
 
-    idlist = sr.get('esearchresult', {}).get('idlist', [])
-    total = int(sr.get('esearchresult', {}).get('count', 0))
-    query_translation = sr.get('esearchresult', {}).get('querytranslation', '')
+    idlist = []
+    total = 0
+    query_translation = ''
+    retstart = 0
+    max_results = int(max_results)
+    while len(idlist) < max_results:
+        page_size = min(PUBMED_RETMAX_LIMIT, max_results - len(idlist))
+        params = dict(base_params)
+        params['retstart'] = str(retstart)
+        params['retmax'] = str(page_size)
+        esearch_url = f"{PUBMED_BASE}/esearch.fcgi?{urllib.parse.urlencode(params)}"
+        print(f"{_ts()}   PubMed API: {esearch_url}")
+        sr = pubmed_api('esearch.fcgi', params, config)
+        if not sr:
+            return [], 0
 
+        result = sr.get('esearchresult', {})
+        batch_ids = result.get('idlist', [])
+        if retstart == 0:
+            total = int(result.get('count', 0))
+            query_translation = result.get('querytranslation', '')
+        if not batch_ids:
+            break
+        idlist.extend(batch_ids)
+        retstart += len(batch_ids)
+        if retstart >= total or len(batch_ids) < page_size:
+            break
+
+    idlist = idlist[:max_results]
     if not idlist:
         return [], total
 
