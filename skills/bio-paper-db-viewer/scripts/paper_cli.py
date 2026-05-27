@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 # Reach up three levels to the project-root scripts/ directory
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  '..', '..', '..', 'scripts'))
-from paper_db import get_conn, get_stats, get_paper
+from paper_db import get_conn, get_stats, get_paper, _row_to_dict
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +111,32 @@ def cmd_list(args, config):
 
     if args.all:
         args.limit = sys.maxsize
+
+    if args.json:
+        json_sql = 'SELECT * FROM papers WHERE 1=1'
+        json_params: list = []
+        if args.status:
+            json_sql += ' AND status = ?'
+            json_params.append(args.status)
+        if args.source:
+            json_sql += ' AND source = ?'
+            json_params.append(args.source)
+        if args.keyword:
+            json_sql += ' AND title LIKE ?'
+            json_params.append(f'%{args.keyword}%')
+
+        json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
+        json_params.extend([args.limit, args.offset])
+        rows = conn.execute(json_sql, json_params).fetchall()
+
+        results = []
+        for r in rows:
+            paper = _row_to_dict(r)
+            paper.pop('metadata_json', None)
+            results.append(paper)
+
+        print(json.dumps(results, indent=2, ensure_ascii=False, default=str))
+        return 0
 
     sql = 'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json FROM papers WHERE 1=1'
     params: list = []
@@ -220,7 +246,7 @@ def cmd_list(args, config):
         rows = [r for r, code, journal in page]
     else:
         count_sql = sql.replace(
-            'SELECT paper_id, doi, title, source, status, search_date, metadata_json',
+            'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json',
             'SELECT COUNT(*) as cnt', 1
         )
         total = conn.execute(count_sql, params).fetchone()['cnt']
@@ -252,31 +278,33 @@ def cmd_list(args, config):
 
     for r in rows:
         doi = r['doi'] or ''
-        if len(doi) > doi_w - 2:
-            doi = doi[:doi_w - 5] + '...'
         pid = r['paper_id'] or ''
-        if len(pid) > id_w - 2:
-            pid = pid[:id_w - 5] + '...'
         title = r['title'] or ''
-        if len(title) > 48:
-            title = title[:47] + '...'
         source = r['source'] or ''
-        if len(source) > src_w:
-            source = source[:src_w - 1]
         status = r['status'] or ''
         pp = r['path_prefix'] or ''
-        if len(pp) > pp_w - 2:
-            pp = pp[:pp_w - 5] + '...'
         date_str = r['search_date'] or ''
-        if len(date_str) > date_w:
-            date_str = date_str[:date_w]
         journal = _get_journal(r['metadata_json'])
         cnsp = _get_cnsp(journal)
-        if len(journal) > j_w:
-            journal = journal[:j_w - 2] + '..'
         issn = _get_issn(r['metadata_json'])
-        if len(issn) > issn_w:
-            issn = issn[:issn_w]
+
+        if not args.no_truncate:
+            if len(doi) > doi_w - 2:
+                doi = doi[:doi_w - 5] + '...'
+            if len(pid) > id_w - 2:
+                pid = pid[:id_w - 5] + '...'
+            if len(title) > 48:
+                title = title[:47] + '...'
+            if len(source) > src_w:
+                source = source[:src_w - 1]
+            if len(pp) > pp_w - 2:
+                pp = pp[:pp_w - 5] + '...'
+            if len(date_str) > date_w:
+                date_str = date_str[:date_w]
+            if len(journal) > j_w:
+                journal = journal[:j_w - 2] + '..'
+            if len(issn) > issn_w:
+                issn = issn[:issn_w]
 
         print(f"{doi:<{doi_w}} {pid:<{id_w}} {title:<50} {source:<{src_w}} {cnsp:<{cnsp_w}} {status:<{st_w}} {pp:<{pp_w}} {date_str:<{date_w}} {journal:<{j_w}} {issn:<{issn_w}}")
 
@@ -456,6 +484,10 @@ def main():
                     help='Pagination offset (default: 0)')
     lp.add_argument('--all', action='store_true',
                     help='List all matching papers (overrides -n)')
+    lp.add_argument('--no-truncate', action='store_true',
+                    help='Show full field values without truncation')
+    lp.add_argument('--json', action='store_true',
+                    help='Output as JSON with full paper details')
     lp.add_argument('--cnsp', action='store_true',
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
     lp.add_argument('--cns', action='store_true',
