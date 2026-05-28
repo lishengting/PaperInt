@@ -764,7 +764,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
-                                  stealth_enabled=False):
+                                  stealth_enabled=False, cookie_dir=None):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -794,7 +794,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
 
     # Shared profile dir so retries share cookies
-    profile_dir = os.path.join(output_dir, 'chrome_profile')
+    profile_dir = cookie_dir or os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
 
     # Save original DISPLAY — _xvfb_start() overwrites it globally
@@ -919,6 +919,8 @@ def main():
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
     p.add_argument('--stealth', action='store_true', default=False,
                    help='Enable playwright-stealth (default: off)')
+    p.add_argument('--cookie-dir', default=None,
+                   help='Directory for persistent browser profile/cookies (default: <output-dir>/chrome_profile)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -930,7 +932,8 @@ def main():
         fallback_level=args.fallback_level, wait=args.wait,
         captcha_enabled=args.captcha,
         captcha_api_key=args.twocap_api,
-        stealth_enabled=args.stealth))
+        stealth_enabled=args.stealth,
+        cookie_dir=args.cookie_dir))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
