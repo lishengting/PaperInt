@@ -1377,8 +1377,8 @@ def main():
                    help='Only download papers published in C/N/S/P journals')
     p.add_argument('--cns', action='store_true',
                    help='Only download papers published in C/N/S journals (excludes PLOS)')
-    p.add_argument('--use-cookie', dest='cookie_dir', default=None,
-                   help='Directory for persistent browser profile/cookies (default: temp dir)')
+    p.add_argument('--cookie-dir', default=None,
+                   help='Directory for persistent browser profile/cookies (default: data/tmp)')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -1429,6 +1429,9 @@ def main():
 
     if args.db:
         config.setdefault('db', {})['path'] = args.db
+
+    if args.cookie_dir is None:
+        args.cookie_dir = _data_tmp(config)
 
     if args.cmd == 'get':
         return cmd_get(args, config)
