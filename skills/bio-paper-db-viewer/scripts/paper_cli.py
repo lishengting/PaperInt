@@ -386,13 +386,14 @@ def cmd_list(args, config):
     print(sep)
 
     for r in rows:
-        doi = r['doi'] or ''
-        pid = r['paper_id'] or ''
-        title = r['title'] or ''
-        source = r['source'] or ''
-        status = r['status'] or ''
-        pp = r['path_prefix'] or ''
-        date_str = r['search_date'] or ''
+        paper = _row_to_dict(r)
+        doi = paper.get('doi') or ''
+        pid = paper.get('paper_id') or ''
+        title = paper.get('title') or ''
+        source = paper.get('source') or ''
+        status = paper.get('status') or ''
+        pp = paper.get('path_prefix') or ''
+        date_str = paper.get('search_date') or ''
         journal = _get_journal(r['metadata_json'])
         cnsp = _get_cnsp(journal)
         issn = _get_issn(r['metadata_json'])
