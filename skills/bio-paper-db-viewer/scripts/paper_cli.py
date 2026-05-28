@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 # Reach up three levels to the project-root scripts/ directory
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  '..', '..', '..', 'scripts'))
-from paper_db import get_conn, get_stats, get_paper, get_search_history, _row_to_dict
+from paper_db import (get_conn, get_stats, get_paper, get_search_history, _row_to_dict,
+                      load_cns_journal_set, load_cnsp_journal_set, filter_cnsp_papers)
 
 
 # ---------------------------------------------------------------------------
@@ -220,13 +221,24 @@ def cmd_list(args, config):
         if args.found_by:
             json_sql = _append_found_by_filter(json_sql, json_params, args.found_by)
 
-        json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
-        json_params.extend([args.limit, args.offset])
-        rows = conn.execute(json_sql, json_params).fetchall()
+        if args.cnsp or args.cns:
+            json_sql += ' ORDER BY search_date DESC, paper_id'
+            rows = conn.execute(json_sql, json_params).fetchall()
+            papers = [_row_to_dict(r) for r in rows]
+            journal_set = (
+                load_cns_journal_set(config, args.config)
+                if args.cns else load_cnsp_journal_set(config, args.config)
+            )
+            papers = filter_cnsp_papers(papers, journal_set)
+            page = papers[args.offset:args.offset + args.limit]
+        else:
+            json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
+            json_params.extend([args.limit, args.offset])
+            rows = conn.execute(json_sql, json_params).fetchall()
+            page = [_row_to_dict(r) for r in rows]
 
         results = []
-        for r in rows:
-            paper = _row_to_dict(r)
+        for paper in page:
             paper.pop('metadata_json', None)
             results.append(paper)
 
