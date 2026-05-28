@@ -205,7 +205,7 @@ tags:
 
 # --- LLM Configuration ---
 llm:
-  api_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_base_url: "LLM_API_URL"
   api_key_env: "LLM_API_KEY"
   model: "deepseek-v4-pro"
   backup_model: "qwen3-235b-a22b"
@@ -218,7 +218,7 @@ llm:
 autofigure:
   api_key_env: "LLM_API_KEY"
   methodology_model: "deepseek-v4-pro"
-  methodology_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  methodology_base_url: "LLM_API_URL"
   enhancement_model: "qwen-image-2.0-pro"
 
 # --- Interpreter Configuration ---
