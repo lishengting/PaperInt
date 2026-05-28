@@ -112,7 +112,7 @@ KEYWORD_SEARCH_COLUMNS = (
 )
 
 
-def _append_keyword_filter(sql: str, params: list, keyword: str) -> str:
+def _local_keyword_clause(keyword: str) -> tuple[str, list]:
     pattern = f'%{keyword}%'
     clauses = [f"COALESCE({column}, '') LIKE ?" for column in KEYWORD_SEARCH_COLUMNS]
     clauses.append(
@@ -121,14 +121,37 @@ def _append_keyword_filter(sql: str, params: list, keyword: str) -> str:
         "THEN json_extract(metadata_json, '$.journal') ELSE '' END, ''"
         ") LIKE ?"
     )
-    params.extend([pattern] * len(clauses))
-    return sql + ' AND (' + ' OR '.join(clauses) + ')'
+    return '(' + ' OR '.join(clauses) + ')', [pattern] * len(clauses)
 
 
-def _append_found_by_filter(sql: str, params: list, keyword: str) -> str:
+def _single_keyword_provenance_clause(keyword: str) -> tuple[str, list]:
+    simple_query = f'all sources: {keyword}'
+    return """EXISTS (
+        SELECT 1
+        FROM paper_search_hits h
+        JOIN search_runs r ON r.id = h.run_id
+        WHERE h.paper_id = papers.paper_id
+          AND (
+              CASE
+                  WHEN json_valid(r.keywords_json) THEN
+                      CASE
+                          WHEN json_type(r.keywords_json) = 'array'
+                               AND json_array_length(r.keywords_json) = 1
+                          THEN LOWER(COALESCE(json_extract(r.keywords_json, '$[0]'), ''))
+                          ELSE ''
+                      END
+                  ELSE ''
+              END = LOWER(?)
+              OR LOWER(TRIM(COALESCE(r.keywords_json, ''))) = LOWER(?)
+              OR LOWER(TRIM(COALESCE(r.query, ''))) = LOWER(?)
+              OR LOWER(TRIM(COALESCE(r.query, ''))) = LOWER(?)
+          )
+    )""", [keyword, keyword, keyword, simple_query]
+
+
+def _any_provenance_keyword_clause(keyword: str) -> tuple[str, list]:
     pattern = f'%{keyword}%'
-    params.extend([pattern, pattern, pattern, pattern])
-    return sql + """ AND EXISTS (
+    return """EXISTS (
         SELECT 1
         FROM paper_search_hits h
         JOIN search_runs r ON r.id = h.run_id
@@ -139,7 +162,24 @@ def _append_found_by_filter(sql: str, params: list, keyword: str) -> str:
               OR COALESCE(r.query_translation, '') LIKE ?
               OR COALESCE(h.matched_keywords_json, '') LIKE ?
           )
-    )"""
+    )""", [pattern, pattern, pattern, pattern]
+
+
+def _append_keyword_filter(sql: str, params: list, keyword: str,
+                           provenance_mode: str = 'single') -> str:
+    local_sql, local_params = _local_keyword_clause(keyword)
+    if provenance_mode == 'any':
+        provenance_sql, provenance_params = _any_provenance_keyword_clause(keyword)
+    else:
+        provenance_sql, provenance_params = _single_keyword_provenance_clause(keyword)
+    params.extend(local_params + provenance_params)
+    return sql + f' AND ({local_sql} OR {provenance_sql})'
+
+
+def _append_found_by_filter(sql: str, params: list, keyword: str) -> str:
+    provenance_sql, provenance_params = _any_provenance_keyword_clause(keyword)
+    params.extend(provenance_params)
+    return sql + f' AND {provenance_sql}'
 
 
 def _print_json_section(label: str, value) -> None:
@@ -175,7 +215,8 @@ def cmd_list(args, config):
             json_sql += ' AND source = ?'
             json_params.append(args.source)
         if args.keyword:
-            json_sql = _append_keyword_filter(json_sql, json_params, args.keyword)
+            json_sql = _append_keyword_filter(json_sql, json_params, args.keyword,
+                                              args.keyword_provenance)
         if args.found_by:
             json_sql = _append_found_by_filter(json_sql, json_params, args.found_by)
 
@@ -202,7 +243,8 @@ def cmd_list(args, config):
         sql += ' AND source = ?'
         params.append(args.source)
     if args.keyword:
-        sql = _append_keyword_filter(sql, params, args.keyword)
+        sql = _append_keyword_filter(sql, params, args.keyword,
+                                     args.keyword_provenance)
     if args.found_by:
         sql = _append_found_by_filter(sql, params, args.found_by)
 
@@ -553,13 +595,15 @@ def main():
 
     # ---- list ----
     lp = sub.add_parser('list', help='List papers with optional filters',
-                        description='List papers from the database with optional filtering by status, source, and keyword.')
+                        description='List papers from the database with optional filtering by status, source, keyword, and search provenance.')
     lp.add_argument('-s', '--status', default=None,
                     help='Filter by status: searched, downloaded, download_failed, interpreted, interpret_failed')
     lp.add_argument('--source', default=None,
                     help='Filter by source: arxiv, biorxiv, medrxiv, pubmed, scholar, nature, science, cell, plos')
     lp.add_argument('-k', '--keyword', default=None,
-                    help='Filter papers whose title, abstract, journal, source, DOI, PMID, ID, path, or source terms contain the keyword')
+                    help='Filter by local metadata plus single-keyword search provenance by default')
+    lp.add_argument('--keyword-provenance', default='single', choices=['single', 'any'],
+                    help='For -k, use single-keyword provenance only (default) or any multi-keyword provenance match')
     lp.add_argument('--found-by', default=None,
                     help='Filter papers saved by a search whose query, keywords, or matched evidence contains this keyword')
     lp.add_argument('-n', '--limit', type=int, default=20,

@@ -56,10 +56,13 @@ python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -s downloaded -n 10
 # Filter by source
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --source nature
 
-# Filter by keyword across title, abstract, journal, source, identifiers, path, and source terms
+# Filter by keyword across local metadata plus single-keyword search provenance
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -k "microbiome"
 
-# Filter by search provenance (papers saved by a matching search query)
+# Relax keyword search to include multi-keyword provenance matches
+python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list -k "microbiome" --keyword-provenance any
+
+# Filter by search provenance audit (papers saved by a matching search query)
 python3 skills/bio-paper-db-viewer/scripts/paper_cli.py list --found-by "microbiome"
 
 # Combined filters with pagination
@@ -71,8 +74,9 @@ Options:
 |------|---------|-------------|
 | `-s, --status` | (all) | Filter by status: `searched`, `downloaded`, `download_failed`, `interpreted`, `interpret_failed` |
 | `--source` | (all) | Filter by source: `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `nature`, `science`, `cell`, `plos` |
-| `-k, --keyword` | (none) | Filter papers whose title, abstract, journal, source, identifiers, path, or source terms contain the keyword |
-| `--found-by` | (none) | Filter papers saved by a search whose query, keywords, or matched evidence contains this keyword |
+| `-k, --keyword` | (none) | Filter papers whose local metadata contains the keyword, plus papers from single-keyword searches for that keyword |
+| `--keyword-provenance` | `single` | For `-k`: `single` includes only single-keyword provenance; `any` also includes multi-keyword provenance matches |
+| `--found-by` | (none) | Broad provenance audit: filter papers saved by a search whose query, keywords, or matched evidence contains this keyword |
 | `-n, --limit` | 20 | Maximum results |
 | `--offset` | 0 | Pagination offset |
 | `--cnsp` | off | Only show papers in C/N/S/P journals |
