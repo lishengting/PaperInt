@@ -672,9 +672,22 @@ def _validate_pdf(data: bytes) -> bool:
         return False
 
 
+_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.bmp', '.tif', '.tiff')
+
+
+def _is_obvious_non_pdf_url(url: str) -> bool:
+    lower = (url or '').lower()
+    path = urllib.parse.urlparse(lower).path
+    if path.endswith(_IMAGE_EXTENSIONS):
+        return True
+    if 'ars.els-cdn.com/content/image/' in lower:
+        return True
+    return bool(re.search(r'-(?:ga|gr|fx|fig)\d+\.(?:jpe?g|png|gif|webp|svg)$', path))
+
+
 def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False,
                          stealth_enabled=False):
-    if not pdf_url:
+    if not pdf_url or _is_obvious_non_pdf_url(pdf_url):
         return None
     # Direct HTTP attempt
     try:
@@ -906,7 +919,12 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             if not pdf_data and not pmc_has_pdf:
                 print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
     elif src in ('crossref', 'europepmc'):
-        if fallback_level >= 1 and paper.get('doi'):
+        if paper.get('pdf_url') and fallback_level >= 1:
+            pdf_data = _download_direct_pdf(paper['pdf_url'], config,
+                                            fallback_level=fallback_level,
+                                            captcha_enabled=captcha_enabled,
+                                            stealth_enabled=stealth_enabled)
+        if not pdf_data and fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
                                            fallback_level=fallback_level,
                                            captcha_enabled=captcha_enabled,
@@ -986,6 +1004,23 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                 if not pdf_data and alt.get("doi") and fallback_level >= 1:
                     pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
                                   stealth_enabled=stealth_enabled)
+            elif alt_src in ('crossref', 'europepmc'):
+                if alt.get("pdf_url") and fallback_level >= 1:
+                    pdf_data = _download_direct_pdf(alt['pdf_url'], config,
+                                                   fallback_level=fallback_level,
+                                                   captcha_enabled=captcha_enabled,
+                                                   stealth_enabled=stealth_enabled)
+                if not pdf_data and alt.get("doi") and fallback_level >= 1:
+                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid') or paper.get('pmid'), config,
+                                                   fallback_level=fallback_level,
+                                                   captcha_enabled=captcha_enabled,
+                                                   stealth_enabled=stealth_enabled)
+                if not pdf_data:
+                    pmc_id = alt.get('pmc_id')
+                    if not pmc_id and alt.get('pmid'):
+                        pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
+                    if pmc_id:
+                        pdf_data = _download_pmc_pdf(pmc_id, config)
             elif alt_src == 'pubmed':
                 if fallback_level >= 1 and alt.get('doi'):
                     pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,

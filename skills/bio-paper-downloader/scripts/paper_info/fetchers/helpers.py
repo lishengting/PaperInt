@@ -32,6 +32,26 @@ def year_from_text(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", ".tif", ".tiff")
+
+
+def _url_looks_like_pdf(url: str, content_type: str | None) -> bool:
+    lowered = url.lower()
+    if (content_type or "").lower().startswith("application/pdf"):
+        return True
+    if lowered.endswith(".pdf"):
+        return True
+    return any(marker in lowered for marker in (".pdf", "/pdfft", "showpdf", "main.pdf"))
+
+
+def _url_looks_like_image_asset(url: str) -> bool:
+    lowered = url.lower()
+    path = lowered.split("?", 1)[0].split("#", 1)[0]
+    if any(path.endswith(ext) for ext in _IMAGE_EXTENSIONS):
+        return True
+    return "ars.els-cdn.com/content/image/" in lowered
+
+
 def classify_link(
     url: str,
     default: str,
@@ -47,7 +67,9 @@ def classify_link(
         return "supplement"
     if any(marker in haystack for marker in ("jats", "xml", "source.xml")):
         return "jatsxml"
-    if "application/pdf" in haystack or url.lower().endswith(".pdf"):
+    if _url_looks_like_image_asset(url):
+        return "asset"
+    if _url_looks_like_pdf(url, content_type):
         return default
     return default
 
