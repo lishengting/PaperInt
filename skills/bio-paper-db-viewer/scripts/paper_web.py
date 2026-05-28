@@ -207,36 +207,28 @@ INDEX_HTML = """<!doctype html>
     .journal-list {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 8px;
+      gap: 6px;
       max-height: 360px;
       overflow: auto;
       padding: 2px 2px 8px;
     }
     .journal-item {
       display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: #fbfcff;
-      padding: 10px;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 13px;
       cursor: pointer;
     }
-    .journal-item input { margin-top: 4px; }
+    .journal-item input { margin-top: 0; }
     .journal-item > span { min-width: 0; }
     .journal-name {
-      display: block;
       font-weight: 700;
-      font-size: 13px;
-      line-height: 1.35;
       overflow-wrap: anywhere;
     }
     .journal-meta {
-      display: block;
       color: var(--muted);
       font-size: 12px;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
     }
     .chips {
       display: flex;
@@ -528,14 +520,12 @@ INDEX_HTML = """<!doctype html>
       $('journalSummary').textContent = `已选 ${selectedJournals.size} / ${journals.length} 个期刊选项`;
       $('journalList').innerHTML = visible.map((item) => {
         const checked = selectedJournals.has(item.id) ? 'checked' : '';
-        const meta = item.is_preprint ? `${item.count} 篇无 ISSN 文献` : `${item.issn || ''} · ${item.count} 篇`;
+        const meta = item.is_preprint ? `无 ISSN · ${item.count} 篇` : `${item.issn || ''} · ${item.count} 篇`;
         return `
           <label class="journal-item">
             <input type="checkbox" data-id="${escapeHtml(item.id)}" ${checked}>
-            <span>
-              <span class="journal-name">${escapeHtml(item.journal)}</span><br>
-              <span class="journal-meta">${escapeHtml(meta)}</span>
-            </span>
+            <span class="journal-name">${escapeHtml(item.journal)}</span>
+            <span class="journal-meta">${escapeHtml(meta)}</span>
           </label>
         `;
       }).join('') || '<div class="empty">没有匹配的期刊选项。</div>';
