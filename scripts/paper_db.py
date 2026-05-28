@@ -846,8 +846,116 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CNSP journal filter
+# Journal filters
 # ---------------------------------------------------------------------------
+
+def normalize_journal_text(value: str) -> str:
+    if not isinstance(value, str):
+        return ''
+    text = html.unescape(value).replace(' (partner)', '')
+    return ' '.join(text.lower().split())
+
+
+def _journal_text_variants(value: str) -> set[str]:
+    normalized = normalize_journal_text(value)
+    if not normalized:
+        return set()
+    variants = {normalized}
+    if '&' in normalized:
+        variants.add(normalized.replace('&', 'and'))
+    if ' and ' in normalized:
+        variants.add(normalized.replace(' and ', ' & '))
+    return variants
+
+
+def normalize_issn_values(value: str) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        variants = set()
+        for item in value:
+            variants.update(normalize_issn_values(item))
+        return variants
+    text = str(value).upper()
+    matches = re.findall(r'[0-9X]{4}-?[0-9X]{4}', text)
+    variants = set()
+    for issn in matches:
+        compact = issn.replace('-', '')
+        variants.add(issn)
+        variants.add(compact)
+        if len(compact) == 8:
+            variants.add(f'{compact[:4]}-{compact[4:]}')
+    return variants
+
+
+def _add_journal_text(target: set, value) -> None:
+    for variant in _journal_text_variants(value):
+        target.add(variant)
+
+
+def _merge_journal_data(target: dict, source: dict) -> None:
+    for key in ('names', 'abbrevs', 'issns'):
+        target.setdefault(key, set()).update(source.get(key, set()))
+
+
+def build_custom_journal_set(journals: str, known_journal_data: dict | None = None) -> dict:
+    names: set = set()
+    abbrevs: set = set()
+    issns: set = set()
+    result = {'names': names, 'abbrevs': abbrevs, 'issns': issns}
+    aliases = (known_journal_data or {}).get('aliases', {})
+    for token in str(journals or '').split(','):
+        token = token.strip()
+        if not token:
+            continue
+        token_names = _journal_text_variants(token)
+        token_issns = normalize_issn_values(token)
+        names.update(token_names)
+        abbrevs.update(token_names)
+        issns.update(token_issns)
+        for alias in token_names | token_issns:
+            if alias in aliases:
+                _merge_journal_data(result, aliases[alias])
+    return result
+
+
+def _metadata_from_paper(paper: dict) -> dict:
+    meta = paper.get('metadata_json')
+    if not meta:
+        return {}
+    if isinstance(meta, dict):
+        return meta
+    try:
+        return json.loads(meta)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def paper_matches_journal_set(paper: dict, journal_data: dict) -> bool:
+    names = journal_data.get('names', set())
+    abbrevs = journal_data.get('abbrevs', set())
+    issns = journal_data.get('issns', set())
+    metadata = _metadata_from_paper(paper)
+
+    for key in ('issn', 'issn_print', 'issn_electronic'):
+        for variant in normalize_issn_values(paper.get(key) or metadata.get(key)):
+            if variant in issns:
+                return True
+
+    for key in ('journal', 'container-title', 'category'):
+        for variant in _journal_text_variants(paper.get(key) or metadata.get(key)):
+            if variant in names or variant in abbrevs:
+                return True
+
+    for variant in _journal_text_variants(paper.get('abbrev') or metadata.get('abbrev')):
+        if variant in abbrevs or variant in names:
+            return True
+    return False
+
+
+def filter_papers_by_journals(papers: list, journal_data: dict) -> list:
+    return [p for p in papers if paper_matches_journal_set(p, journal_data)]
+
 
 def _load_journal_data(config: dict, config_path: str, keys: list) -> dict:
     """Load journal names, abbreviations, and ISSNs from journals_config/*.json.
@@ -859,6 +967,7 @@ def _load_journal_data(config: dict, config_path: str, keys: list) -> dict:
     names: set = set()
     abbrevs: set = set()
     issns: set = set()
+    aliases = {}
     config_dir = os.path.dirname(os.path.abspath(config_path))
     for key in keys:
         rel = cnsp_cfg.get(key, '')
@@ -868,18 +977,16 @@ def _load_journal_data(config: dict, config_path: str, keys: list) -> dict:
         if not os.path.exists(jpath):
             continue
         for j in json.load(open(jpath)):
-            name = (j.get('name', '') or '').replace(' (partner)', '')
-            if name:
-                names.add(name.lower())
-            abbrev = (j.get('abbrev', '') or '').strip()
-            if abbrev:
-                abbrevs.add(abbrev.lower())
+            entry = {'names': set(), 'abbrevs': set(), 'issns': set()}
+            _add_journal_text(entry['names'], j.get('name', ''))
+            _add_journal_text(entry['abbrevs'], j.get('abbrev', ''))
             for issn_key in ('issn_print', 'issn_electronic'):
-                issn = (j.get(issn_key, '') or '').strip()
-                if issn:
-                    issns.add(issn)
-                    issns.add(issn.replace('-', ''))
-    return {'names': names, 'abbrevs': abbrevs, 'issns': issns}
+                entry['issns'].update(normalize_issn_values(j.get(issn_key, '')))
+            _merge_journal_data({'names': names, 'abbrevs': abbrevs, 'issns': issns}, entry)
+            for alias in entry['names'] | entry['abbrevs'] | entry['issns']:
+                aliases.setdefault(alias, {'names': set(), 'abbrevs': set(), 'issns': set()})
+                _merge_journal_data(aliases[alias], entry)
+    return {'names': names, 'abbrevs': abbrevs, 'issns': issns, 'aliases': aliases}
 
 
 def load_cnsp_journal_set(config: dict, config_path: str = 'config.yaml') -> dict:
@@ -903,34 +1010,5 @@ def load_cns_journal_set(config: dict, config_path: str = 'config.yaml') -> dict
 
 
 def filter_cnsp_papers(papers: list, cnsp_data: dict) -> list:
-    """Filter papers to only those matching CNSP journal identifiers.
-
-    Matches by ISSN first (unambiguous), then full journal name, then
-    abbreviation (to handle PubMed NLM abbreviations like 'Nat Commun').
-    """
-    names = cnsp_data.get('names', set())
-    abbrevs = cnsp_data.get('abbrevs', set())
-    issns = cnsp_data.get('issns', set())
-    result = []
-    for p in papers:
-        meta = p.get('metadata_json')
-        if not meta:
-            continue
-        try:
-            data = json.loads(meta) if isinstance(meta, str) else meta
-        except (json.JSONDecodeError, TypeError):
-            continue
-        # ISSN match (check both hyphenated and plain forms)
-        issn = (data.get('issn', '') or '').strip()
-        if issn and (issn in issns or issn.replace('-', '') in issns):
-            result.append(p)
-            continue
-        # Journal name match
-        journal = (data.get('journal', '') or '').lower()
-        if journal and journal in names:
-            result.append(p)
-            continue
-        # Abbreviation match (NLM style, e.g. 'Nat Commun')
-        if journal and journal in abbrevs:
-            result.append(p)
-    return result
+    """Filter papers to only those matching CNSP journal identifiers."""
+    return filter_papers_by_journals(papers, cnsp_data)

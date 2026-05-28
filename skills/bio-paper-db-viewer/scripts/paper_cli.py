@@ -21,7 +21,8 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  '..', '..', '..', 'scripts'))
 from paper_db import (get_conn, get_stats, get_paper, get_search_history, _row_to_dict,
-                      load_cns_journal_set, load_cnsp_journal_set, filter_cnsp_papers)
+                      load_cns_journal_set, load_cnsp_journal_set,
+                      build_custom_journal_set, filter_papers_by_journals)
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +207,23 @@ def cmd_list(args, config):
     if args.all:
         args.limit = sys.maxsize
 
+    def _apply_journal_filters(papers):
+        if args.cns or args.cnsp:
+            journal_set = (
+                load_cns_journal_set(config, args.config)
+                if args.cns else load_cnsp_journal_set(config, args.config)
+            )
+            papers = filter_papers_by_journals(papers, journal_set)
+        if args.journals:
+            custom_set = build_custom_journal_set(
+                args.journals, load_cnsp_journal_set(config, args.config)
+            )
+            if custom_set['names'] or custom_set['abbrevs'] or custom_set['issns']:
+                papers = filter_papers_by_journals(papers, custom_set)
+        return papers
+
+    needs_post_filter = bool(args.cnsp or args.cns or args.journals)
+
     if args.json:
         json_sql = 'SELECT * FROM papers WHERE 1=1'
         json_params: list = []
@@ -221,15 +239,11 @@ def cmd_list(args, config):
         if args.found_by:
             json_sql = _append_found_by_filter(json_sql, json_params, args.found_by)
 
-        if args.cnsp or args.cns:
+        if needs_post_filter:
             json_sql += ' ORDER BY search_date DESC, paper_id'
             rows = conn.execute(json_sql, json_params).fetchall()
             papers = [_row_to_dict(r) for r in rows]
-            journal_set = (
-                load_cns_journal_set(config, args.config)
-                if args.cns else load_cnsp_journal_set(config, args.config)
-            )
-            papers = filter_cnsp_papers(papers, journal_set)
+            papers = _apply_journal_filters(papers)
             page = papers[args.offset:args.offset + args.limit]
         else:
             json_sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
@@ -260,25 +274,6 @@ def cmd_list(args, config):
     if args.found_by:
         sql = _append_found_by_filter(sql, params, args.found_by)
 
-    # Parse journal from metadata_json for each row
-    def _get_journal(metadata_json):
-        if not metadata_json:
-            return ''
-        try:
-            meta = json.loads(metadata_json)
-            return meta.get('journal', '') or ''
-        except Exception:
-            return ''
-
-    def _get_issn(metadata_json):
-        if not metadata_json:
-            return ''
-        try:
-            meta = json.loads(metadata_json)
-            return meta.get('issn', '') or ''
-        except Exception:
-            return ''
-
     # ---- CNSP helpers ----
     def _load_cnsp_map():
         cnsp_cfg = config.get('cnsp', {})
@@ -304,32 +299,7 @@ def cmd_list(args, config):
                     journal_map[abbrev.lower()] = code
         return journal_map
 
-    def _load_cns_map():
-        cnsp_cfg = config.get('cnsp', {})
-        flagships = {'Nature', 'Science', 'Cell'}
-        journal_map = {}
-        for key, letter in [('nature_journals', 'n'), ('science_journals', 's'),
-                            ('cell_journals', 'c')]:
-            rel = cnsp_cfg.get(key, '')
-            if not rel:
-                continue
-            jpath = rel if os.path.isabs(rel) else os.path.join(
-                os.path.dirname(os.path.abspath(args.config)), rel)
-            if not os.path.exists(jpath):
-                continue
-            for j in json.load(open(jpath)):
-                name = (j.get('name', '') or '').replace(' (partner)', '')
-                if not name:
-                    continue
-                code = letter.upper() if name in flagships else letter
-                journal_map[name.lower()] = code
-                abbrev = j.get('abbrev', '')
-                if abbrev:
-                    journal_map[abbrev.lower()] = code
-        return journal_map
-
     cnsp_map = _load_cnsp_map()
-    cns_map = _load_cns_map() if args.cns else None
 
     def _get_cnsp(journal_name):
         if not journal_name:
@@ -337,22 +307,12 @@ def cmd_list(args, config):
         key = journal_name.lower().replace('&amp;', '&')
         return cnsp_map.get(key, '')
 
-    # If --cnsp or --cns flag, load all matching rows and post-filter
-    if args.cnsp or args.cns:
-        which = 'CNS' if args.cns else 'CNSP'
-        lookup_map = cns_map if args.cns else cnsp_map
+    if needs_post_filter:
         all_rows = conn.execute(sql + ' ORDER BY search_date DESC, paper_id', params).fetchall()
-        filtered = []
-        for r in all_rows:
-            journal = _get_journal(r['metadata_json'])
-            code = _get_cnsp(journal) if not args.cns else lookup_map.get(
-                (journal or '').lower().replace('&amp;', '&'), '')
-            if code:
-                filtered.append((r, code, journal))
-        total = len(filtered)
-        # Apply pagination after filtering
-        page = filtered[args.offset:args.offset + args.limit]
-        rows = [r for r, code, journal in page]
+        papers = [_row_to_dict(r) for r in all_rows]
+        papers = _apply_journal_filters(papers)
+        total = len(papers)
+        rows = papers[args.offset:args.offset + args.limit]
     else:
         count_sql = sql.replace(
             'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json',
@@ -362,11 +322,11 @@ def cmd_list(args, config):
 
         sql += ' ORDER BY search_date DESC, paper_id LIMIT ? OFFSET ?'
         params.extend([args.limit, args.offset])
-        rows = conn.execute(sql, params).fetchall()
+        rows = [_row_to_dict(r) for r in conn.execute(sql, params).fetchall()]
 
     if not rows:
         which = 'CNS ' if args.cns else ('CNSP ' if args.cnsp else '')
-        print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword or args.found_by) else ''}.")
+        print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword or args.found_by or args.journals) else ''}.")
         return 0
 
     # Column widths
@@ -385,8 +345,7 @@ def cmd_list(args, config):
     print(header)
     print(sep)
 
-    for r in rows:
-        paper = _row_to_dict(r)
+    for paper in rows:
         doi = paper.get('doi') or ''
         pid = paper.get('paper_id') or ''
         title = paper.get('title') or ''
@@ -394,9 +353,9 @@ def cmd_list(args, config):
         status = paper.get('status') or ''
         pp = paper.get('path_prefix') or ''
         date_str = paper.get('search_date') or ''
-        journal = _get_journal(r['metadata_json'])
+        journal = paper.get('journal') or ''
         cnsp = _get_cnsp(journal)
-        issn = _get_issn(r['metadata_json'])
+        issn = paper.get('issn') or ''
 
         if not args.no_truncate:
             if len(doi) > doi_w - 2:
@@ -633,6 +592,8 @@ def main():
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
     lp.add_argument('--cns', action='store_true',
                     help='Only show papers whose journal is in CNS (Nature/Science/Cell, excluding PLOS)')
+    lp.add_argument('--journals', default=None,
+                    help='Filter by comma-separated journal names, abbreviations, or ISSNs')
 
     # ---- delete ----
     dp = sub.add_parser('delete', help='Delete a paper record',
