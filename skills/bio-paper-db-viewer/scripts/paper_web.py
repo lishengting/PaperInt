@@ -220,16 +220,9 @@ INDEX_HTML = """<!doctype html>
       cursor: pointer;
     }
     .journal-item input { margin-top: 0; }
-    .journal-item > span { min-width: 0; }
-    .journal-name {
-      font-weight: 700;
-      overflow-wrap: anywhere;
-    }
-    .journal-meta {
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
+    .journal-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .journal-name { font-weight: 700; }
+    .journal-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .chips {
       display: flex;
       flex-wrap: wrap;
