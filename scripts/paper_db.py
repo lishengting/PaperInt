@@ -8,8 +8,10 @@ Schema: a single `papers` table tracking each paper through the pipeline:
   searched -> downloaded (or download_failed) -> interpreted
 """
 
+import html
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -144,6 +146,35 @@ def _is_empty(value) -> bool:
     return value is None or value == '' or value == [] or value == {}
 
 
+def _clean_markup_text(value):
+    if not isinstance(value, str):
+        return value
+    text = html.unescape(value)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = ' '.join(text.split())
+    text = re.sub(r'\(\s+', '(', text)
+    text = re.sub(r'\s+\)', ')', text)
+    text = re.sub(r'\s+([,.;:?!])', r'\1', text)
+    return text
+
+
+def _clean_nested_markup(value):
+    if isinstance(value, str):
+        return _clean_markup_text(value)
+    if isinstance(value, list):
+        return [_clean_nested_markup(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_nested_markup(item) for key, item in value.items()}
+    return value
+
+
+def _clean_paper_text(paper: dict) -> dict:
+    cleaned = dict(paper)
+    if cleaned.get('title'):
+        cleaned['title'] = _clean_markup_text(cleaned['title'])
+    return cleaned
+
+
 def _load_metadata(value) -> dict:
     if not value:
         return {}
@@ -192,6 +223,8 @@ def _merge_metadata(existing_json, new_paper: dict) -> dict:
     for key, value in new_data.items():
         if key == '_score' or _is_empty(value):
             continue
+        if key == 'title':
+            value = _clean_markup_text(value)
         if key in existing and not _is_empty(existing[key]):
             if isinstance(existing[key], list) or isinstance(value, list):
                 existing[key] = _merge_list_values(existing[key], value)
@@ -500,6 +533,7 @@ def insert_search_results(conn: sqlite3.Connection, papers: list[dict],
     keywords = (search_context or {}).get('keywords') or []
     saved_count = 0
     for rank, p in enumerate(papers, 1):
+        p = _clean_paper_text(p)
         try:
             paper_id, inserted = _insert_or_merge_paper(conn, p, now)
             if inserted:
@@ -527,6 +561,7 @@ def upsert_search_results(conn: sqlite3.Connection, papers: list[dict],
     keywords = (search_context or {}).get('keywords') or []
     saved_count = 0
     for rank, p in enumerate(papers, 1):
+        p = _clean_paper_text(p)
         try:
             doi = _sanitize_doi(p.get('doi', '') or '')
             paper_id, inserted = _insert_or_merge_paper(conn, p, now, by_doi=bool(doi))
@@ -702,7 +737,10 @@ def get_search_history(conn: sqlite3.Connection, paper_id: str, limit: int = 10)
         for key in ('matched_keywords_json', 'hit_metadata_json', 'keywords_json'):
             if item.get(key):
                 try:
-                    item[key[:-5] if key.endswith('_json') else key] = json.loads(item[key])
+                    parsed = json.loads(item[key])
+                    if key in ('matched_keywords_json', 'hit_metadata_json'):
+                        parsed = _clean_nested_markup(parsed)
+                    item[key[:-5] if key.endswith('_json') else key] = parsed
                 except json.JSONDecodeError:
                     pass
         history.append(item)
@@ -792,6 +830,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     # Normalize DOI — fix malformed PII-prefixed values from PubMed search
     if d.get('doi'):
         d['doi'] = _normalize_doi(d['doi'])
+    if d.get('title'):
+        d['title'] = _clean_markup_text(d['title'])
     if d.get('relevance'):
         try:
             d['relevance'] = json.loads(d['relevance'])
