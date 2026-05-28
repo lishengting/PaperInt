@@ -22,14 +22,26 @@ PROMPT_DIR = os.path.join(SKILL_DIR, '..', 'references', 'prompts')
 def load_config(path):
     if path.endswith('.json'):
         with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    try:
-        import yaml
-        with open(path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    except ImportError:
-        with open(path, 'r', encoding='utf-8') as f:
-            return _parse_simple_yaml(f.read())
+            config = json.load(f)
+    else:
+        try:
+            import yaml
+            with open(path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+        except ImportError:
+            config = _parse_simple_yaml(open(path, 'r', encoding='utf-8').read())
+    return _resolve_env_vars(config)
+
+
+def _resolve_env_vars(obj):
+    """Recursively resolve leaf string values that match an env var name."""
+    if isinstance(obj, dict):
+        return {k: _resolve_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_resolve_env_vars(v) for v in obj]
+    if isinstance(obj, str) and obj in os.environ:
+        return os.environ[obj]
+    return obj
 
 
 def _parse_simple_yaml(content):
