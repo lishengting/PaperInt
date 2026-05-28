@@ -207,8 +207,8 @@ tags:
 llm:
   api_base_url: "LLM_API_URL"
   api_key_env: "LLM_API_KEY"
-  model: "deepseek-v4-pro"
-  backup_model: "qwen3-235b-a22b"
+  model: "LLM_MODEL"
+  backup_model: "LLM_BACKUP_MODEL"
   backup_base_url: "http://localhost:8080/v1"
   temperature: 0.3
   max_tokens: 100000
@@ -217,9 +217,9 @@ llm:
 # --- AutoFigure Poster Generation (Phase 4) ---
 autofigure:
   api_key_env: "LLM_API_KEY"
-  methodology_model: "deepseek-v4-pro"
+  methodology_model: "LLM_MODEL"
   methodology_base_url: "LLM_API_URL"
-  enhancement_model: "qwen-image-2.0-pro"
+  enhancement_model: "LLM_ENHANCEMENT_MODEL"
 
 # --- Interpreter Configuration ---
 interpreter:
