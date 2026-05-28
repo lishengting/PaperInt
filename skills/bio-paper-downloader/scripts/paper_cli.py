@@ -1391,7 +1391,7 @@ def main():
     p.add_argument('--cns', action='store_true',
                    help='Only download papers published in C/N/S journals (excludes PLOS)')
     p.add_argument('--cookie-dir', default=None,
-                   help='Directory for persistent browser profile/cookies (default: data/tmp)')
+                   help='Directory for persistent browser profile/cookies (default: data/tmp/chrome_profile)')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -1444,7 +1444,9 @@ def main():
         config.setdefault('db', {})['path'] = args.db
 
     if args.cookie_dir is None:
-        args.cookie_dir = _data_tmp(config)
+        args.cookie_dir = os.path.join(_data_tmp(config), 'chrome_profile')
+    elif not args.cookie_dir.rstrip('/').endswith('chrome_profile'):
+        args.cookie_dir = os.path.join(args.cookie_dir, 'chrome_profile')
 
     if args.cmd == 'get':
         return cmd_get(args, config)
