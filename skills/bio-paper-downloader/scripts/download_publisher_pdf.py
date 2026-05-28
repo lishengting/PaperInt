@@ -462,8 +462,6 @@ def _score_pdf_candidate(candidate):
         score -= 100
     if any(x in lower_text or x in lower_url for x in ('supplement', 'supplementary', 'esm', 'reporting summary')):
         score -= 100
-    if any(x in lower_url for x in ('_reference.pdf', '-reference.pdf', '/reference.pdf')):
-        score -= 80
     score -= min(len(url), 300) // 20
     return score
 
