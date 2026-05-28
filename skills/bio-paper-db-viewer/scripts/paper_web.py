@@ -274,13 +274,32 @@ INDEX_HTML = """<!doctype html>
       line-height: 1.35;
       letter-spacing: -0.02em;
     }
+    .paper-title .text-zh,
+    .paper-title .text-main {
+      font-weight: 800;
+    }
+    .paper-title .text-en {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
     .paper-abstract {
       color: #353966;
       margin: 0 0 14px;
+    }
+    .paper-abstract .text-zh,
+    .paper-abstract .text-en,
+    .paper-abstract .text-main {
       display: -webkit-box;
       -webkit-line-clamp: 4;
       -webkit-box-orient: vertical;
       overflow: hidden;
+    }
+    .paper-abstract .text-en {
+      margin-top: 6px;
+      color: #5f6389;
     }
     .meta-row, .links-row, .tag-row {
       display: flex;
@@ -585,6 +604,25 @@ INDEX_HTML = """<!doctype html>
       return '';
     }
 
+    function renderBilingualText(en, zh, fallback, className) {
+      const enText = String(en || '').trim();
+      const zhText = String(zh || '').trim();
+      const mainText = enText || fallback;
+      if (zhText && enText) {
+        return `
+          <div class="${className} bilingual">
+            <div class="text-zh">${escapeHtml(zhText)}</div>
+            <div class="text-en">${escapeHtml(enText)}</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="${className}">
+          <div class="text-main">${escapeHtml(mainText)}</div>
+        </div>
+      `;
+    }
+
     function renderPaper(paper) {
       const links = paper.links || {};
       const statusClass = `status-${String(paper.status || '').replace(/[^a-z_]/g, '')}`;
@@ -608,10 +646,22 @@ INDEX_HTML = """<!doctype html>
         paper.pmid ? `PMID：${paper.pmid}` : '',
         paper.arxiv_id ? `arXiv：${paper.arxiv_id}` : '',
       ].filter(Boolean).map((item) => `<span class="meta ${item.includes('状态：') ? statusClass : ''}">${escapeHtml(item)}</span>`).join('');
+      const titleHtml = renderBilingualText(
+        paper.title || paper.paper_id || '',
+        paper.title_zh,
+        'Untitled',
+        'paper-title'
+      );
+      const abstractHtml = renderBilingualText(
+        paper.abstract || '',
+        paper.abstract_zh,
+        '暂无摘要。',
+        'paper-abstract'
+      );
       return `
         <article class="paper-card">
-          <h2 class="paper-title">${escapeHtml(paper.title || paper.paper_id || 'Untitled')}</h2>
-          <p class="paper-abstract">${escapeHtml(paper.abstract || '暂无摘要。')}</p>
+          ${titleHtml}
+          ${abstractHtml}
           <div class="meta-row">${meta}</div>
           <div class="tag-row">${renderTags(paper.matched_tags)}</div>
           <div class="links-row">${localLinks || '<span class="meta">暂无本地 brief/PDF 链接</span>'}</div>

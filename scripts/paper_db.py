@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS papers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     paper_id        TEXT NOT NULL UNIQUE,
     title           TEXT,
+    title_zh        TEXT,
     authors         TEXT,
     abstract        TEXT,
+    abstract_zh     TEXT,
     doi             TEXT,
     pmid            TEXT,
     arxiv_id        TEXT,
@@ -120,6 +122,17 @@ def get_conn(config: dict) -> sqlite3.Connection:
     # Auto-migration: add path_prefix column for existing databases
     try:
         _conn.execute("ALTER TABLE papers ADD COLUMN path_prefix TEXT")
+        _conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    # Auto-migration: add translation columns for existing databases
+    try:
+        _conn.execute("ALTER TABLE papers ADD COLUMN title_zh TEXT")
+        _conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        _conn.execute("ALTER TABLE papers ADD COLUMN abstract_zh TEXT")
         _conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -684,6 +697,31 @@ def update_tags(conn: sqlite3.Connection, paper_id: str, data: dict) -> None:
     conn.execute(
         "UPDATE papers SET matched_tags=?, updated_at=? WHERE paper_id=?",
         (json.dumps(data, ensure_ascii=False), now, paper_id),
+    )
+    conn.commit()
+
+
+def update_translations(conn: sqlite3.Connection, paper_id: str,
+                        title_zh: str = None, abstract_zh: str = None) -> None:
+    """Store Chinese title/abstract translations for a paper."""
+    updates = []
+    params = []
+    for column, value in (('title_zh', title_zh), ('abstract_zh', abstract_zh)):
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        updates.append(f"{column}=?")
+        params.append(text)
+    if not updates:
+        return
+    now = _now()
+    updates.append("updated_at=?")
+    params.extend([now, paper_id])
+    conn.execute(
+        f"UPDATE papers SET {', '.join(updates)} WHERE paper_id=?",
+        params,
     )
     conn.commit()
 

@@ -44,8 +44,8 @@ sys.path.insert(0, SKILL_DIR)
 
 from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
                       mark_interpreted, mark_interpret_failed, update_tags,
-                      load_cnsp_journal_set, filter_cnsp_papers,
-                      load_cns_journal_set)
+                      update_translations, load_cnsp_journal_set,
+                      filter_cnsp_papers, load_cns_journal_set)
 
 from match_tags import match_tags
 from build_prompt import build_full_text_prompt, build_brief_prompt, build_abstract_only_prompt, load_config
@@ -124,12 +124,78 @@ def _call_llm(config, system_prompt, user_prompt):
     }
 
 
-def _log_phase2_tokens(val_usage, interpret_usage, brief_usage):
+def _strip_json_fence(content: str) -> str:
+    content = (content or '').strip()
+    content = re.sub(r'^```(?:json)?\s*', '', content)
+    content = re.sub(r'\s*```$', '', content)
+    return content.strip()
+
+
+def _load_json_object(content: str) -> dict:
+    content = _strip_json_fence(content)
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find('{')
+        end = content.rfind('}')
+        if start == -1 or end == -1 or end <= start:
+            raise
+        data = json.loads(content[start:end + 1])
+    if not isinstance(data, dict):
+        raise ValueError('LLM response is not a JSON object')
+    return data
+
+
+def _translate_paper_metadata(config, paper_data):
+    title = (paper_data.get('title') or '').strip()
+    abstract = (paper_data.get('abstract') or paper_data.get('Abstract') or '').strip()
+    existing_title_zh = (paper_data.get('title_zh') or '').strip()
+    existing_abstract_zh = (paper_data.get('abstract_zh') or '').strip()
+    if existing_title_zh and (existing_abstract_zh or not abstract):
+        return {
+            'title_zh': existing_title_zh,
+            'abstract_zh': existing_abstract_zh,
+        }, None
+    if not title and not abstract:
+        return {}, None
+
+    system_prompt = (
+        'You are a precise academic translator. Translate research paper metadata '
+        'into Simplified Chinese. Return valid JSON only. Do not include Markdown, '
+        'comments, or extra text.'
+    )
+    user_prompt = (
+        'Translate the following paper title and abstract into Simplified Chinese.\n\n'
+        'Rules:\n'
+        '- Preserve scientific meaning exactly.\n'
+        '- Do not invent information.\n'
+        '- Keep gene/protein/drug names, abbreviations, database names, and statistical notation accurate.\n'
+        '- If a field is empty, return an empty string for that field.\n'
+        '- Return exactly this JSON object shape: '
+        '{"title_zh": "...", "abstract_zh": "..."}\n\n'
+        f'Title:\n{title}\n\n'
+        f'Abstract:\n{abstract}\n'
+    )
+    content, usage = _call_llm(config, system_prompt, user_prompt)
+    data = _load_json_object(content)
+    translations = {
+        'title_zh': data.get('title_zh') if isinstance(data.get('title_zh'), str) else '',
+        'abstract_zh': data.get('abstract_zh') if isinstance(data.get('abstract_zh'), str) else '',
+    }
+    if existing_title_zh and not translations['title_zh']:
+        translations['title_zh'] = existing_title_zh
+    if existing_abstract_zh and not translations['abstract_zh']:
+        translations['abstract_zh'] = existing_abstract_zh
+    translations = {key: value.strip() for key, value in translations.items() if value.strip()}
+    return translations, usage
+
+
+def _log_phase2_tokens(val_usage, translation_usage, interpret_usage, brief_usage):
     """Print token usage summary for Phase 2 LLM calls."""
     parts = []
     total = 0
-    for label, usage in [('validate', val_usage), ('interpret', interpret_usage),
-                          ('brief', brief_usage)]:
+    for label, usage in [('validate', val_usage), ('translate', translation_usage),
+                         ('interpret', interpret_usage), ('brief', brief_usage)]:
         if usage:
             t = usage.get('total_tokens', 0)
             total += t
@@ -344,6 +410,15 @@ def run_phase2(paper_path, paper, config, log_file):
         with open(metadata_path) as f:
             paper_data.update(json.load(f))
 
+    translations = {}
+    translation_usage = None
+    try:
+        translations, translation_usage = _translate_paper_metadata(config, paper_data)
+        if translations:
+            ts_print("  Metadata translation: ready")
+    except Exception as e:
+        ts_print(f"  LLM call failed (metadata translation, proceeding): {e}", file=sys.stderr)
+
     extract_meta = {
         'representative_image': rep_image,
         'image_count': image_count,
@@ -400,6 +475,9 @@ def run_phase2(paper_path, paper, config, log_file):
             'paper_id': paper_id,
             'doi': paper.get('doi', ''),
             'title': title,
+            'title_zh': translations.get('title_zh', ''),
+            'abstract': paper_data.get('abstract', paper.get('abstract', '')),
+            'abstract_zh': translations.get('abstract_zh', ''),
             'content': interpret_content,
             'tags': tag_data.get('tag_ids', []),
             'tag_labels': tag_data.get('matched_labels', []),
@@ -413,6 +491,10 @@ def run_phase2(paper_path, paper, config, log_file):
             json.dump(interpret_json, f, ensure_ascii=False, indent=2)
 
     conn = get_conn(config)
+    if translations.get('title_zh') or translations.get('abstract_zh'):
+        update_translations(conn, paper_id,
+                            translations.get('title_zh'),
+                            translations.get('abstract_zh'))
     mark_interpreted(conn, paper_id)
     extra = []
     if not interpret_ok:
@@ -420,7 +502,7 @@ def run_phase2(paper_path, paper, config, log_file):
     if not brief_ok:
         extra.append('brief failed')
     log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}' + (f' ({", ".join(extra)})' if extra else ''))
-    _log_phase2_tokens(val_usage, interpret_usage, brief_usage)
+    _log_phase2_tokens(val_usage, translation_usage, interpret_usage, brief_usage)
     return True, mode
 
 
