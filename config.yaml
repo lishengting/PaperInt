@@ -219,7 +219,7 @@ autofigure:
   api_key_env: "LLM_API_KEY"
   methodology_model: "LLM_MODEL"
   methodology_base_url: "LLM_API_URL"
-  enhancement_model: "LLM_ENHANCEMENT_MODEL"
+  enhancement_model: "LLM_IMG_MODEL"
 
 # --- Interpreter Configuration ---
 interpreter:
