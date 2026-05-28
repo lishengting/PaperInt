@@ -57,7 +57,7 @@ INDEX_HTML = """<!doctype html>
     a:hover { color: var(--primary-hover); }
     .app {
       display: grid;
-      grid-template-columns: 280px minmax(0, 1fr);
+      grid-template-columns: 320px minmax(0, 1fr);
       min-height: 100vh;
     }
     .sidebar {
@@ -92,6 +92,11 @@ INDEX_HTML = """<!doctype html>
     .side-card h3 {
       margin: 0 0 12px;
       font-size: 14px;
+    }
+    .filter-note {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12px;
     }
     .stats-grid {
       display: grid;
@@ -134,21 +139,11 @@ INDEX_HTML = """<!doctype html>
       max-width: 720px;
       font-size: 16px;
     }
-    .control-panel {
-      max-width: 1120px;
-      margin: 0 auto 22px;
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      padding: 18px;
-    }
     .controls {
       display: grid;
-      grid-template-columns: minmax(220px, 2fr) 170px 130px auto;
       gap: 12px;
-      align-items: end;
     }
+    .controls .primary-btn { width: 100%; }
     .field { text-align: left; }
     .field label {
       display: block;
@@ -188,37 +183,32 @@ INDEX_HTML = """<!doctype html>
       color: var(--primary-dark);
       background: var(--chip);
     }
-    .journal-panel {
-      margin-top: 16px;
-      border-top: 1px solid var(--border);
-      padding-top: 16px;
-      text-align: left;
-    }
+    .journal-panel { text-align: left; }
     .journal-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      display: grid;
+      gap: 10px;
       margin-bottom: 10px;
     }
+    .journal-summary { color: var(--muted); font-size: 12px; }
     .journal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .small-btn {
+      flex: 1 1 72px;
       border: 1px solid var(--border);
       border-radius: 999px;
       background: #fff;
       color: var(--primary-dark);
       cursor: pointer;
       height: 30px;
-      padding: 0 12px;
+      padding: 0 10px;
       font-size: 12px;
       font-weight: 700;
     }
-    .journal-search { max-width: 360px; margin-bottom: 10px; }
+    .journal-search { margin-bottom: 10px; }
     .journal-list {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      grid-template-columns: 1fr;
       gap: 8px;
-      max-height: 250px;
+      max-height: 360px;
       overflow: auto;
       padding: 2px 2px 8px;
     }
@@ -226,14 +216,28 @@ INDEX_HTML = """<!doctype html>
       display: flex;
       align-items: flex-start;
       gap: 8px;
+      width: 100%;
       border: 1px solid var(--border);
       border-radius: 14px;
       background: #fbfcff;
       padding: 10px;
+      cursor: pointer;
     }
     .journal-item input { margin-top: 4px; }
-    .journal-name { font-weight: 700; font-size: 13px; }
-    .journal-meta { color: var(--muted); font-size: 12px; }
+    .journal-item > span { min-width: 0; }
+    .journal-name {
+      display: block;
+      font-weight: 700;
+      font-size: 13px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .journal-meta {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
     .chips {
       display: flex;
       flex-wrap: wrap;
@@ -354,12 +358,10 @@ INDEX_HTML = """<!doctype html>
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
       .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
-      .controls { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 620px) {
       .main { padding: 18px; }
-      .controls { grid-template-columns: 1fr; }
-      .journal-head, .result-head { align-items: flex-start; flex-direction: column; }
+      .result-head { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -378,21 +380,7 @@ INDEX_HTML = """<!doctype html>
         <div class="stats-grid" id="statsGrid"></div>
       </div>
       <div class="side-card">
-        <h3>默认筛选</h3>
-        <p style="margin:0;color:var(--muted);font-size:13px;">默认选中 Nature、Science、Cell 及其子刊配置中匹配到的数据库期刊。没有 ISSN 的条目统一归入预印版。</p>
-      </div>
-    </aside>
-    <main class="main">
-      <div class="topbar">
-        <span>本地 SQLite</span>
-        <span>安全文件 API</span>
-        <span>动态分页</span>
-      </div>
-      <section class="hero">
-        <h1>探索已检索和解读的生物医学文献</h1>
-        <p>按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 brief HTML 与 PDF。</p>
-      </section>
-      <section class="control-panel">
+        <h3>基础筛选</h3>
         <div class="controls">
           <div class="field">
             <label for="keywordInput">关键词</label>
@@ -421,21 +409,31 @@ INDEX_HTML = """<!doctype html>
           </div>
           <button class="primary-btn" id="searchBtn">搜索</button>
         </div>
-        <div class="journal-panel">
-          <div class="journal-head">
-            <div>
-              <strong>期刊 / ISSN</strong>
-              <div style="color:var(--muted);font-size:12px;" id="journalSummary">正在载入期刊列表...</div>
-            </div>
-            <div class="journal-actions">
-              <button class="small-btn" id="defaultJournalBtn">默认 CNS</button>
-              <button class="small-btn" id="allJournalBtn">全选</button>
-              <button class="small-btn" id="clearJournalBtn">清空</button>
-            </div>
+      </div>
+      <div class="side-card journal-panel">
+        <h3>期刊 / ISSN</h3>
+        <p class="filter-note">默认选中 Nature、Science、Cell 及其子刊配置中匹配到的数据库期刊。没有 ISSN 的条目统一归入预印版。</p>
+        <div class="journal-head">
+          <div class="journal-summary" id="journalSummary">正在载入期刊列表...</div>
+          <div class="journal-actions">
+            <button class="small-btn" id="defaultJournalBtn">默认 CNS</button>
+            <button class="small-btn" id="allJournalBtn">全选</button>
+            <button class="small-btn" id="clearJournalBtn">清空</button>
           </div>
-          <input id="journalSearch" class="input journal-search" placeholder="搜索期刊名、ISSN 或别名">
-          <div class="journal-list" id="journalList"></div>
         </div>
+        <input id="journalSearch" class="input journal-search" placeholder="搜索期刊名、ISSN 或别名">
+        <div class="journal-list" id="journalList"></div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <span>本地 SQLite</span>
+        <span>安全文件 API</span>
+        <span>动态分页</span>
+      </div>
+      <section class="hero">
+        <h1>探索已检索和解读的生物医学文献</h1>
+        <p>按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 brief HTML 与 PDF。</p>
       </section>
       <div class="chips" id="activeChips"></div>
       <section class="results">
