@@ -74,26 +74,13 @@ def _ssl_context():
 def load_config(path):
     if path.endswith('.json'):
         with open(path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-    else:
-        try:
-            import yaml
-            with open(path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-        except ImportError:
-            config = _simple_yaml(path)
-    return _resolve_env_vars(config)
-
-
-def _resolve_env_vars(obj):
-    """Recursively resolve leaf string values that match an env var name."""
-    if isinstance(obj, dict):
-        return {k: _resolve_env_vars(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_resolve_env_vars(v) for v in obj]
-    if isinstance(obj, str) and obj in os.environ:
-        return os.environ[obj]
-    return obj
+            return json.load(f)
+    try:
+        import yaml
+        with open(path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    except ImportError:
+        return _simple_yaml(path)
 
 
 def _simple_yaml(path):
@@ -289,8 +276,8 @@ def arxiv_parse(xml_data):
 _shared_chrome_port = None
 
 
-def _get_or_start_chrome(cookie_dir=None):
-    profile = cookie_dir or os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
+def _get_or_start_chrome():
+    profile = os.path.join(tempfile.gettempdir(), 'paper_cli_scholar_chrome')
     os.makedirs(profile, exist_ok=True)
     r = subprocess.run(['pgrep', '-f', f'user-data-dir={profile}'], capture_output=True, text=True)
     if r.returncode == 0 and r.stdout.strip():
@@ -359,7 +346,7 @@ def download_arxiv(arxiv_id, config):
 
 
 def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False, cookie_dir=None):
+                      stealth_enabled=False):
     if not doi:
         return None
     headers = {
@@ -387,8 +374,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
         try:
             data = _browser_download(doi, server, config, fallback_level=fallback_level,
                                          captcha_enabled=captcha_enabled,
-                                         stealth_enabled=stealth_enabled,
-                                         cookie_dir=cookie_dir)
+                                         stealth_enabled=stealth_enabled)
             if data:
                 return data
         except Exception as e:
@@ -398,7 +384,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
 
 
 def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False, cookie_dir=None):
+                      stealth_enabled=False):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -421,8 +407,6 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
             cmd.extend(['--twocap-api', twocap_api])
     if stealth_enabled:
         cmd.append('--stealth')
-    if cookie_dir:
-        cmd.extend(['--cookie-dir', cookie_dir])
     r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -483,7 +467,7 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
 
 
 def _download_browser_only(paper, config, data_dir, conn, force=False,
-                           stealth_enabled=False, cookie_dir=None):
+                           stealth_enabled=False):
     """Download biorxiv/medrxiv via headed Chrome with real GUI display.
 
     Clean side path: no fallback levels, no captcha, no Xvfb, no headless.
@@ -521,8 +505,7 @@ def _download_browser_only(paper, config, data_dir, conn, force=False,
 
     try:
         pdf_data = _run_browser_only_download(homepage, article_url, pdf_url,
-                                              stealth_enabled=stealth_enabled,
-                                              cookie_dir=cookie_dir)
+                                              stealth_enabled=stealth_enabled)
     except Exception as e:
         print(f"  [browser-only] FAILED: {e}", file=sys.stderr)
         mark_download_failed(conn, pid, f"Browser-only failed: {e}", dirname)
@@ -545,7 +528,7 @@ def _download_browser_only(paper, config, data_dir, conn, force=False,
 
 
 def _run_browser_only_download(homepage, article_url, pdf_url,
-                               stealth_enabled=False, cookie_dir=None):
+                               stealth_enabled=False):
     """Launch headed Chrome, navigate and fetch PDF via JS. Returns PDF bytes."""
     from download_biorxiv_browser import ChromeInstance, _pick_chrome
 
@@ -566,8 +549,7 @@ def _run_browser_only_download(homepage, article_url, pdf_url,
         from playwright.async_api import async_playwright
 
         chrome = ChromeInstance(chrome_bin=_pick_chrome() or 'google-chrome',
-                                headless=False, xvfb=False,
-                                profile_dir=cookie_dir)
+                                headless=False, xvfb=False)
         chrome.start()
 
         try:
@@ -633,7 +615,7 @@ def _run_browser_only_download(homepage, article_url, pdf_url,
 
 
 def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False,
-                        stealth_enabled=False, cookie_dir=None):
+                        stealth_enabled=False):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     base_cmd = [sys.executable, script, '--doi', doi,
@@ -649,8 +631,6 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
             base_cmd.extend(['--twocap-api', twocap_api])
     if stealth_enabled:
         base_cmd.append('--stealth')
-    if cookie_dir:
-        base_cmd.extend(['--cookie-dir', cookie_dir])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -692,22 +672,9 @@ def _validate_pdf(data: bytes) -> bool:
         return False
 
 
-_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.bmp', '.tif', '.tiff')
-
-
-def _is_obvious_non_pdf_url(url: str) -> bool:
-    lower = (url or '').lower()
-    path = urllib.parse.urlparse(lower).path
-    if path.endswith(_IMAGE_EXTENSIONS):
-        return True
-    if 'ars.els-cdn.com/content/image/' in lower:
-        return True
-    return bool(re.search(r'-(?:ga|gr|fx|fig)\d+\.(?:jpe?g|png|gif|webp|svg)$', path))
-
-
 def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False,
-                         stealth_enabled=False, cookie_dir=None):
-    if not pdf_url or _is_obvious_non_pdf_url(pdf_url):
+                         stealth_enabled=False):
+    if not pdf_url:
         return None
     # Direct HTTP attempt
     try:
@@ -737,8 +704,6 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
             base_cmd.extend(['--twocap-api', twocap_api])
     if stealth_enabled:
         base_cmd.append('--stealth')
-    if cookie_dir:
-        base_cmd.extend(['--cookie-dir', cookie_dir])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -874,7 +839,7 @@ SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv
 
 
 def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
-                   captcha_enabled=False, stealth_enabled=False, cookie_dir=None):
+                   captcha_enabled=False, stealth_enabled=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
@@ -912,22 +877,22 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi') or pid, src, config,
                                      fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
     elif src == 'scholar':
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
         if pdf_url and fallback_level >= 1:
             pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
         if not pdf_data and doi and fallback_level >= 1:
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
         if not pdf_data:
             # Try PMC download (with Europe PMC fallback) even if API
             # says has_pdf=False — the API may be wrong, and Europe PMC often
@@ -941,18 +906,11 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             if not pdf_data and not pmc_has_pdf:
                 print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
     elif src in ('crossref', 'europepmc'):
-        if paper.get('pdf_url') and fallback_level >= 1:
-            pdf_data = _download_direct_pdf(paper['pdf_url'], config,
-                                            fallback_level=fallback_level,
-                                            captcha_enabled=captcha_enabled,
-                                            stealth_enabled=stealth_enabled,
-                                            cookie_dir=cookie_dir)
-        if not pdf_data and fallback_level >= 1 and paper.get('doi'):
+        if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
                                            fallback_level=fallback_level,
                                            captcha_enabled=captcha_enabled,
-                                           stealth_enabled=stealth_enabled,
-                                           cookie_dir=cookie_dir)
+                                           stealth_enabled=stealth_enabled)
         if not pdf_data:
             pmc_id = paper.get('pmc_id')
             if not pmc_id and paper.get('pmid'):
@@ -961,7 +919,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                 pdf_data = _download_pmc_pdf(pmc_id, config)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -988,7 +946,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
             pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
@@ -997,7 +955,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         if not pdf_data and doi:
             print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
 
     # Validate PDF before accepting (catch corrupt/truncated files early)
     if pdf_data and not _validate_pdf(pdf_data):
@@ -1020,37 +978,18 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             elif alt_src in ('biorxiv', 'medrxiv'):
                 adoi = alt.get('doi') or paper.get('doi') or pid
                 pdf_data = download_preprint(adoi, alt_src, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
             elif alt_src == 'scholar':
                 if alt.get("pdf_url") and fallback_level >= 1:
                     pdf_data = _download_direct_pdf(alt['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
                 if not pdf_data and alt.get("doi") and fallback_level >= 1:
                     pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
-            elif alt_src in ('crossref', 'europepmc'):
-                if alt.get("pdf_url") and fallback_level >= 1:
-                    pdf_data = _download_direct_pdf(alt['pdf_url'], config,
-                                                   fallback_level=fallback_level,
-                                                   captcha_enabled=captcha_enabled,
-                                                   stealth_enabled=stealth_enabled,
-                                                   cookie_dir=cookie_dir)
-                if not pdf_data and alt.get("doi") and fallback_level >= 1:
-                    pdf_data = _publisher_download(alt['doi'], alt.get('pmid') or paper.get('pmid'), config,
-                                                   fallback_level=fallback_level,
-                                                   captcha_enabled=captcha_enabled,
-                                                   stealth_enabled=stealth_enabled,
-                                                   cookie_dir=cookie_dir)
-                if not pdf_data:
-                    pmc_id = alt.get('pmc_id')
-                    if not pmc_id and alt.get('pmid'):
-                        pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
-                    if pmc_id:
-                        pdf_data = _download_pmc_pdf(pmc_id, config)
+                                  stealth_enabled=stealth_enabled)
             elif alt_src == 'pubmed':
                 if fallback_level >= 1 and alt.get('doi'):
                     pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:
@@ -1251,7 +1190,6 @@ def cmd_get(args, config):
         return 0
 
     conn = get_conn(config)
-    cookie_dir = getattr(args, 'cookie_dir', None)
     if getattr(args, 'browser_only', False):
         if paper['source'] not in ('biorxiv', 'medrxiv'):
             print("Error: --browser-only only supports biorxiv/medrxiv URLs",
@@ -1259,14 +1197,12 @@ def cmd_get(args, config):
             return 1
         ok = _download_browser_only(paper, config, args.data_dir, conn,
                                     force=args.force,
-                                    stealth_enabled=args.stealth,
-                                    cookie_dir=cookie_dir)
+                                    stealth_enabled=args.stealth)
     else:
         ok = download_paper(paper, config, args.data_dir, conn,
                             force=args.force, fallback_level=args.fallback_level,
                             captcha_enabled=args.captcha,
-                            stealth_enabled=args.stealth,
-                            cookie_dir=cookie_dir)
+                            stealth_enabled=args.stealth)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -1277,8 +1213,7 @@ def cmd_get(args, config):
 
 
 def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
-             cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False,
-             cookie_dir=None):
+             cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     conn = get_conn(config)
     if retry_failed:
@@ -1316,7 +1251,7 @@ def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
         result = download_paper(p, config, data_dir, conn,
                                fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, cookie_dir=cookie_dir)
+                                  stealth_enabled=stealth_enabled)
         if result is True:
             ok += 1
         elif result is False:
@@ -1390,8 +1325,6 @@ def main():
                    help='Only download papers published in C/N/S/P journals')
     p.add_argument('--cns', action='store_true',
                    help='Only download papers published in C/N/S journals (excludes PLOS)')
-    p.add_argument('--cookie-dir', default=None,
-                   help='Directory for persistent browser profile/cookies (default: data/tmp/chrome_profile)')
 
     sub = p.add_subparsers(dest='cmd', required=False,
                            title='commands',
@@ -1421,8 +1354,6 @@ def main():
                          'no Xvfb, no captcha. Only for biorxiv/medrxiv.')
     gp.add_argument('--stealth', action='store_true', default=False,
                     help='Enable playwright-stealth (default: off)')
-    gp.add_argument('--use-cookie', dest='cookie_dir', default=None,
-                    help='Directory for persistent browser profile/cookies (default: temp dir)')
 
     # ---- pdf ----
     pp = sub.add_parser(
@@ -1443,11 +1374,6 @@ def main():
     if args.db:
         config.setdefault('db', {})['path'] = args.db
 
-    if args.cookie_dir is None:
-        args.cookie_dir = os.path.join(_data_tmp(config), 'chrome_profile')
-    elif not args.cookie_dir.rstrip('/').endswith('chrome_profile'):
-        args.cookie_dir = os.path.join(args.cookie_dir, 'chrome_profile')
-
     if args.cmd == 'get':
         return cmd_get(args, config)
     elif args.cmd == 'pdf':
@@ -1459,8 +1385,7 @@ def main():
                         cns_only=args.cns,
                         fallback_level=args.fallback_level,
                         captcha_enabled=args.captcha,
-                        stealth_enabled=args.stealth,
-                        cookie_dir=args.cookie_dir)
+                        stealth_enabled=args.stealth)
     return 1
 
 

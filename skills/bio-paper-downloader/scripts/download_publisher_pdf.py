@@ -381,102 +381,6 @@ async def _safe_eval(page, js, retries=3):
     raise Exception('Page navigation destroyed execution context')
 
 
-_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.bmp', '.tif', '.tiff')
-
-
-def _url_path(url):
-    return urlparse(url).path.lower()
-
-
-def _is_citation_export(url, text=''):
-    haystack = f'{url} {text}'.lower()
-    return any(x in haystack for x in (
-        'citation-needed', 'format=refman', 'format=ris', 'format=bibtex',
-        '/ris/', '/refman/', '/bibtex/', '/endnote/', 'downloadcitation')) or (
-        'citation' in haystack and 'pdf' not in haystack)
-
-
-def _is_obvious_non_pdf_asset(url, text=''):
-    lower_url = url.lower()
-    path = _url_path(url)
-    lower_text = (text or '').lower()
-    if path.endswith(_IMAGE_EXTENSIONS):
-        return True
-    if 'ars.els-cdn.com/content/image/' in lower_url:
-        return True
-    if re.search(r'-(?:ga|gr|fx|fig)\d+\.(?:jpe?g|png|gif|webp|svg)$', path):
-        return True
-    if any(x in lower_text for x in ('download image', 'download figure', 'graphical abstract')):
-        return True
-    return False
-
-
-def _has_pdf_signal(url, text=''):
-    lower_url = url.lower()
-    path = _url_path(url)
-    lower_text = (text or '').lower()
-    return (
-        path.endswith('.pdf') or
-        '.pdf' in lower_url or
-        '/pdf' in lower_url or
-        'pdfft' in lower_url or
-        'showpdf' in lower_url or
-        'main.pdf' in lower_url or
-        'application/pdf' in lower_text or
-        'citation_pdf_url' in lower_text or
-        'pdf' in lower_text)
-
-
-def _score_pdf_candidate(candidate):
-    url = candidate['url']
-    text = candidate.get('text', '')
-    lower_url = url.lower()
-    lower_text = text.lower()
-    if _is_citation_export(url, text) or _is_obvious_non_pdf_asset(url, text):
-        return None
-
-    has_pdf_signal = _has_pdf_signal(url, text)
-    if not has_pdf_signal and 'download' not in lower_url and 'download' not in lower_text:
-        return None
-
-    score = 0
-    if 'citation_pdf_url' in lower_text:
-        score += 180
-    if 'pdfft' in lower_url:
-        score += 170
-    if 'main.pdf' in lower_url:
-        score += 150
-    if 'showpdf' in lower_url:
-        score += 140
-    if _url_path(url).endswith('.pdf'):
-        score += 130
-    elif '.pdf' in lower_url:
-        score += 100
-    if 'download pdf' in lower_text or lower_text == 'pdf':
-        score += 120
-    if 'nature article pdf fallback' in lower_text:
-        score += 70
-    if 'download' in lower_text or 'download' in lower_url:
-        score += 10
-    if not has_pdf_signal:
-        score -= 100
-    if any(x in lower_text or x in lower_url for x in ('supplement', 'supplementary', 'esm', 'reporting summary')):
-        score -= 100
-    score -= min(len(url), 300) // 20
-    return score
-
-
-def _html_access_message(pdf_url, body, final_url='', content_type=''):
-    preview = body[:200].decode('latin-1', errors='replace')
-    preview = ' '.join(preview.split())
-    haystack = f'{pdf_url} {final_url} {content_type} {preview}'.lower()
-    if 'cookies_not_supported' in haystack or 'idp.nature.com/authorize' in haystack:
-        return f'PDF endpoint returned HTML; publisher needs browser cookies/session ({len(body)} bytes, starts with: {preview})'
-    if 'text/html' in content_type.lower() or preview.lower().startswith('<!doctype html') or preview.lower().startswith('<html'):
-        return f'PDF endpoint returned HTML instead of PDF ({len(body)} bytes, starts with: {preview})'
-    return f'Not a valid PDF ({len(body)} bytes, starts with: {preview})'
-
-
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
                                        captcha_enabled=False, captcha_api_key='',
@@ -582,55 +486,68 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 result['message'] = 'No PDF links found on publisher page'
                 return result
 
-            article_url = page.url
-            candidates = {}
-            for link in pdf_links:
-                href = link.get('href') or ''
-                if not href or href.startswith('#'):
-                    continue
-                url = urljoin(article_url, href)
-                existing = candidates.get(url)
-                text = (link.get('text') or '').lower().strip()
-                if existing:
-                    if text and text not in existing['text']:
-                        existing['text'] = f"{existing['text']} {text}".strip()
-                else:
-                    candidates[url] = {'url': url, 'text': text}
+            # De-duplicate and pick the best PDF link
+            seen = set()
+            unique = []
+            for l in pdf_links:
+                h = l['href']
+                if h not in seen:
+                    seen.add(h)
+                    unique.append(l)
 
-            scored = []
-            for candidate in candidates.values():
-                score = _score_pdf_candidate(candidate)
-                if score is None:
-                    continue
-                candidate['score'] = score
-                scored.append(candidate)
-            scored.sort(key=lambda item: item['score'], reverse=True)
+            print(f"  [publisher:{mode}] PDF links found: {len(unique)}", file=sys.stderr)
 
-            print(f"  [publisher:{mode}] PDF links found: {len(candidates)}", file=sys.stderr)
-            if not scored:
-                result['message'] = 'No usable PDF candidates found on publisher page'
-                return result
+            def _score(link):
+                s = 0
+                t = link['text']
+                h = link['href']
+                if 'download pdf' in t:
+                    s += 100
+                if 'citation_pdf_url' in t:
+                    s += 90
+                if 'nature article pdf fallback' in t:
+                    s += 70
+                if 'showpdf' in h.lower():
+                    s += 80
+                if 'supplement' in t or 'esm' in h.lower():
+                    s -= 50
+                if 'reporting summary' in t:
+                    s -= 50
+                if 'citation' in t or 'citation-needed' in h:
+                    s -= 200
+                if any(x in h for x in ('format=refman', 'format=ris', 'format=bibtex',
+                                   '/ris/', '/refman/', '/bibtex/',
+                                   '/endnote/', 'downloadcitation')):
+                    s -= 200
+                s -= len(h)
+                return s
+
+            best = max(unique, key=_score)
+            pdf_href = best['href']
+
+            if pdf_href.startswith('/'):
+                parsed = urlparse(page.url)
+                pdf_url = f'{parsed.scheme}://{parsed.netloc}{pdf_href}'
+            elif not pdf_href.startswith('http'):
+                pdf_url = urljoin(page.url, pdf_href)
+            else:
+                pdf_url = pdf_href
+
+            print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
+
+            # Step 3: fetch PDF bytes — try JS fetch from article page first
+            # (valid session + referrer), fall back to navigation + download capture
+            print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
 
             fetch_js = """
                 async ([url]) => {
                     try {
-                        const r = await fetch(url, {
-                            credentials: 'include',
-                            headers: {Accept: 'application/pdf,*/*'}
-                        });
-                        if (!r.ok) {
-                            return {error: 'HTTP ' + r.status, status: r.status, url: r.url,
-                                    contentType: r.headers.get('content-type') || ''};
-                        }
+                        const r = await fetch(url, {credentials: 'include'});
+                        if (!r.ok) return {error: 'HTTP ' + r.status};
                         const blob = await r.blob();
                         return new Promise(resolve => {
                             const reader = new FileReader();
-                            reader.onloadend = () => resolve({
-                                data: reader.result.split(',')[1],
-                                size: blob.size,
-                                url: r.url,
-                                contentType: r.headers.get('content-type') || ''
-                            });
+                            reader.onloadend = () => resolve({data: reader.result.split(',')[1], size: blob.size});
                             reader.onerror = () => resolve({error: 'FileReader failed'});
                             reader.readAsDataURL(blob);
                         });
@@ -640,114 +557,108 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 }
             """
 
+            pdf_bytes = None
+            how = ''
             last_non_pdf = None
-            last_pdf_url = ''
-            last_final_url = ''
-            last_content_type = ''
-            last_error = ''
 
-            for candidate in scored[:5]:
-                pdf_url = candidate['url']
-                pdf_bytes = None
-                how = ''
-                print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
-                print(f"  [publisher:{mode}] Downloading PDF...", file=sys.stderr)
-
-                def _accept_pdf(body, method, final_url='', content_type=''):
-                    nonlocal pdf_bytes, how, last_non_pdf, last_pdf_url, last_final_url, last_content_type
-                    if not body:
-                        return False
-                    if len(body) >= 10000 and body[:5] == b'%PDF-':
-                        pdf_bytes = body
-                        how = method
-                        return True
-                    last_non_pdf = body
-                    last_pdf_url = pdf_url
-                    last_final_url = final_url
-                    last_content_type = content_type
+            def _accept_pdf(candidate, method):
+                nonlocal pdf_bytes, how, last_non_pdf
+                if not candidate:
                     return False
+                if len(candidate) >= 10000 and candidate[:5] == b'%PDF-':
+                    pdf_bytes = candidate
+                    how = method
+                    return True
+                last_non_pdf = candidate
+                return False
 
+            # Primary: JS fetch from current page context (no navigation needed
+            # for same-domain PDFs; preserves article page session/referrer)
+            js_result = await page.evaluate(fetch_js, [pdf_url])
+
+            if not isinstance(js_result, dict) or 'error' not in js_result:
+                _accept_pdf(base64.b64decode(js_result['data']), 'fetch')
+
+            # Fallback: navigate to PDF URL + response.body()
+            if pdf_bytes is None:
+                goto_response = None
                 try:
-                    if page.url != article_url:
-                        await page.goto(article_url, wait_until='domcontentloaded',
-                                        timeout=timeout * 1000)
+                    goto_response = await page.goto(pdf_url, wait_until='domcontentloaded',
+                                                    timeout=timeout * 1000)
+                    await asyncio.sleep(wait)
                 except Exception:
                     pass
 
+                if goto_response is not None:
+                    try:
+                        body = await goto_response.body()
+                        _accept_pdf(body, 'goto')
+                    except Exception:
+                        pass
+
+                # Fallback: JS fetch from PDF page after navigation
+                if pdf_bytes is None:
+                    try:
+                        js_result = await page.evaluate(fetch_js, [pdf_url])
+                        if not isinstance(js_result, dict) or 'error' not in js_result:
+                            _accept_pdf(base64.b64decode(js_result['data']), 'fetch (after goto)')
+                    except Exception:
+                        pass
+
+            # Last resort: trigger browser download and capture it
+            # (handles Content-Disposition:attachment where page cannot load the PDF)
+            if pdf_bytes is None:
                 try:
-                    js_result = await page.evaluate(fetch_js, [pdf_url])
-                    if isinstance(js_result, dict) and 'data' in js_result:
-                        _accept_pdf(base64.b64decode(js_result['data']), 'fetch',
-                                    js_result.get('url', ''), js_result.get('contentType', ''))
-                    elif isinstance(js_result, dict) and 'error' in js_result:
-                        last_error = js_result['error']
-                except Exception as e:
-                    last_error = str(e)
+                    js_click = """([url]) => {
+                        const a = document.createElement('a');
+                        a.href = url; a.download = ''; a.target = '_blank';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    }"""
+                    async with page.expect_download(timeout=timeout * 1000) as dl_info:
+                        await page.evaluate(js_click, [pdf_url])
+                    download = await dl_info.value
+                    tmp_path = str(output_path) + '.tmpdl'
+                    await download.save_as(tmp_path)
+                    with open(tmp_path, 'rb') as f:
+                        body = f.read()
+                    os.unlink(tmp_path)
+                    if len(body) >= 10000 and body[:5] == b'%PDF-':
+                        pdf_bytes = body
+                        how = 'download'
+                    else:
+                        last_non_pdf = body
+                except Exception:
+                    pass
 
-                if pdf_bytes is None:
-                    goto_response = None
-                    try:
-                        goto_response = await page.goto(pdf_url, wait_until='domcontentloaded',
-                                                        timeout=timeout * 1000)
-                        await asyncio.sleep(wait)
-                    except Exception as e:
-                        last_error = str(e)
+            if pdf_bytes is None:
+                if last_non_pdf:
+                    preview = last_non_pdf[:200].decode('latin-1', errors='replace')
+                    preview = ' '.join(preview.split())
+                    result['message'] = f'Not a valid PDF ({len(last_non_pdf)} bytes, starts with: {preview})'
+                    result['file_size'] = len(last_non_pdf)
+                else:
+                    result['message'] = 'PDF download failed'
+                return result
+            if len(pdf_bytes) < 10000:
+                result['message'] = f'PDF too small ({len(pdf_bytes)} bytes)'
+                result['file_size'] = len(pdf_bytes)
+                return result
+            if pdf_bytes[:5] != b'%PDF-':
+                preview = pdf_bytes[:200].decode('latin-1', errors='replace')
+                preview = ' '.join(preview.split())
+                result['message'] = f'Not a valid PDF ({len(pdf_bytes)} bytes, starts with: {preview})'
+                result['file_size'] = len(pdf_bytes)
+                return result
 
-                    if goto_response is not None:
-                        try:
-                            body = await goto_response.body()
-                            _accept_pdf(body, 'goto', goto_response.url,
-                                        goto_response.headers.get('content-type', ''))
-                        except Exception as e:
-                            last_error = str(e)
+            with open(output_path, 'wb') as f:
+                f.write(pdf_bytes)
 
-                    if pdf_bytes is None:
-                        try:
-                            js_result = await page.evaluate(fetch_js, [pdf_url])
-                            if isinstance(js_result, dict) and 'data' in js_result:
-                                _accept_pdf(base64.b64decode(js_result['data']), 'fetch (after goto)',
-                                            js_result.get('url', ''), js_result.get('contentType', ''))
-                            elif isinstance(js_result, dict) and 'error' in js_result:
-                                last_error = js_result['error']
-                        except Exception as e:
-                            last_error = str(e)
-
-                if pdf_bytes is None:
-                    try:
-                        js_click = """([url]) => {
-                            const a = document.createElement('a');
-                            a.href = url; a.download = ''; a.target = '_blank';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                        }"""
-                        async with page.expect_download(timeout=timeout * 1000) as dl_info:
-                            await page.evaluate(js_click, [pdf_url])
-                        download = await dl_info.value
-                        tmp_path = str(output_path) + '.tmpdl'
-                        await download.save_as(tmp_path)
-                        with open(tmp_path, 'rb') as f:
-                            body = f.read()
-                        os.unlink(tmp_path)
-                        _accept_pdf(body, 'download')
-                    except Exception as e:
-                        last_error = str(e)
-
-                if pdf_bytes is not None:
-                    with open(output_path, 'wb') as f:
-                        f.write(pdf_bytes)
-                    result['success'] = True
-                    result['file_path'] = str(output_path)
-                    result['file_size'] = len(pdf_bytes)
-                    result['message'] = f'OK ({how}): {len(pdf_bytes)} bytes'
-                    return result
-
-            if last_non_pdf:
-                result['message'] = _html_access_message(last_pdf_url, last_non_pdf,
-                                                         last_final_url, last_content_type)
-                result['file_size'] = len(last_non_pdf)
-            else:
-                result['message'] = f'PDF download failed: {last_error}' if last_error else 'PDF download failed'
+            result['success'] = True
+            result['file_path'] = str(output_path)
+            result['file_size'] = len(pdf_bytes)
+            result['message'] = f'OK ({how}): {len(pdf_bytes)} bytes'
             return result
 
     except ImportError:
@@ -764,7 +675,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
-                                  stealth_enabled=False, cookie_dir=None):
+                                  stealth_enabled=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -794,7 +705,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
 
     # Shared profile dir so retries share cookies
-    profile_dir = cookie_dir or os.path.join(output_dir, 'chrome_profile')
+    profile_dir = os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
 
     # Save original DISPLAY — _xvfb_start() overwrites it globally
@@ -919,8 +830,6 @@ def main():
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
     p.add_argument('--stealth', action='store_true', default=False,
                    help='Enable playwright-stealth (default: off)')
-    p.add_argument('--cookie-dir', default=None,
-                   help='Directory for persistent browser profile/cookies (default: <output-dir>/chrome_profile)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -932,8 +841,7 @@ def main():
         fallback_level=args.fallback_level, wait=args.wait,
         captcha_enabled=args.captcha,
         captcha_api_key=args.twocap_api,
-        stealth_enabled=args.stealth,
-        cookie_dir=args.cookie_dir))
+        stealth_enabled=args.stealth))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

@@ -299,13 +299,8 @@ def _supplement_link_type(link_type: str, url: str) -> str:
         return "xml"
     if any(marker in text for marker in ("supplement", "supplementary", "suppl", "suppinfo")):
         return "supplement"
-    if link_type in {"preprint", "pmc"} or url.lower().endswith(".pdf"):
+    if link_type in {"publisher", "preprint", "pmc"} or url.lower().endswith(".pdf"):
         return "pdf"
-    if link_type == "publisher":
-        lowered = url.lower()
-        if any(marker in lowered for marker in (".pdf", "/pdfft", "showpdf", "main.pdf")):
-            return "pdf"
-        return "publisher"
     return link_type
 
 
