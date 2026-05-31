@@ -106,6 +106,84 @@ def _xvfb_stop():
         _XVFB_DISPLAY = None
 
 
+def _profile_dir_from_cmdline(cmdline):
+    parts = [p for p in cmdline.split('\x00') if p]
+    if len(parts) <= 1:
+        parts = cmdline.split()
+    for i, part in enumerate(parts):
+        if part.startswith('--user-data-dir='):
+            return os.path.abspath(os.path.expanduser(part.split('=', 1)[1]))
+        if part == '--user-data-dir' and i + 1 < len(parts):
+            return os.path.abspath(os.path.expanduser(parts[i + 1]))
+    return None
+
+
+def _same_profile_dir(cmdline, profile_dir):
+    found = _profile_dir_from_cmdline(cmdline)
+    if not found:
+        return False
+    target = os.path.abspath(os.path.expanduser(profile_dir))
+    return found == target or os.path.realpath(found) == os.path.realpath(target)
+
+
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _terminate_pids(pids, timeout=5):
+    pids = sorted(set(pids))
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in pids:
+            if pid == os.getpid():
+                continue
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not any(_process_exists(pid) for pid in pids):
+                return
+            time.sleep(0.1)
+
+
+def _kill_chrome_for_profile(profile_dir):
+    pids = []
+    try:
+        for pid_str in os.listdir('/proc'):
+            if not pid_str.isdigit():
+                continue
+            pid = int(pid_str)
+            if pid == os.getpid():
+                continue
+            try:
+                with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                    cmdline = f.read().decode('utf-8', errors='replace')
+            except (FileNotFoundError, PermissionError):
+                continue
+            if _same_profile_dir(cmdline, profile_dir):
+                pids.append(pid)
+    except (FileNotFoundError, PermissionError):
+        return
+    _terminate_pids(pids)
+
+
+def _remove_profile_singletons(profile_dir):
+    for name in ('SingletonLock', 'SingletonSocket', 'SingletonCookie'):
+        try:
+            os.unlink(os.path.join(profile_dir, name))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
 def _cleanup_orphan_chrome_and_xvfb():
     """Kill orphan Chrome/Xvfb processes left by dead parent processes.
 
@@ -171,7 +249,8 @@ class ChromeInstance:
     def __init__(self, chrome_bin='google-chrome', profile_dir=None, port=None,
                  headless=True, xvfb=True):
         self.chrome_bin = chrome_bin
-        self.profile_dir = profile_dir or tempfile.mkdtemp(prefix='paper_cli_pub_chrome_')
+        raw_profile = profile_dir or tempfile.mkdtemp(prefix='paper_cli_pub_chrome_')
+        self.profile_dir = os.path.abspath(os.path.expanduser(raw_profile))
         self.port = port or _find_free_port()
         self.process = None
         self.headless = headless
@@ -183,19 +262,10 @@ class ChromeInstance:
         # Clean up orphan Chrome/Xvfb from previous crashed runs
         _cleanup_orphan_chrome_and_xvfb()
 
-        # Remove stale SingletonLock left by a crashed Chrome process
-        lock_file = os.path.join(self.profile_dir, 'SingletonLock')
-        if os.path.exists(lock_file):
-            try:
-                os.remove(lock_file)
-            except OSError:
-                pass
-
         subprocess.run(['pkill', '-f', f'remote-debugging-port={self.port}'],
                        capture_output=True)
-        # Also kill any Chrome still holding this profile (e.g. from crashed run)
-        subprocess.run(['pkill', '-f', f'user-data-dir={self.profile_dir}'],
-                       capture_output=True)
+        _kill_chrome_for_profile(self.profile_dir)
+        _remove_profile_singletons(self.profile_dir)
         time.sleep(1)
         args = [
             self.chrome_bin,
