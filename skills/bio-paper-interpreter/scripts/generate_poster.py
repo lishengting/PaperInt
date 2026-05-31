@@ -122,19 +122,26 @@ def _call_text_llm(prompt, api_key, model, base_url):
             pass
 
     elapsed = time.time() - t_start
+    elapsed_safe = max(elapsed, 0.001)
     full_text = ''.join(chunks)
     ts_print(f'  [stream] done: {char_count:,} chars in {elapsed:.1f}s '
-          f'({char_count/elapsed:.0f} chars/s)')
+          f'({char_count/elapsed_safe:.0f} chars/s)')
 
     if stream_usage:
-        _record_usage(model,
-                      stream_usage.get('prompt_tokens', 0),
-                      stream_usage.get('completion_tokens', 0))
+        prompt_tokens = stream_usage.get('prompt_tokens', 0)
+        completion_tokens = stream_usage.get('completion_tokens', 0)
+        total_tokens = stream_usage.get('total_tokens', prompt_tokens + completion_tokens)
+        _record_usage(model, prompt_tokens, completion_tokens)
+        ts_print(f'  [stream] usage: prompt_tokens={prompt_tokens:,}, '
+                 f'completion_tokens={completion_tokens:,}, total_tokens={total_tokens:,}, '
+                 f'duration={elapsed:.1f}s')
     else:
         est_prompt = len(prompt) // 4
         est_completion = char_count // 3
         _record_usage(model, est_prompt, est_completion)
-        ts_print(f'  [stream] usage estimated: ~{est_prompt:,}p + ~{est_completion:,}c')
+        ts_print(f'  [stream] usage estimated: prompt_tokens≈{est_prompt:,}, '
+                 f'completion_tokens≈{est_completion:,}, total_tokens≈{est_prompt + est_completion:,}, '
+                 f'duration={elapsed:.1f}s')
 
     return full_text
 

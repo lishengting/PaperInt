@@ -86,7 +86,16 @@ def ts_print(*args, file=None, end='\n', flush=False):
     print(ts, *args, file=file, end=end, flush=flush)
 
 
-def _call_llm(config, system_prompt, user_prompt):
+def _log_llm_result(label, usage, elapsed):
+    ts_print(
+        f"  LLM done [{label}]: duration={elapsed:.1f}s, "
+        f"prompt_tokens={usage.get('prompt_tokens', 0)}, "
+        f"completion_tokens={usage.get('completion_tokens', 0)}, "
+        f"total_tokens={usage.get('total_tokens', 0)}"
+    )
+
+
+def _call_llm(config, system_prompt, user_prompt, label='general'):
     """Call the configured LLM and return (response_text, usage_dict)."""
     api_base = cfg(config, 'llm.api_base_url', 'http://localhost:8080/v1')
     model = cfg(config, 'llm.model', 'qwen3-235b-a22b')
@@ -117,15 +126,20 @@ def _call_llm(config, system_prompt, user_prompt):
         'Authorization': f'Bearer {api_key}',
     })
 
-    ts_print(f"  Calling LLM: {model} ({url})...")
+    ts_print(f"  Calling LLM [{label}]: {model} ({url})...")
+    t0 = time.time()
     resp = urllib.request.urlopen(req, timeout=timeout)
     resp_data = json.loads(resp.read().decode('utf-8'))
+    elapsed = time.time() - t0
     usage = resp_data.get('usage', {})
-    return resp_data['choices'][0]['message']['content'], {
+    usage_data = {
         'prompt_tokens': usage.get('prompt_tokens', 0),
         'completion_tokens': usage.get('completion_tokens', 0),
         'total_tokens': usage.get('total_tokens', 0),
+        'elapsed_seconds': elapsed,
     }
+    _log_llm_result(label, usage_data, elapsed)
+    return resp_data['choices'][0]['message']['content'], usage_data
 
 
 def _strip_json_fence(content: str) -> str:
@@ -194,7 +208,7 @@ def _translate_paper_metadata(config, paper_data):
         f'Title:\n{title}\n\n'
         f'Abstract:\n{abstract}\n'
     )
-    content, usage = _call_llm(config, system_prompt, user_prompt)
+    content, usage = _call_llm(config, system_prompt, user_prompt, label='metadata_translate_zh')
     data = _load_json_object(content)
     translations = {
         'title_zh': data.get('title_zh') if isinstance(data.get('title_zh'), str) else '',
@@ -216,7 +230,11 @@ def _log_phase2_tokens(usages):
         if usage:
             t = usage.get('total_tokens', 0)
             total += t
-            parts.append(f"{label}={t}")
+            elapsed = usage.get('elapsed_seconds')
+            if elapsed is not None:
+                parts.append(f"{label}={t} tokens/{elapsed:.1f}s")
+            else:
+                parts.append(f"{label}={t}")
     if total > 0:
         ts_print(f"  Phase 2 tokens: {', '.join(parts)}, total={total}")
 
@@ -300,9 +318,12 @@ def _validate_pdf_content_llm(config, pdf_text, paper):
         'Authorization': f'Bearer {api_key}',
     })
 
-    ts_print("  Validating PDF content via LLM...")
+    label = 'validate_pdf_content'
+    ts_print(f"  Calling LLM [{label}]: {model} ({url})...")
+    t0 = time.time()
     resp = urllib.request.urlopen(req, timeout=cfg(config, 'interpreter.pdf_content_validation.timeout', 60))
     resp_data = json.loads(resp.read().decode('utf-8'))
+    elapsed = time.time() - t0
     content = resp_data['choices'][0]['message']['content'].strip()
 
     # Parse JSON from response (strip code fences if present)
@@ -318,7 +339,9 @@ def _validate_pdf_content_llm(config, pdf_text, paper):
         'prompt_tokens': usage_raw.get('prompt_tokens', 0),
         'completion_tokens': usage_raw.get('completion_tokens', 0),
         'total_tokens': usage_raw.get('total_tokens', 0),
+        'elapsed_seconds': elapsed,
     }
+    _log_llm_result(label, usage, elapsed)
     return match, confidence, reason, usage
 
 
@@ -485,7 +508,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
             paper_data, config, pdf_text, extract_meta,
             prompt_name='interpret_en', language='en')
         interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
-                                                        interpret_prompt['user_prompt'])
+                                                        interpret_prompt['user_prompt'],
+                                                        label='interpret_en')
         md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
         _write_text(md_path, interpret_content)
         save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.json'),
@@ -503,7 +527,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
             paper_data, config, pdf_text, extract_meta,
             prompt_name='brief_en', language='en')
         brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
-                                                brief_prompt['user_prompt'])
+                                                brief_prompt['user_prompt'],
+                                                label='brief_en')
         brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
         _write_text(brief_path, brief_content)
         brief_ok = True
@@ -525,7 +550,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
                 try:
                     prompt = _build_translation_prompt('translate_interpret_zh', paper_context,
                                                        source_markdown=interpret_content)
-                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'],
+                                                     label='translate_interpret_zh')
                     _write_text(os.path.join(paper_path, f'{safe_pid}.interpret.zh.md'), zh_content)
                     save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.zh.json'),
                                         zh_content, 'zh', 'en+paper_context')
@@ -538,7 +564,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
                 try:
                     prompt = _build_translation_prompt('translate_brief_zh', paper_context,
                                                        source_markdown=brief_content)
-                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'],
+                                                     label='translate_brief_zh')
                     _write_text(os.path.join(paper_path, f'{safe_pid}.brief.zh.md'), zh_content)
                     zh_brief_ok = True
                 except Exception as e:
@@ -550,7 +577,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
                 prompt = build_full_text_prompt(
                     paper_data, config, pdf_text, extract_meta,
                     prompt_name='interpret', language='zh')
-                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'],
+                                                 label='interpret_zh_direct')
                 _write_text(os.path.join(paper_path, f'{safe_pid}.interpret.zh.md'), zh_content)
                 save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.zh.json'),
                                     zh_content, 'zh', 'paper')
@@ -564,7 +592,8 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
                 prompt = build_brief_prompt(
                     paper_data, config, pdf_text, extract_meta,
                     prompt_name='brief', language='zh')
-                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'],
+                                                 label='brief_zh_direct')
                 _write_text(os.path.join(paper_path, f'{safe_pid}.brief.zh.md'), zh_content)
                 zh_brief_ok = True
             except Exception as e:
