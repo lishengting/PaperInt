@@ -615,10 +615,10 @@ INDEX_HTML = """<!doctype html>
       const sourceHref = safeHref(paper.source_url);
       const sourcePdfHref = safeHref(paper.pdf_url);
       const localLinks = [
-        interpretEnHref ? `<a class="link-btn primary" target="_blank" rel="noopener" href="${escapeHtml(interpretEnHref)}">Interpret EN</a>` : '',
-        interpretZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretZhHref)}">Interpret 中文</a>` : '',
-        briefEnHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefEnHref)}">Brief EN</a>` : '',
+        briefEnHref ? `<a class="link-btn primary" target="_blank" rel="noopener" href="${escapeHtml(briefEnHref)}">Brief EN</a>` : '',
         briefZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefZhHref)}">Brief 中文</a>` : '',
+        interpretEnHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretEnHref)}">Interpret EN</a>` : '',
+        interpretZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretZhHref)}">Interpret 中文</a>` : '',
         localPdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(localPdfHref)}">PDF</a>` : '',
         sourceHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourceHref)}">来源</a>` : '',
         sourcePdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourcePdfHref)}">原始 PDF URL</a>` : '',
