@@ -1,0 +1,20 @@
+# Translate an English SVG poster into a Chinese SVG poster.
+
+system: |-
+  You are a rigorous bioinformatics paper interpreter and scientific translator. Follow the task instructions exactly and do not invent unsupported claims.
+
+user_template: |-
+  TASK: Translate the visible English text in this SVG scientific poster into Simplified Chinese and return a complete valid SVG.
+
+  Rules:
+  - Output only SVG code, starting with `<svg` and ending with `</svg>`.
+  - Preserve the existing canvas size, viewBox, shapes, paths, arrows, colors, gradients, grouping, IDs, transforms, and overall layout.
+  - Translate only visible text labels, titles, annotations, panel headings, legends, and callouts.
+  - Keep scientific names, gene/protein/drug names, software names, database names, accession IDs, metrics, p-values, and abbreviations accurate.
+  - Use concise Chinese wording so labels fit their original visual regions.
+  - When needed, reduce font size, split text into `<tspan>` lines, and slightly adjust text positions to prevent overlap or clipping.
+  - Do not add new scientific claims, panels, colors, or design elements.
+  - Do not use Markdown fences or explanations.
+
+  ENGLISH SVG:
+  {source_svg}

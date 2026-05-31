@@ -1,6 +1,6 @@
 ---
 name: bio-paper-interpreter
-description: Interpret bioinformatics papers into structured Chinese technical reports. Match topic tags, extract PDF text, and generate LLM-powered or Claude Code direct interpretations with HTML conversion and poster generation.
+description: Interpret bioinformatics papers into structured English technical reports by default, with optional Chinese outputs. Match topic tags, extract PDF text, and generate LLM-powered or Claude Code direct interpretations with HTML conversion and poster generation.
 compatibility: Requires Python 3, pymupdf4llm (PyMuPDF), bash. pdftotext (poppler-utils) is optional for fallback. External LLM path requires network access to an OpenAI-compatible API endpoint.
 metadata:
   skit:
@@ -25,9 +25,10 @@ metadata:
 ## When To Use
 
 Use this skill when the user asks to interpret downloaded paper PDFs or
-metadata into Chinese-language structured technical reports. Do not use it for
-scheduled/cron-based periodic interpretation, Flarum publishing, or generic
-translation tasks.
+metadata into structured technical reports. CLI output is English by default;
+`--cn` adds Chinese outputs and `--trans` derives Chinese outputs from English
+outputs plus PDF context. Do not use it for scheduled/cron-based periodic
+interpretation, Flarum publishing, or generic translation tasks.
 
 ## Quick Start
 
@@ -55,11 +56,12 @@ python3 skills/bio-paper-interpreter/scripts/paper_cli.py run s41467-026-70776-7
 # Preview what would be processed
 python3 skills/bio-paper-interpreter/scripts/paper_cli.py --dry-run
 
-# Limit papers, retry failed, or filter by journal
+# Limit papers, retry failed, filter by journal, or add Chinese outputs
 python3 skills/bio-paper-interpreter/scripts/paper_cli.py --limit 5 --retry-failed
 python3 skills/bio-paper-interpreter/scripts/paper_cli.py --cnsp          # C/N/S/P journals only
 python3 skills/bio-paper-interpreter/scripts/paper_cli.py --cns           # C/N/S journals only (excludes PLOS)
-python3 skills/bio-paper-interpreter/scripts/paper_cli.py --en            # also generate English posters
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --cn            # English + Chinese outputs
+python3 skills/bio-paper-interpreter/scripts/paper_cli.py --trans         # Chinese from English + PDF context
 ```
 
 Path B uses the configured LLM API endpoint (`config.yaml` → `llm.api_base_url`).
@@ -73,7 +75,8 @@ processing and automation.
 | `paper_id` | (required) | Paper ID to interpret |
 | `--phase` | `1,2,3,4` | Comma-separated phases to run (e.g., `1,2`) |
 | `-f, --force` | off | Force re-interpret even if already interpreted |
-| `--en` | off | Also generate English posters (default: Chinese only) |
+| `--cn` | off | Also generate Chinese reports, HTML, and posters |
+| `--trans` | off | Generate Chinese outputs from English outputs plus PDF context; implies `--cn` |
 
 ### Auto-mode options
 
@@ -83,7 +86,8 @@ processing and automation.
 | `--limit, -n` | (no limit) | Max number of papers to process |
 | `--cnsp` | off | Only process papers in C/N/S/P journals |
 | `--cns` | off | Only process papers in C/N/S journals |
-| `--en` | off | Also generate English posters |
+| `--cn` | off | Also generate Chinese reports, HTML, and posters |
+| `--trans` | off | Generate Chinese outputs from English outputs plus PDF context; implies `--cn` |
 | `--dry-run` | off | List papers that would be processed, then exit |
 
 ## Two Interpretation Paths
@@ -147,8 +151,8 @@ for p in papers:
 | Phase | Output | Reference | Description |
 |-------|--------|-----------|-------------|
 | 1 Tag Match | matched tags stored in `data/papers.db` | `references/01_filter.md` | Topic tag matching; current CLI does not reject papers in Phase 1 |
-| 2 Interpret | `{paper_dir}/{paper_id}.interpret.md` + `.json` + `.brief.md` | `references/02_interpret.md` | PDF extraction + LLM interpretation + brief article |
-| 3 Convert | `{paper_dir}/{paper_id}.interpret.html` + `.brief.html` | `references/03_convert.md` | Markdown → standalone HTML |
+| 2 Interpret | `{paper_dir}/{paper_id}.interpret.md` + `.json` + `.brief.md` + `.pdf.txt` | `references/02_interpret.md` | PDF extraction + English LLM interpretation + optional Chinese `.zh` outputs |
+| 3 Convert | `{paper_dir}/{paper_id}.interpret.html` + `.brief.html` + optional `.zh.html` | `references/03_convert.md` | Markdown → standalone HTML |
 | 4 Poster | `{paper_dir}/{paper_id}.poster.*.svg` + `.png` | `references/04_poster.md` | SVG/PNG poster generation |
 
 State rules per paper:
@@ -198,18 +202,24 @@ Resolve scripts from this skill's `scripts/` directory.
 
 ## Output
 
-- `{paper_dir}/{paper_id}.interpret.md` — structured Markdown report (Phase 2)
-- `{paper_dir}/{paper_id}.interpret.json` — metadata + full content (Phase 2)
-- `{paper_dir}/{paper_id}.brief.md` — article-style brief (Phase 2)
-- `{paper_dir}/{paper_id}.interpret.html` — standalone styled HTML (Phase 3)
-- `{paper_dir}/{paper_id}.brief.html` — brief article HTML (Phase 3)
+- `{paper_dir}/{paper_id}.pdf.txt` — extracted PDF text used by Phase 2
+- `{paper_dir}/{paper_id}.interpret.md` — structured English Markdown report (Phase 2 default)
+- `{paper_dir}/{paper_id}.interpret.json` — English metadata + full content (Phase 2)
+- `{paper_dir}/{paper_id}.brief.md` — article-style English brief (Phase 2 default)
+- `{paper_dir}/{paper_id}.interpret.zh.md` — Chinese structured report (with `--cn`/`--trans`)
+- `{paper_dir}/{paper_id}.interpret.zh.json` — Chinese metadata + full content (with `--cn`/`--trans`)
+- `{paper_dir}/{paper_id}.brief.zh.md` — Chinese brief (with `--cn`/`--trans`)
+- `{paper_dir}/{paper_id}.interpret.html` — standalone styled English HTML (Phase 3)
+- `{paper_dir}/{paper_id}.brief.html` — English brief article HTML (Phase 3)
+- `{paper_dir}/{paper_id}.interpret.zh.html` — standalone styled Chinese HTML (Phase 3)
+- `{paper_dir}/{paper_id}.brief.zh.html` — Chinese brief article HTML (Phase 3)
 - `{paper_dir}/images/` — extracted embedded images (if pymupdf4llm used)
-- `{paper_dir}/{paper_id}.poster.zh.svg` — Chinese SVG poster (Phase 4)
-- `{paper_dir}/{paper_id}.poster.en.svg` — English SVG poster (Phase 4, with `--en`)
-- `{paper_dir}/{paper_id}.poster.zh.png` — Chinese PNG poster (Phase 4)
-- `{paper_dir}/{paper_id}.poster.en.png` — English PNG poster (Phase 4, with `--en`)
-- `{paper_dir}/{paper_id}.poster.direct.zh.png` — Chinese direct text-to-image poster (Phase 4)
-- `{paper_dir}/{paper_id}.poster.direct.en.png` — English direct text-to-image poster (Phase 4, with `--en`)
+- `{paper_dir}/{paper_id}.poster.en.svg` — English SVG poster (Phase 4 default)
+- `{paper_dir}/{paper_id}.poster.zh.svg` — Chinese SVG poster (with `--cn`/`--trans`)
+- `{paper_dir}/{paper_id}.poster.en.png` — English PNG poster (Phase 4 default)
+- `{paper_dir}/{paper_id}.poster.zh.png` — Chinese PNG poster (with `--cn`/`--trans`)
+- `{paper_dir}/{paper_id}.poster.direct.en.png` — English direct text-to-image poster (Phase 4 default)
+- `{paper_dir}/{paper_id}.poster.direct.zh.png` — Chinese direct text-to-image poster (with `--cn`/`--trans`)
 - `{paper_dir}/{paper_id}.metadata.json` — paper metadata (from downloader)
 - `{paper_dir}/{paper_id}.pdf` — downloaded paper PDF
 - `data/execution_log.md` — phase state log
@@ -230,8 +240,8 @@ Resolve scripts from this skill's `scripts/` directory.
 - If extracted PDF text < 1000 chars, mark as `interpret_failed`; do not fall back to abstract-only.
 - Phase 3 runs `md_to_html.py` to produce standalone HTML for both `.interpret.md` and `.brief.md`;
   the HTML supports light/dark mode and requires no external resources.
-- Phase 4 generates 3-6 poster files per paper. Skipped if `LLM_API_KEY` is not set.
-- `--en` flag enables bilingual poster generation (default: Chinese only).
+- Phase 4 generates 3 English poster files by default, or 6 bilingual files with `--cn`/`--trans`. Skipped if `LLM_API_KEY` is not set.
+- `--trans` derives Chinese reports and Chinese SVG/direct posters from English outputs plus shared PDF context.
 - All interpretations saved under the paper's directory in `data/`.
 - After Phase 1 completion, call `update_tags()` to store matched tags.
 - After Phase 2 completion, call `mark_interpreted()` to update the database status.

@@ -5,19 +5,22 @@
 将 Phase 2 生成的 Markdown 解读报告转换为带样式的独立 HTML 文件，
 可直接在浏览器中打开阅读或发布到网页平台。
 
-当前 CLI 会转换已存在的两类输入：
+当前 CLI 会转换已存在的 Markdown 输入：
 - `{paper_dir}/{paper_id}.interpret.md` → `{paper_dir}/{paper_id}.interpret.html`
 - `{paper_dir}/{paper_id}.brief.md` → `{paper_dir}/{paper_id}.brief.html`
+- `{paper_dir}/{paper_id}.interpret.zh.md` → `{paper_dir}/{paper_id}.interpret.zh.html`
+- `{paper_dir}/{paper_id}.brief.zh.md` → `{paper_dir}/{paper_id}.brief.zh.html`
 
-如果 Phase 4 已生成 `{paper_id}.poster.zh.png`，`paper_cli.py` 会在 Phase 4 后重新运行
-Phase 3，把中文 poster 嵌入 HTML。
+如果 Phase 4 已生成同语言 poster，`paper_cli.py` 会在 Phase 4 后重新运行
+Phase 3，把英文 poster 嵌入英文 HTML，把中文 poster 嵌入中文 HTML。
 
 ## Input
 
 - Phase 2 输出的 `{paper_dir}/{paper_id}.interpret.md`
 - Phase 2 输出的 `{paper_dir}/{paper_id}.brief.md`（如果生成成功）
+- Phase 2 可选输出的 `{paper_dir}/{paper_id}.interpret.zh.md` / `.brief.zh.md`
 - `{paper_dir}/{paper_id}.interpret.json` 中记录的 representative image（如果存在）
-- `{paper_dir}/{paper_id}.poster.zh.png`（如果 Phase 4 已生成）
+- `{paper_dir}/{paper_id}.poster.en.png` 或 `.poster.zh.png`（如果 Phase 4 已生成）
 
 找到 paper 目录：
 
@@ -47,7 +50,8 @@ ls $PAPER_DIR/{paper_id}.interpret.md $PAPER_DIR/{paper_id}.brief.md
 ```bash
 python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
   --input $PAPER_DIR/{paper_id}.interpret.md \
-  --output $PAPER_DIR/{paper_id}.interpret.html
+  --output $PAPER_DIR/{paper_id}.interpret.html \
+  --lang en
 ```
 
 如果有代表性图表或 poster，可追加：
@@ -56,8 +60,9 @@ python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
 python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
   --input $PAPER_DIR/{paper_id}.interpret.md \
   --output $PAPER_DIR/{paper_id}.interpret.html \
+  --lang en \
   --image $PAPER_DIR/images/fig_xxx.png \
-  --poster $PAPER_DIR/{paper_id}.poster.zh.png
+  --poster $PAPER_DIR/{paper_id}.poster.en.png
 ```
 
 ### Step 3: Convert Brief HTML
@@ -65,15 +70,18 @@ python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
 ```bash
 python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
   --input $PAPER_DIR/{paper_id}.brief.md \
-  --output $PAPER_DIR/{paper_id}.brief.html
+  --output $PAPER_DIR/{paper_id}.brief.html \
+  --lang en
 ```
 
-`paper_cli.py` 自动对 `interpret` 和 `brief` 两个 Markdown 输入循环转换，缺失的输入会跳过。
+`paper_cli.py` 自动对英文 `interpret`/`brief` 和可选中文 `.zh` Markdown 输入循环转换，缺失的输入会跳过。
 
 ## Output
 
-- `{paper_dir}/{paper_id}.interpret.html` — 结构化解读 HTML
-- `{paper_dir}/{paper_id}.brief.html` — 文章体简报 HTML
+- `{paper_dir}/{paper_id}.interpret.html` — 英文结构化解读 HTML
+- `{paper_dir}/{paper_id}.brief.html` — 英文文章体简报 HTML
+- `{paper_dir}/{paper_id}.interpret.zh.html` — 中文结构化解读 HTML（如存在中文 Markdown）
+- `{paper_dir}/{paper_id}.brief.zh.html` — 中文文章体简报 HTML（如存在中文 Markdown）
 
 ## CSS 特性
 
@@ -81,7 +89,7 @@ python3 skills/bio-paper-interpreter/scripts/md_to_html.py \
 - 响应式布局，适合桌面和移动端阅读
 - 表格斑马纹、代码块高亮、引用块样式
 - 系统字体栈（SF / Segoe UI / Helvetica）
-- 可内嵌代表性图表和中文 poster，无外部资源依赖
+- 可内嵌代表性图表和同语言 poster，无外部资源依赖
 
 ## Rules
 

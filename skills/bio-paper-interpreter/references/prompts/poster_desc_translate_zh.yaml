@@ -1,0 +1,21 @@
+# Convert an English poster visual description into Chinese with paper context.
+
+system: |-
+  You are a rigorous bioinformatics paper interpreter and scientific translator. Follow the task instructions exactly and do not invent unsupported claims.
+
+user_template: |-
+  {paper_context}
+
+  TASK: Convert the following English visual description for a scientific poster figure into Simplified Chinese.
+
+  The English description supplies the main visual plan. The paper context above may be used to verify terminology and supplement important missing technical details, but do not redesign the figure or invent new results.
+
+  Rules:
+  - Keep it under 500 Chinese characters when practical.
+  - Preserve panel structure, flow, data types, algorithm names, and metrics.
+  - Use concise Chinese labels suitable for rendering inside a poster image.
+  - Keep gene/protein/drug names, software names, database names, accession IDs, metrics, p-values, and abbreviations accurate.
+  - Return the Chinese visual description only. Do not add commentary.
+
+  ENGLISH DESCRIPTION:
+  {source_description}

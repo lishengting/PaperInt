@@ -13,7 +13,7 @@ Four-phase pipeline:
   Phase 1: Tag matching
   Phase 2: PDF extraction + LLM interpretation (requires LLM_API_KEY)
   Phase 3: Markdown → styled HTML conversion
-  Phase 4: Poster generation (3 Chinese posters by default, 6 bilingual with --en)
+  Phase 4: Poster generation (3 English posters by default, bilingual with --cn/--trans)
 """
 
 import argparse
@@ -34,6 +34,8 @@ Examples:
   paper_cli.py run s41467-026-70776-7   # Interpret a single paper (all phases)
   paper_cli.py run s41467-026-70776-7 --force    # Force re-interpret
   paper_cli.py run s41467-026-70776-7 --phase 1,2  # Only run phases 1 and 2
+  paper_cli.py --cn                     # Generate English + Chinese outputs
+  paper_cli.py --trans                  # Generate Chinese outputs from English + PDF context
   paper_cli.py --dry-run                # List papers without processing
 """
 
@@ -48,7 +50,9 @@ from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
                       filter_cnsp_papers, load_cns_journal_set)
 
 from match_tags import match_tags
-from build_prompt import build_full_text_prompt, build_brief_prompt, build_abstract_only_prompt, load_config
+from build_prompt import (build_full_text_prompt, build_brief_prompt,
+                          build_abstract_only_prompt, build_template_prompt,
+                          build_paper_context, load_config)
 
 
 def cfg(config, path, default=None):
@@ -146,6 +150,20 @@ def _load_json_object(content: str) -> dict:
     return data
 
 
+def _write_text(path, content):
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content or '')
+
+
+def _build_translation_prompt(prompt_name, paper_context, source_markdown=None, source_description=None):
+    fields = {
+        'paper_context': paper_context,
+        'source_markdown': source_markdown or '',
+        'source_description': source_description or '',
+    }
+    return build_template_prompt(prompt_name, fields)
+
+
 def _translate_paper_metadata(config, paper_data):
     title = (paper_data.get('title') or '').strip()
     abstract = (paper_data.get('abstract') or paper_data.get('Abstract') or '').strip()
@@ -190,12 +208,11 @@ def _translate_paper_metadata(config, paper_data):
     return translations, usage
 
 
-def _log_phase2_tokens(val_usage, translation_usage, interpret_usage, brief_usage):
+def _log_phase2_tokens(usages):
     """Print token usage summary for Phase 2 LLM calls."""
     parts = []
     total = 0
-    for label, usage in [('validate', val_usage), ('translate', translation_usage),
-                         ('interpret', interpret_usage), ('brief', brief_usage)]:
+    for label, usage in usages:
         if usage:
             t = usage.get('total_tokens', 0)
             total += t
@@ -326,12 +343,11 @@ def run_phase1(paper_path, paper, config, log_file):
     return True, f'{n_tags} tags: {labels}'
 
 
-def run_phase2(paper_path, paper, config, log_file):
+def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
     paper_id = paper['paper_id']
     safe_pid = sanitize(paper_id)
     title = paper.get('title', '')
 
-    # Step 1: Extract PDF content (now uses pymupdf4llm with pdftotext fallback)
     pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
         log_phase(log_file, paper_id, 2, 'FAILED', f'no PDF file at {pdf_path}')
@@ -348,7 +364,6 @@ def run_phase2(paper_path, paper, config, log_file):
     extract_data = None
     last_error = None
     for attempt, timeout_val in enumerate(extract_timeouts):
-        # Attempts 1-2: pymupdf4llm (auto). Attempt 3: force pdftotext fallback.
         mode = extractor_mode if attempt < 2 else 'pdftotext'
         try:
             result = subprocess.run(
@@ -378,6 +393,8 @@ def run_phase2(paper_path, paper, config, log_file):
     extractor_used = extract_data.get('extractor', 'unknown')
     rep_image = extract_data.get('representative_image')
     image_count = extract_data.get('image_count', 0)
+    txt_path = os.path.join(paper_path, f'{safe_pid}.pdf.txt')
+    _write_text(txt_path, pdf_text)
 
     if len(pdf_text) < 1000:
         log_phase(log_file, paper_id, 2, 'FAILED',
@@ -386,7 +403,6 @@ def run_phase2(paper_path, paper, config, log_file):
                               f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
         return False, f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})'
 
-    # Validate PDF content matches paper via LLM (catch Supplementary Materials etc.)
     validation_enabled = cfg(config, 'interpreter.pdf_content_validation.enabled', True)
     val_usage = None
     if validation_enabled:
@@ -402,75 +418,42 @@ def run_phase2(paper_path, paper, config, log_file):
 
     mode = 'full_text'
     ts_print(f"  PDF text: {len(pdf_text)} chars, mode={mode}, extractor={extractor_used}, images={image_count}")
+    ts_print(f"  Saved extracted text: {os.path.basename(txt_path)}")
 
-    # Step 2: Build prompts and call LLM for both interpret and brief
     metadata_path = os.path.join(paper_path, f'{safe_pid}.metadata.json')
     paper_data = dict(paper)
     if os.path.exists(metadata_path):
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding='utf-8') as f:
             paper_data.update(json.load(f))
-
-    translations = {}
-    translation_usage = None
-    try:
-        translations, translation_usage = _translate_paper_metadata(config, paper_data)
-        if translations:
-            ts_print("  Metadata translation: ready")
-    except Exception as e:
-        ts_print(f"  LLM call failed (metadata translation, proceeding): {e}", file=sys.stderr)
 
     extract_meta = {
         'representative_image': rep_image,
         'image_count': image_count,
     }
+    paper_context = build_paper_context(paper_data, pdf_text, extract_meta)
 
-    # Generate structured interpretation (.interpret.md)
-    interpret_prompt = build_full_text_prompt(paper_data, config, pdf_text, extract_meta)
-    interpret_usage = None
-    try:
-        interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
-                                                        interpret_prompt['user_prompt'])
-        md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
-        with open(md_path, 'w') as f:
-            f.write(interpret_content)
-        interpret_ok = True
-    except Exception as e:
-        ts_print(f"  LLM call failed (interpret): {e}", file=sys.stderr)
-        interpret_content = None
-        interpret_ok = False
-
-    # Generate brief article (.brief.md)
-    brief_prompt = build_brief_prompt(paper_data, config, pdf_text, extract_meta)
-    brief_usage = None
-    try:
-        brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
-                                                brief_prompt['user_prompt'])
-        brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
-        with open(brief_path, 'w') as f:
-            f.write(brief_content)
-        brief_ok = True
-    except Exception as e:
-        ts_print(f"  LLM call failed (brief): {e}", file=sys.stderr)
-        brief_content = None
-        brief_ok = False
-
-    if not interpret_ok and not brief_ok:
-        log_phase(log_file, paper_id, 2, 'FAILED', 'both interpret and brief LLM calls failed')
-        mark_interpret_failed(get_conn(config), paper_id, 'both interpret and brief LLM calls failed')
-        return False, 'both interpret and brief LLM calls failed'
-
-    # Save interpret.json
-    if interpret_ok:
-        json_path = os.path.join(paper_path, f'{safe_pid}.interpret.json')
-        tag_data = {}
+    translations = {}
+    usage_entries = [('validate', val_usage)]
+    if cn or trans:
+        translation_usage = None
         try:
-            conn = get_conn(config)
-            row = conn.execute("SELECT matched_tags FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
-            if row and row[0]:
-                tag_data = json.loads(row[0])
-        except Exception:
-            pass
+            translations, translation_usage = _translate_paper_metadata(config, paper_data)
+            if translations:
+                ts_print("  Metadata translation: ready")
+        except Exception as e:
+            ts_print(f"  LLM call failed (metadata translation, proceeding): {e}", file=sys.stderr)
+        usage_entries.append(('metadata_translate', translation_usage))
 
+    tag_data = {}
+    try:
+        conn = get_conn(config)
+        row = conn.execute("SELECT matched_tags FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+        if row and row[0]:
+            tag_data = json.loads(row[0])
+    except Exception:
+        pass
+
+    def save_interpret_json(path, content, language, translation_source=None):
         interpret_json = {
             'paper_id': paper_id,
             'doi': paper.get('doi', ''),
@@ -478,17 +461,115 @@ def run_phase2(paper_path, paper, config, log_file):
             'title_zh': translations.get('title_zh', ''),
             'abstract': paper_data.get('abstract', paper.get('abstract', '')),
             'abstract_zh': translations.get('abstract_zh', ''),
-            'content': interpret_content,
+            'content': content,
+            'language': language,
             'tags': tag_data.get('tag_ids', []),
             'tag_labels': tag_data.get('matched_labels', []),
             'mode': mode,
             'extractor': extractor_used,
             'representative_image': rep_image,
             'image_count': image_count,
+            'pdf_text_path': os.path.basename(txt_path),
             'interpreted_at': datetime.now().isoformat(),
         }
-        with open(json_path, 'w') as f:
+        if translation_source:
+            interpret_json['translation_source'] = translation_source
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(interpret_json, f, ensure_ascii=False, indent=2)
+
+    interpret_content = None
+    interpret_ok = False
+    interpret_usage = None
+    try:
+        interpret_prompt = build_full_text_prompt(
+            paper_data, config, pdf_text, extract_meta,
+            prompt_name='interpret_en', language='en')
+        interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
+                                                        interpret_prompt['user_prompt'])
+        md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
+        _write_text(md_path, interpret_content)
+        save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.json'),
+                            interpret_content, 'en')
+        interpret_ok = True
+    except Exception as e:
+        ts_print(f"  LLM call failed (interpret_en): {e}", file=sys.stderr)
+    usage_entries.append(('interpret_en', interpret_usage))
+
+    brief_content = None
+    brief_ok = False
+    brief_usage = None
+    try:
+        brief_prompt = build_brief_prompt(
+            paper_data, config, pdf_text, extract_meta,
+            prompt_name='brief_en', language='en')
+        brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
+                                                brief_prompt['user_prompt'])
+        brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
+        _write_text(brief_path, brief_content)
+        brief_ok = True
+    except Exception as e:
+        ts_print(f"  LLM call failed (brief_en): {e}", file=sys.stderr)
+    usage_entries.append(('brief_en', brief_usage))
+
+    if not interpret_ok and not brief_ok:
+        log_phase(log_file, paper_id, 2, 'FAILED', 'both English interpret and brief LLM calls failed')
+        mark_interpret_failed(get_conn(config), paper_id, 'both English interpret and brief LLM calls failed')
+        return False, 'both English interpret and brief LLM calls failed'
+
+    zh_interpret_ok = False
+    zh_brief_ok = False
+    if cn or trans:
+        if trans:
+            if interpret_ok:
+                zh_usage = None
+                try:
+                    prompt = _build_translation_prompt('translate_interpret_zh', paper_context,
+                                                       source_markdown=interpret_content)
+                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                    _write_text(os.path.join(paper_path, f'{safe_pid}.interpret.zh.md'), zh_content)
+                    save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.zh.json'),
+                                        zh_content, 'zh', 'en+paper_context')
+                    zh_interpret_ok = True
+                except Exception as e:
+                    ts_print(f"  LLM call failed (translate_interpret_zh): {e}", file=sys.stderr)
+                usage_entries.append(('translate_interpret_zh', zh_usage))
+            if brief_ok:
+                zh_usage = None
+                try:
+                    prompt = _build_translation_prompt('translate_brief_zh', paper_context,
+                                                       source_markdown=brief_content)
+                    zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                    _write_text(os.path.join(paper_path, f'{safe_pid}.brief.zh.md'), zh_content)
+                    zh_brief_ok = True
+                except Exception as e:
+                    ts_print(f"  LLM call failed (translate_brief_zh): {e}", file=sys.stderr)
+                usage_entries.append(('translate_brief_zh', zh_usage))
+        else:
+            zh_usage = None
+            try:
+                prompt = build_full_text_prompt(
+                    paper_data, config, pdf_text, extract_meta,
+                    prompt_name='interpret', language='zh')
+                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                _write_text(os.path.join(paper_path, f'{safe_pid}.interpret.zh.md'), zh_content)
+                save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.zh.json'),
+                                    zh_content, 'zh', 'paper')
+                zh_interpret_ok = True
+            except Exception as e:
+                ts_print(f"  LLM call failed (interpret_zh): {e}", file=sys.stderr)
+            usage_entries.append(('interpret_zh', zh_usage))
+
+            zh_usage = None
+            try:
+                prompt = build_brief_prompt(
+                    paper_data, config, pdf_text, extract_meta,
+                    prompt_name='brief', language='zh')
+                zh_content, zh_usage = _call_llm(config, prompt['system_prompt'], prompt['user_prompt'])
+                _write_text(os.path.join(paper_path, f'{safe_pid}.brief.zh.md'), zh_content)
+                zh_brief_ok = True
+            except Exception as e:
+                ts_print(f"  LLM call failed (brief_zh): {e}", file=sys.stderr)
+            usage_entries.append(('brief_zh', zh_usage))
 
     conn = get_conn(config)
     if translations.get('title_zh') or translations.get('abstract_zh'):
@@ -496,14 +577,22 @@ def run_phase2(paper_path, paper, config, log_file):
                             translations.get('title_zh'),
                             translations.get('abstract_zh'))
     mark_interpreted(conn, paper_id)
+
     extra = []
     if not interpret_ok:
-        extra.append('interpret failed')
+        extra.append('interpret_en failed')
     if not brief_ok:
-        extra.append('brief failed')
-    log_phase(log_file, paper_id, 2, 'COMPLETED', f'{mode}' + (f' ({", ".join(extra)})' if extra else ''))
-    _log_phase2_tokens(val_usage, translation_usage, interpret_usage, brief_usage)
-    return True, mode
+        extra.append('brief_en failed')
+    if cn or trans:
+        if not zh_interpret_ok:
+            extra.append('interpret_zh failed')
+        if not zh_brief_ok:
+            extra.append('brief_zh failed')
+    lang_msg = 'en+zh' if cn or trans else 'en'
+    log_phase(log_file, paper_id, 2, 'COMPLETED',
+              f'{mode} ({lang_msg})' + (f' ({", ".join(extra)})' if extra else ''))
+    _log_phase2_tokens(usage_entries)
+    return True, f'{mode} ({lang_msg})'
 
 
 def run_phase3(paper_path, paper, config, log_file):
@@ -528,16 +617,23 @@ def run_phase3(paper_path, paper, config, log_file):
         except Exception:
             pass
 
-    for name in ('interpret', 'brief'):
-        md_path = os.path.join(paper_path, f'{safe_pid}.{name}.md')
+    targets = [
+        ('interpret', 'en', f'{safe_pid}.interpret.md', f'{safe_pid}.interpret.html'),
+        ('brief', 'en', f'{safe_pid}.brief.md', f'{safe_pid}.brief.html'),
+        ('interpret.zh', 'zh', f'{safe_pid}.interpret.zh.md', f'{safe_pid}.interpret.zh.html'),
+        ('brief.zh', 'zh', f'{safe_pid}.brief.zh.md', f'{safe_pid}.brief.zh.html'),
+    ]
+    for name, lang, md_name, html_name in targets:
+        md_path = os.path.join(paper_path, md_name)
         if not os.path.exists(md_path):
             continue
 
-        html_path = os.path.join(paper_path, f'{safe_pid}.{name}.html')
-        cmd = [sys.executable, script, '--input', md_path, '--output', html_path]
+        html_path = os.path.join(paper_path, html_name)
+        cmd = [sys.executable, script, '--input', md_path, '--output', html_path,
+               '--lang', lang]
         if rep_image_abs:
             cmd.extend(['--image', rep_image_abs])
-        poster_path = os.path.join(paper_path, f'{safe_pid}.poster.zh.png')
+        poster_path = os.path.join(paper_path, f'{safe_pid}.poster.{lang}.png')
         if os.path.exists(poster_path):
             cmd.extend(['--poster', poster_path])
         try:
@@ -559,8 +655,8 @@ def run_phase3(paper_path, paper, config, log_file):
     return False, last_error or 'unknown error'
 
 
-def run_phase4(paper_path, paper, config, log_file, en=False):
-    """Generate posters: 3 Chinese (default) or 6 bilingual with --en."""
+def run_phase4(paper_path, paper, config, log_file, cn=False, trans=False):
+    """Generate posters: English by default, bilingual with --cn/--trans."""
     paper_id = paper['paper_id']
 
     af_config = cfg(config, 'autofigure', {})
@@ -578,15 +674,17 @@ def run_phase4(paper_path, paper, config, log_file, en=False):
     meth_base = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
     enh_model = af_config.get('enhancement_model', 'qwen-image-2.0-pro')
 
+    lang = 'both' if (cn or trans) else 'en'
     cmd = [sys.executable, script,
            '--paper-dir', paper_path,
            '--paper-id', paper_id,
            '--api-key', api_key,
            '--methodology-model', meth_model,
            '--methodology-base-url', meth_base,
-           '--enhancement-model', enh_model]
-    if en:
-        cmd.append('--en')
+           '--enhancement-model', enh_model,
+           '--lang', lang]
+    if trans:
+        cmd.append('--trans')
 
     try:
         result = subprocess.run(cmd, timeout=3600,
@@ -601,12 +699,13 @@ def run_phase4(paper_path, paper, config, log_file, en=False):
         log_phase(log_file, paper_id, 4, 'FAILED', str(e)[:100])
         return False, str(e)[:100]
 
-    n = '6' if en else '3'
-    log_phase(log_file, paper_id, 4, 'COMPLETED', f'{n} posters generated')
-    return True, f'{n} posters generated'
+    n = '6' if (cn or trans) else '3'
+    mode = 'bilingual posters generated' if (cn or trans) else 'English posters generated'
+    log_phase(log_file, paper_id, 4, 'COMPLETED', f'{n} {mode}')
+    return True, f'{n} {mode}'
 
 
-def process_paper(paper, config, phases, log_file, en=False):
+def process_paper(paper, config, phases, log_file, cn=False, trans=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -630,11 +729,11 @@ def process_paper(paper, config, phases, log_file, en=False):
         if phase == 1:
             ok, msg = run_phase1(paper_path, paper, config, log_file)
         elif phase == 2:
-            ok, msg = run_phase2(paper_path, paper, config, log_file)
+            ok, msg = run_phase2(paper_path, paper, config, log_file, cn=cn, trans=trans)
         elif phase == 3:
             ok, msg = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok, msg = run_phase4(paper_path, paper, config, log_file, en=en)
+            ok, msg = run_phase4(paper_path, paper, config, log_file, cn=cn, trans=trans)
             if ok:
                 run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
@@ -694,10 +793,12 @@ def cmd_run(args, config):
 
     ts_print(f"Papers to interpret: {len(papers)}")
     ts_print(f"Phases: {sorted(phases)}")
-    en = getattr(args, 'en', False)
+    trans = getattr(args, 'trans', False)
+    cn = getattr(args, 'cn', False) or trans
+    ts_print(f"Languages: {'English + Chinese' if cn else 'English'}" + (' (translated)' if trans else ''))
     for i, paper in enumerate(papers):
         ts_print(f"\n[{i+1}/{len(papers)}]", end='')
-        process_paper(paper, config, phases, log_file, en=en)
+        process_paper(paper, config, phases, log_file, cn=cn, trans=trans)
         if i < len(papers) - 1:
             time.sleep(1)
 
@@ -726,8 +827,11 @@ def main():
                    help='Only interpret papers published in C/N/S journals (excludes PLOS)')
     p.add_argument('--retry-failed', action='store_true',
                    help='Retry papers with interpret_failed status')
-    p.add_argument('--en', action='store_true',
-                   help='Also generate English posters (default: Chinese only)')
+    p.add_argument('--cn', action='store_true',
+                   help='Also generate Chinese reports, HTML, and posters')
+    p.add_argument('--trans', action='store_true',
+                   help='Generate Chinese outputs from English outputs plus PDF context (implies --cn)')
+    p.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
 
     sub = p.add_subparsers(dest='cmd', title='commands',
                            description='"run" a single paper, or omit for auto-mode')
@@ -739,8 +843,11 @@ def main():
                        help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
     run_p.add_argument('-f', '--force', action='store_true',
                        help='Force re-interpret even if already interpreted')
-    run_p.add_argument('--en', action='store_true',
-                       help='Also generate English posters (default: Chinese only)')
+    run_p.add_argument('--cn', action='store_true',
+                       help='Also generate Chinese reports, HTML, and posters')
+    run_p.add_argument('--trans', action='store_true',
+                       help='Generate Chinese outputs from English outputs plus PDF context (implies --cn)')
+    run_p.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
 
     args = p.parse_args()
 

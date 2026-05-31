@@ -1,14 +1,18 @@
 # Phase 2: Interpret
 
 ## Goal
-从论文 PDF 和元数据中提取信息，生成结构化中文解读报告和文章体简报，输出到
+从论文 PDF 和元数据中提取信息，默认生成英文结构化解读报告和文章体简报，输出到
 `{paper_dir}/{paper_id}.interpret.md`、`{paper_dir}/{paper_id}.brief.md` 和 `.interpret.json`。
+同时保存 `{paper_dir}/{paper_id}.pdf.txt`。使用 `--cn` 时额外生成中文 `.zh` 输出；使用
+`--trans` 时中文输出由英文报告加 PDF 原文 context 生成。
 
 ## Input
 - Phase 1 写入数据库的 `matched_tags`
 - PDF 文件 `{paper_dir}/{paper_id}.pdf`
 - `config.yaml`（LLM 端点/模型、PDF 提取配置、`pdf_text_max_chars`）
-- `references/prompts/interpret.yaml` 和 `references/prompts/brief.yaml`（prompt 模板）
+- `references/prompts/interpret_en.yaml` 和 `references/prompts/brief_en.yaml`（默认英文 prompt 模板）
+- `references/prompts/interpret.yaml` 和 `references/prompts/brief.yaml`（`--cn` 直接中文 prompt 模板）
+- `references/prompts/translate_interpret_zh.yaml` 和 `translate_brief_zh.yaml`（`--trans` 中文转换模板）
 
 找到 paper 目录：
 ```bash
@@ -63,8 +67,11 @@ python3 skills/bio-paper-interpreter/scripts/extract_pdf.py $PAPER_DIR/{paper_id
 ### Step 3: Read System Prompt
 
 从 `references/prompts/` 目录读取对应的 prompt 模板：
-- 结构化解读: `references/prompts/interpret.yaml` — 系统提示词 + 用户提示词模板
-- 文章体简报: `references/prompts/brief.yaml` — 系统提示词 + 用户提示词模板
+- 默认英文结构化解读: `references/prompts/interpret_en.yaml`
+- 默认英文文章体简报: `references/prompts/brief_en.yaml`
+- `--cn` 直接中文结构化解读: `references/prompts/interpret.yaml`
+- `--cn` 直接中文文章体简报: `references/prompts/brief.yaml`
+- `--trans` 中文转换: `translate_interpret_zh.yaml` / `translate_brief_zh.yaml`
 
 **Prompt 模板不再从 `config.yaml` 读取**。所有 prompt 模板统一放在技能目录内，`build_prompt.py` 自动从 YAML 加载。
 
@@ -103,6 +110,7 @@ cat $PAPER_DIR/{paper_id}.metadata.json | \
   python3 skills/bio-paper-interpreter/scripts/build_prompt.py \
   --config config.yaml \
   --mode full_text \
+  --lang en \
   --pdf-text-file /tmp/{paper_id}_text.txt > /tmp/{paper_id}_prompt.json
 
 # Call LLM
@@ -157,14 +165,23 @@ EOF
 
 ## Output
 
-Phase 2 生成两个输出文件：
+Phase 2 默认生成英文输出：
 
-1. **`{paper_dir}/{paper_id}.interpret.md`** — 结构化技术报告（Paper Understanding、Paper Claims 表格、资源清单等）
-2. **`{paper_dir}/{paper_id}.brief.md`** — 文章体中文简报（研究背景、核心方法、主要发现、讨论与意义、实践启示）
+1. **`{paper_dir}/{paper_id}.pdf.txt`** — PDF 提取文本
+2. **`{paper_dir}/{paper_id}.interpret.md`** — 英文结构化技术报告（Paper Understanding、Paper Claims 表格、资源清单等）
+3. **`{paper_dir}/{paper_id}.brief.md`** — 英文文章体简报
+4. **`{paper_dir}/{paper_id}.interpret.json`** — 英文结构化元数据和全文内容
 
-Phase 3 将两者转换为 HTML：
+使用 `--cn` 或 `--trans` 时额外生成：
+- `{paper_id}.interpret.zh.md`
+- `{paper_id}.brief.zh.md`
+- `{paper_id}.interpret.zh.json`
+
+Phase 3 将已存在的 Markdown 转换为 HTML：
 - `{paper_id}.interpret.html`
 - `{paper_id}.brief.html`
+- `{paper_id}.interpret.zh.html`
+- `{paper_id}.brief.zh.html`
 
 ### {paper_dir}/{paper_id}.interpret.md
 
@@ -264,12 +281,14 @@ Phase 2 完成前确认：
 - [ ] 模式已确定为 full_text，或文本不足时已标记 `interpret_failed`
 - [ ] Claude Code direct/manual 解读已检查论文页面和补充材料 tab（对预印本）
 - [ ] 所有 Output 模板中的 section 已填写
-- [ ] `.interpret.md` 文件已保存到 `{paper_dir}/{paper_id}.interpret.md`
-- [ ] `.interpret.json` 文件已保存到 `{paper_dir}/{paper_id}.interpret.json`
+- [ ] `.pdf.txt` 文件已保存到 `{paper_dir}/{paper_id}.pdf.txt`
+- [ ] 英文 `.interpret.md` 文件已保存到 `{paper_dir}/{paper_id}.interpret.md`
+- [ ] 英文 `.interpret.json` 文件已保存到 `{paper_dir}/{paper_id}.interpret.json`
+- [ ] 如使用 `--cn`/`--trans`，中文 `.zh` 输出已保存
 - [ ] 日志已写入 `execution_log.md`
 
 ## Completion
-- 输出 `{paper_dir}/{paper_id}.interpret.md` + `{paper_dir}/{paper_id}.brief.md` + `.interpret.json`
+- 输出 `{paper_dir}/{paper_id}.pdf.txt` + `{paper_dir}/{paper_id}.interpret.md` + `{paper_dir}/{paper_id}.brief.md` + `.interpret.json`，以及可选 `.zh` 输出
 - 更新数据库状态：`python3 -c "import sys; sys.path.insert(0, 'scripts'); from paper_db import get_conn, get_db_path, mark_interpreted; import yaml; c=yaml.safe_load(open('config.yaml')); mark_interpreted(get_conn(c), '{paper_id}')"`
 - 日志：`Phase 2 - COMPLETED: {paper_id} — {mode}, {n} tags`
 - Git commit（如未被 gitignore）

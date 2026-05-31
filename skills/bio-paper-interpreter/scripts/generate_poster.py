@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Zero-shot poster generation — 6 outputs per paper, no AutoFigure dependency.
+Zero-shot poster generation — English by default, optional bilingual output, no AutoFigure dependency.
 
 Pipeline:
   One-shot SVG  (methodology_model → deepseek-v4-pro):
@@ -26,6 +26,9 @@ import sys
 import time
 import urllib.request
 from datetime import datetime
+
+SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
+PROMPT_DIR = os.path.join(SKILL_DIR, '..', 'references', 'prompts')
 
 # --- Token usage tracking ---
 _token_usage = {}
@@ -269,21 +272,52 @@ SVG to repair:
 
 # ── Paper text loading ───────────────────────────────────────────────────────
 
-def _read_paper_text(paper_dir):
-    """Read paper content from interpret.md, info.md, or PDF (in that order).
-    Returns: (text, source_name) or (None, error)."""
-    # Prefer interpret.md (has both Chinese and English content)
-    for fname in ['interpret.md', 'info.md']:
-        for item in os.listdir(paper_dir):
-            if item.endswith(f'.{fname}'):
-                path = os.path.join(paper_dir, item)
-                with open(path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                if len(text) >= 500:
-                    ts_print(f"  Text source: {item} ({len(text):,} chars)")
-                    return text, item
+def _read_text_file(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    if len(text) >= 500:
+        ts_print(f"  Text source: {os.path.basename(path)} ({len(text):,} chars)")
+        return text, os.path.basename(path)
+    return None, None
 
-    # Fallback: PDF
+
+def _read_paper_text(paper_dir, language='en', safe_pid=None):
+    """Read language-specific paper content from reports, info, extracted text, or PDF."""
+    if safe_pid and language == 'zh':
+        candidates = [
+            f'{safe_pid}.interpret.zh.md',
+            f'{safe_pid}.brief.zh.md',
+            f'{safe_pid}.info.md',
+            f'{safe_pid}.pdf.txt',
+        ]
+    elif safe_pid:
+        candidates = [
+            f'{safe_pid}.interpret.md',
+            f'{safe_pid}.brief.md',
+            f'{safe_pid}.info.md',
+            f'{safe_pid}.pdf.txt',
+        ]
+    elif language == 'zh':
+        candidates = ['interpret.zh.md', 'brief.zh.md', 'info.md', 'pdf.txt']
+    else:
+        candidates = ['interpret.md', 'brief.md', 'info.md', 'pdf.txt']
+
+    for candidate in candidates:
+        path = os.path.join(paper_dir, candidate)
+        if os.path.exists(path):
+            text, source = _read_text_file(path)
+            if text:
+                return text, source
+
+    suffixes = ['.interpret.zh.md', '.brief.zh.md'] if language == 'zh' else ['.interpret.md', '.brief.md']
+    suffixes.extend(['.info.md', '.pdf.txt'])
+    for suffix in suffixes:
+        for item in os.listdir(paper_dir):
+            if item.endswith(suffix):
+                text, source = _read_text_file(os.path.join(paper_dir, item))
+                if text:
+                    return text, source
+
     for item in os.listdir(paper_dir):
         if item.endswith('.pdf'):
             pdf_path = os.path.join(paper_dir, item)
@@ -300,7 +334,30 @@ def _read_paper_text(paper_dir):
             except Exception as e:
                 ts_print(f"  PDF extraction failed: {e}")
 
-    return None, "no usable text source found"
+    return None, f"no usable {language} text source found"
+
+
+def _build_paper_context(paper_text, source_name):
+    return (
+        "=== PAPER CONTEXT ===\n"
+        f"Text source: {source_name}\n\n"
+        f"{paper_text}\n"
+        "=== END PAPER CONTEXT ==="
+    )
+
+
+def _load_prompt(name):
+    prompt_path = os.path.join(PROMPT_DIR, f'{name}.yaml')
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(f"Prompt not found: {prompt_path}")
+    import yaml
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+
+def _build_prompt(name, fields):
+    prompt = _load_prompt(name)
+    return f"{prompt['system']}\n\n{prompt['user_template'].format(**fields)}"
 
 
 # ── Prompt builders ──────────────────────────────────────────────────────────
@@ -403,25 +460,66 @@ def generate_oneshot_svg(paper_text, language, api_key, model, base_url):
     return svg
 
 
-def generate_direct_png(paper_text, language, api_key, text_model, text_base, enh_model, output_path):
-    """Two-step: paper text → figure description → image.
-    language: 'en' or 'zh'. Returns output_path or None."""
+def translate_svg_to_zh(svg_en, api_key, model, base_url):
+    """Translate an English SVG poster into a Chinese SVG poster."""
+    prompt = _build_prompt('svg_translate_zh', {'source_svg': svg_en})
+
+    ts_print(f"\n{'─'*50}")
+    ts_print(f"  SVG translation [EN→ZH] — {model}")
+    ts_print(f"{'─'*50}")
+
+    response = _call_text_llm(prompt, api_key, model, base_url)
+    svg = _extract_svg(response)
+    if not svg:
+        ts_print("  ERROR: No SVG in translation response!")
+        return None
+
+    ok, err = _validate_svg(svg)
+    if not ok:
+        ts_print(f"  Translated SVG syntax error: {err}")
+        fixed = _repair_svg(svg, err, api_key, model, base_url)
+        if fixed:
+            svg = fixed
+        else:
+            ts_print("  Repair failed, using translated SVG as-is (may not render as PNG)")
+    else:
+        ts_print("  Translated SVG validates OK")
+    return svg
+
+
+def generate_visual_description(paper_text, language, api_key, text_model, text_base):
+    """Generate a direct-poster visual description."""
     label = 'EN' if language == 'en' else 'ZH'
     desc_template = _DESC_PROMPT_EN if language == 'en' else _DESC_PROMPT_ZH
 
     ts_print(f"\n{'─'*50}")
-    ts_print(f"  Direct PNG [{label}] — {text_model} → {enh_model}")
+    ts_print(f"  Direct description [{label}] — {text_model}")
     ts_print(f"{'─'*50}")
 
-    # Step 1: Generate figure description
     desc_prompt = desc_template.format(paper_text=paper_text[:15000])
-    ts_print(f"  Step 1: Generating figure description...")
+    ts_print("  Generating figure description...")
     t0 = time.time()
     description = _call_text_llm(desc_prompt, api_key, text_model, text_base)
     ts_print(f"  Description: {len(description):,} chars in {time.time()-t0:.1f}s")
+    return description
 
-    # Step 2: Generate image from description
-    ts_print(f"  Step 2: Generating image...")
+
+def translate_description_to_zh(paper_context, source_description, api_key, text_model, text_base):
+    prompt = _build_prompt('poster_desc_translate_zh', {
+        'paper_context': paper_context,
+        'source_description': source_description,
+    })
+    ts_print(f"\n{'─'*50}")
+    ts_print(f"  Direct description translation [EN→ZH] — {text_model}")
+    ts_print(f"{'─'*50}")
+    description = _call_text_llm(prompt, api_key, text_model, text_base)
+    ts_print(f"  Chinese description: {len(description):,} chars")
+    return description
+
+
+def generate_direct_png_from_description(description, language, api_key, enh_model, output_path):
+    """Generate a direct PNG from a prepared visual description."""
+    ts_print("  Generating image from description...")
     if language == 'zh':
         enh_prompt = f"请根据以下描述创建一张专业科学海报图。图中所有文字必须是中文：\n\n{description}"
     else:
@@ -429,11 +527,17 @@ def generate_direct_png(paper_text, language, api_key, text_model, text_base, en
     return _enhance_via_dashscope(output_path, enh_prompt, api_key, enh_model)
 
 
+def generate_direct_png(paper_text, language, api_key, text_model, text_base, enh_model, output_path):
+    """Two-step: paper text → figure description → image."""
+    description = generate_visual_description(paper_text, language, api_key, text_model, text_base)
+    return generate_direct_png_from_description(description, language, api_key, enh_model, output_path)
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Zero-shot poster generation — 6 outputs per paper',
+        description='Zero-shot poster generation — English by default, optional bilingual output',
     )
     parser.add_argument('--paper-dir', required=True, help='Paper directory')
     parser.add_argument('--paper-id', required=True, help='Paper identifier')
@@ -442,11 +546,12 @@ def main():
     parser.add_argument('--methodology-base-url',
                         default='https://dashscope.aliyuncs.com/compatible-mode/v1')
     parser.add_argument('--enhancement-model', default='qwen-image-2.0-pro')
-    parser.add_argument('--lang', default='zh',
+    parser.add_argument('--lang', default='en',
                         choices=['en', 'zh', 'both'],
-                        help='Which language(s) to generate (default: zh)')
-    parser.add_argument('--en', action='store_true',
-                        help='Shorthand for --lang both (generate English posters too)')
+                        help='Which language(s) to generate (default: en)')
+    parser.add_argument('--trans', action='store_true',
+                        help='Generate Chinese SVG/direct poster from English outputs')
+    parser.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     safe_pid = re.sub(r'[/\\:*?"<>|]', '_', str(args.paper_id))[:200]
@@ -454,50 +559,53 @@ def main():
     meth_model = args.methodology_model
     meth_base = args.methodology_base_url
     enh_model = args.enhancement_model
-    lang = 'both' if args.en else args.lang
-
-    # Read paper text
-    paper_text, source = _read_paper_text(args.paper_dir)
-    if not paper_text:
-        ts_print(f"Error: {source}", file=sys.stderr)
-        sys.exit(1)
+    lang = args.lang
 
     results = []
-    languages = ['en', 'zh'] if lang == 'both' else [lang]
+    requested_languages = ['en', 'zh'] if lang == 'both' else [lang]
+    languages = list(requested_languages)
+    if args.trans and 'zh' in languages and 'en' not in languages:
+        languages.insert(0, 'en')
 
-    for lang in languages:
-        # ── One-shot SVG ──
-        svg = generate_oneshot_svg(paper_text, lang, api_key, meth_model, meth_base)
-        if svg:
-            svg_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.svg')
-            with open(svg_path, 'w', encoding='utf-8') as f:
-                f.write(svg)
-            ts_print(f"  Saved: {svg_path} ({len(svg):,} chars)")
-            results.append(svg_path)
+    text_cache = {}
+    english_svg = None
+    english_description = None
+    english_context = None
 
-            # Render to PNG via headless Chrome (supports CJK)
-            try:
-                png_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{lang}.png')
-                _svg_to_png(svg, png_path)
-                ts_print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
-                results.append(png_path)
-            except Exception as e:
-                ts_print(f"  Render failed: {e}")
-        else:
-            ts_print(f"  FAILED: SVG generation ({lang})")
+    def get_text(language):
+        if language not in text_cache:
+            paper_text, source = _read_paper_text(args.paper_dir, language, safe_pid)
+            if not paper_text:
+                ts_print(f"Error: {source}", file=sys.stderr)
+                sys.exit(1)
+            text_cache[language] = (paper_text, source)
+        return text_cache[language]
 
-        # ── Direct PNG ──
-        direct_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.direct.{lang}.png')
+    def save_svg_and_png(svg, language):
+        svg_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{language}.svg')
+        with open(svg_path, 'w', encoding='utf-8') as f:
+            f.write(svg)
+        ts_print(f"  Saved: {svg_path} ({len(svg):,} chars)")
+        results.append(svg_path)
+        try:
+            png_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.{language}.png')
+            _svg_to_png(svg, png_path)
+            ts_print(f"  Rendered: {png_path} ({os.path.getsize(png_path):,} bytes)")
+            results.append(png_path)
+        except Exception as e:
+            ts_print(f"  Render failed: {e}")
+
+    def save_direct_png(description, language):
+        direct_path = os.path.join(args.paper_dir, f'{safe_pid}.poster.direct.{language}.png')
         DIRECT_MAX_RETRIES = 3
         result = None
         for attempt in range(DIRECT_MAX_RETRIES):
-            result = generate_direct_png(paper_text, lang, api_key, meth_model, meth_base, enh_model, direct_path)
+            result = generate_direct_png_from_description(description, language, api_key, enh_model, direct_path)
             if result and os.path.exists(result):
                 break
             if attempt < DIRECT_MAX_RETRIES - 1:
-                ts_print(f"  Direct PNG [{lang}] attempt {attempt+1} failed, retrying...")
+                ts_print(f"  Direct PNG [{language}] attempt {attempt+1} failed, retrying...")
         if result and os.path.exists(result):
-            # Rename to canonical path if needed
             if result != direct_path:
                 os.rename(result, direct_path)
             ts_print(f"  Saved: {direct_path} ({os.path.getsize(direct_path):,} bytes)")
@@ -506,7 +614,53 @@ def main():
             ts_print(f"  Saved: {result}")
             results.append(result)
         else:
-            ts_print(f"  FAILED: Direct generation ({lang}) after {DIRECT_MAX_RETRIES} attempts")
+            ts_print(f"  FAILED: Direct generation ({language}) after {DIRECT_MAX_RETRIES} attempts")
+
+    for lang in languages:
+        if lang == 'en':
+            paper_text, source = get_text('en')
+            english_context = _build_paper_context(paper_text, source)
+            english_svg = generate_oneshot_svg(paper_text, 'en', api_key, meth_model, meth_base)
+            if english_svg:
+                save_svg_and_png(english_svg, 'en')
+            else:
+                ts_print("  FAILED: SVG generation (en)")
+            english_description = generate_visual_description(paper_text, 'en', api_key, meth_model, meth_base)
+            save_direct_png(english_description, 'en')
+            continue
+
+        if args.trans:
+            if english_svg is None:
+                paper_text, source = get_text('en')
+                english_context = _build_paper_context(paper_text, source)
+                english_svg = generate_oneshot_svg(paper_text, 'en', api_key, meth_model, meth_base)
+                if english_svg:
+                    save_svg_and_png(english_svg, 'en')
+                else:
+                    ts_print("  FAILED: SVG generation (en)")
+            if english_svg:
+                svg = translate_svg_to_zh(english_svg, api_key, meth_model, meth_base)
+                if svg:
+                    save_svg_and_png(svg, 'zh')
+                else:
+                    ts_print("  FAILED: SVG translation (zh)")
+            if english_description is None:
+                paper_text, source = get_text('en')
+                english_context = english_context or _build_paper_context(paper_text, source)
+                english_description = generate_visual_description(paper_text, 'en', api_key, meth_model, meth_base)
+            zh_description = translate_description_to_zh(english_context, english_description,
+                                                         api_key, meth_model, meth_base)
+            save_direct_png(zh_description, 'zh')
+            continue
+
+        paper_text, source = get_text('zh')
+        svg = generate_oneshot_svg(paper_text, 'zh', api_key, meth_model, meth_base)
+        if svg:
+            save_svg_and_png(svg, 'zh')
+        else:
+            ts_print("  FAILED: SVG generation (zh)")
+        description = generate_visual_description(paper_text, 'zh', api_key, meth_model, meth_base)
+        save_direct_png(description, 'zh')
 
     _print_usage_summary()
 

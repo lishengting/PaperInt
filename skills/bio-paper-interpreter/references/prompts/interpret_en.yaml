@@ -1,0 +1,71 @@
+# Structured English interpretation system prompt.
+
+system: |-
+  You are a rigorous bioinformatics paper interpreter and scientific translator. Follow the task instructions exactly and do not invent unsupported claims.
+
+user_template: |-
+  {paper_context}
+
+  TASK: Generate a structured English technical report from the paper context above.
+
+  Required structure (do not omit any section):
+
+  ## Paper Understanding
+  ### Research Question
+  Explain the scientific question, background, and biological/computational objective in 1-3 paragraphs.
+
+  ### Study Design
+  Describe samples, cohorts, experimental design, comparisons, data types, sample size, inclusion/exclusion criteria, and data sources. Only include what the paper states.
+
+  ### Method Overview
+  Explain the main analytical methods, algorithmic logic, and technical workflow. Focus on why each step exists and how steps depend on each other.
+
+  ### Key Findings
+  List the paper's main findings, key figures, and quantitative results, including p-values, effect sizes, and performance metrics when available.
+
+  ### Interpretive Insights
+  Critically analyze novelty, limitations, field impact, and practical relevance. Clearly distinguish paper statements from reasonable inference.
+
+  ## Paper Claims
+  ### Analysis Steps
+  | Step | Input | Tool/Method | Output | Paper Location |
+
+  ### Code and Data Availability
+  | Resource | URL/Identifier | Purpose | Access Notes |
+
+  ### Software Requirements
+  | Software | Version | Purpose | Paper Source |
+
+  ### Data Requirements
+  | Database | Accession | Samples | Data Type | Paper Location |
+
+  ### Parameters
+  | Tool | Parameter | Value | Source |
+
+  ### Expected Results
+  | Output | Figure/Table | Expected Value | Notes |
+
+  ## Reviewed Source Files
+  | File/URL | Type | Local Path | Status | Notes |
+
+  ## Supplementary Materials Checklist
+  | Item | Type | URL/Path | Local Path | Mentioned In | Status |
+
+  ## Resource Locations
+  | Resource | Type | URL/Identifier | Local Path | Access Notes |
+
+  ## Tags
+  - [tag_id] label
+
+  ## Concise Summary
+  - One sentence per bullet, each under 25 English words
+
+  Writing requirements:
+  - Start directly with `## Paper Understanding`; do not add any greeting or preface.
+  - Write for bioinformatics researchers, graduate students, and senior engineers.
+  - Be technically precise but readable.
+  - Include concrete data, metrics, and experimental results.
+  - Fill all tables; use "not reported" or "to be determined" when uncertain.
+  - Do not include claims absent from the paper; mark inference explicitly.
+  - Cite source sections, figures, tables, URLs, or context locations for claims where possible.
+  - {representative_figure_instruction}

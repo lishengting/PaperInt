@@ -7,8 +7,10 @@ fields into the user prompt template, and outputs a JSON object with
 `system_prompt` and `user_prompt` fields.
 
 Modes:
-  - interpret: Structured technical report (Paper Understanding, Claims tables, etc.)
-  - brief:     Narrative Chinese article (2000-2500 chars, reader-friendly)
+  - interpret_en: Structured English technical report
+  - brief_en:     Narrative English article
+  - interpret:    Structured Chinese technical report
+  - brief:        Narrative Chinese article
 """
 import argparse
 import json
@@ -143,7 +145,34 @@ def load_prompt(name):
     return load_config(prompt_path)
 
 
-def _build_fields(paper, pdf_text='', extract_meta=None):
+def build_paper_context(paper, pdf_text='', extract_meta=None):
+    """Build a stable paper context block shared by Phase 2 prompts."""
+    image_count = 0
+    representative_image = ''
+    if extract_meta:
+        image_count = extract_meta.get('image_count', 0) or 0
+        representative_image = extract_meta.get('representative_image') or ''
+
+    return (
+        "=== PAPER CONTEXT ===\n"
+        f"Title: {paper.get('title', '')}\n"
+        f"Authors: {paper.get('authors', '')}\n"
+        f"Published: {paper.get('date', paper.get('published', ''))}\n"
+        f"Paper ID: {paper.get('arxiv_id', paper.get('paper_id', ''))}\n"
+        f"Original URL: {paper.get('abs_url', '')}\n\n"
+        "Abstract:\n"
+        f"{paper.get('abstract', '')}\n\n"
+        "Extracted figure metadata:\n"
+        f"Representative figure extracted: {'true' if representative_image else 'false'}\n"
+        f"Representative figure path: {representative_image}\n"
+        f"Extracted image count: {image_count}\n\n"
+        "PDF full text:\n"
+        f"{pdf_text or ''}\n"
+        "=== END PAPER CONTEXT ==="
+    )
+
+
+def _build_fields(paper, pdf_text='', extract_meta=None, language='en'):
     fields = {
         'title': paper.get('title', ''),
         'authors': paper.get('authors', ''),
@@ -152,36 +181,34 @@ def _build_fields(paper, pdf_text='', extract_meta=None):
         'abs_url': paper.get('abs_url', ''),
         'abstract': paper.get('abstract', ''),
         'pdf_text': pdf_text or '',
+        'paper_context': build_paper_context(paper, pdf_text, extract_meta),
     }
 
     if extract_meta and extract_meta.get('representative_image'):
         fields['has_representative_figure'] = 'true'
-        fields['representative_figure_instruction'] = (
-            '本文包含代表性图表。请在报告的 Key Findings 或 Method Overview '
-            '部分描述该图表的内容、关键数据和意义。如果正文中提到了 Figure 编号，'
-            '请在描述中引用该编号。'
-        )
+        if language == 'zh':
+            fields['representative_figure_instruction'] = (
+                '本文包含代表性图表。请在报告的 Key Findings 或 Method Overview '
+                '部分描述该图表的内容、关键数据和意义。如果正文中提到了 Figure 编号，'
+                '请在描述中引用该编号。'
+            )
+        else:
+            fields['representative_figure_instruction'] = (
+                'A representative figure was extracted. Describe its content, key data, '
+                'and significance in the Key Findings or Method Overview section. If the '
+                'paper text mentions a figure number, cite that figure number.'
+            )
     else:
         fields['has_representative_figure'] = 'false'
-        fields['representative_figure_instruction'] = '本文未包含图表。'
+        fields['representative_figure_instruction'] = (
+            '本文未包含图表。' if language == 'zh' else 'No representative figure was extracted.'
+        )
 
     return fields
 
 
-def build_prompt(paper, name, pdf_text='', extract_meta=None):
-    """Build prompt from a named template.
-
-    Args:
-        paper: dict with title, authors, abstract, etc.
-        name: prompt name ('interpret' or 'brief')
-        pdf_text: extracted PDF full text
-        extract_meta: optional dict with image extraction metadata
-            (representative_image, image_count, images_dir)
-
-    Returns dict with keys: system_prompt, user_prompt, mode
-    """
+def build_template_prompt(name, fields):
     prompt = load_prompt(name)
-    fields = _build_fields(paper, pdf_text, extract_meta)
     return {
         'system_prompt': prompt['system'],
         'user_prompt': prompt['user_template'].format(**fields),
@@ -189,23 +216,31 @@ def build_prompt(paper, name, pdf_text='', extract_meta=None):
     }
 
 
+def build_prompt(paper, name, pdf_text='', extract_meta=None, language='en'):
+    """Build prompt from a named template."""
+    fields = _build_fields(paper, pdf_text, extract_meta, language)
+    return build_template_prompt(name, fields)
+
+
 # ---------------------------------------------------------------------------
 # Backward-compatible API (used by paper_cli.py and CLI)
 # ---------------------------------------------------------------------------
 
-def build_full_text_prompt(paper, config, pdf_text, extract_meta=None):
-    """Build structured interpretation prompt (uses interpret.yaml)."""
-    return build_prompt(paper, 'interpret', pdf_text, extract_meta)
+def build_full_text_prompt(paper, config, pdf_text, extract_meta=None,
+                           prompt_name='interpret_en', language='en'):
+    """Build structured interpretation prompt."""
+    return build_prompt(paper, prompt_name, pdf_text, extract_meta, language)
 
 
-def build_brief_prompt(paper, config, pdf_text, extract_meta=None):
-    """Build brief/article-style prompt (uses brief.yaml)."""
-    return build_prompt(paper, 'brief', pdf_text, extract_meta)
+def build_brief_prompt(paper, config, pdf_text, extract_meta=None,
+                       prompt_name='brief_en', language='en'):
+    """Build brief/article-style prompt."""
+    return build_prompt(paper, prompt_name, pdf_text, extract_meta, language)
 
 
-def build_abstract_only_prompt(paper, config):
-    """Build abstract-only prompt (falls back to interpret template without PDF)."""
-    return build_prompt(paper, 'interpret', '')
+def build_abstract_only_prompt(paper, config, prompt_name='interpret_en', language='en'):
+    """Build abstract-only prompt without PDF full text."""
+    return build_prompt(paper, prompt_name, '', None, language)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +267,8 @@ def main():
     parser.add_argument('--config', help='Path to config file (ignored for prompts, kept for compat)')
     parser.add_argument('--mode', choices=['full_text', 'abstract_only', 'brief'], default='full_text',
                         help='Interpretation mode')
+    parser.add_argument('--lang', choices=['en', 'zh'], default='en',
+                        help='Prompt language (default: en)')
     parser.add_argument('--pdf-text-file', help='File containing extracted PDF text')
     args = parser.parse_args()
 
@@ -243,13 +280,18 @@ def main():
         with open(args.pdf_text_file, 'r', encoding='utf-8') as f:
             pdf_text = f.read()
 
+    full_prompt_name = 'interpret' if args.lang == 'zh' else 'interpret_en'
+    brief_prompt_name = 'brief' if args.lang == 'zh' else 'brief_en'
+
     if args.mode == 'brief':
-        # Brief mode doesn't need config for prompts, but we still accept --config
-        result = build_brief_prompt(paper, {}, pdf_text)
+        result = build_brief_prompt(paper, {}, pdf_text,
+                                    prompt_name=brief_prompt_name, language=args.lang)
     elif args.mode == 'full_text':
-        result = build_full_text_prompt(paper, {}, pdf_text)
+        result = build_full_text_prompt(paper, {}, pdf_text,
+                                        prompt_name=full_prompt_name, language=args.lang)
     else:
-        result = build_abstract_only_prompt(paper, {})
+        result = build_abstract_only_prompt(paper, {},
+                                            prompt_name=full_prompt_name, language=args.lang)
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"Built {result['mode']} prompt: system={len(result['system_prompt'])}chars, user={len(result['user_prompt'])}chars",

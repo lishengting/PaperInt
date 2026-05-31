@@ -93,7 +93,7 @@ img { max-width: 100%; }
 
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{html_lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -111,7 +111,7 @@ HTML_TEMPLATE = """\
 </html>"""
 
 
-def build_header_image_html(image_path):
+def build_header_image_html(image_path, lang='en'):
     """Return an <img> figure block with base64-encoded image, or empty string."""
     if not image_path or not os.path.exists(image_path):
         return ''
@@ -120,13 +120,14 @@ def build_header_image_html(image_path):
         img_data = base64.b64encode(f.read()).decode('ascii')
     ext = os.path.splitext(image_path)[1].lower()
     mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png'
+    caption = '代表性图表' if lang == 'zh' else 'Representative Figure'
     return (
         '<figure style="text-align:center; margin:1em 0 2em 0;">'
         f'<img src="data:{mime};base64,{img_data}" '
-        'alt="Representative Figure" '
+        f'alt="{caption}" '
         'style="max-width:100%; border-radius:4px; box-shadow:0 1px 6px rgba(0,0,0,0.15);">'
         '<figcaption style="color:var(--meta); font-size:0.9em; margin-top:0.4em;">'
-        'Representative Figure</figcaption>'
+        f'{caption}</figcaption>'
         '</figure>'
     )
 
@@ -144,10 +145,7 @@ def build_footer_image_html(image_path):
         '<hr>'
         '<figure style="text-align:center; margin:2em 0 1em 0;">'
         f'<img src="data:{mime};base64,{img_data}" '
-        'alt="Poster (Chinese)" '
         'style="max-width:100%; border-radius:4px; box-shadow:0 1px 6px rgba(0,0,0,0.15);">'
-        '<figcaption style="color:var(--meta); font-size:0.9em; margin-top:0.4em;">'
-        '海报 (中文)</figcaption>'
         '</figure>'
     )
 
@@ -160,6 +158,8 @@ def main():
                         help='Path to a representative image to embed at top of HTML')
     parser.add_argument('--poster', default=None,
                         help='Path to a poster PNG to embed at bottom of HTML')
+    parser.add_argument('--lang', choices=['en', 'zh'], default='en',
+                        help='Document language (default: en)')
     args = parser.parse_args()
 
     # Read input
@@ -177,7 +177,7 @@ def main():
             break
 
     # Build header image HTML
-    header_img_html = build_header_image_html(args.image)
+    header_img_html = build_header_image_html(args.image, args.lang)
 
     # Build footer poster HTML
     footer_img_html = build_footer_image_html(args.poster)
@@ -192,7 +192,11 @@ def main():
     ]
     html_body = markdown(md_text, extensions=extensions)
 
-    html = HTML_TEMPLATE.format(title=title, body=html_body, css=CSS, header_image=header_img_html, footer_image=footer_img_html)
+    html_lang = 'zh-CN' if args.lang == 'zh' else 'en'
+    html = HTML_TEMPLATE.format(title=title, body=html_body, css=CSS,
+                                header_image=header_img_html,
+                                footer_image=footer_img_html,
+                                html_lang=html_lang)
 
     # Write output
     if args.output:
