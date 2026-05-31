@@ -418,7 +418,7 @@ INDEX_HTML = """<!doctype html>
       </div>
       <section class="hero">
         <h1>探索已检索和解读的生物医学文献</h1>
-        <p>按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 brief HTML 与 PDF。</p>
+        <p>按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 interpret/brief HTML 与 PDF。</p>
       </section>
       <div class="chips" id="activeChips"></div>
       <section class="results">
@@ -607,12 +607,18 @@ INDEX_HTML = """<!doctype html>
     function renderPaper(paper) {
       const links = paper.links || {};
       const statusClass = `status-${String(paper.status || '').replace(/[^a-z_]/g, '')}`;
-      const briefHref = safeHref(links.brief_html);
+      const interpretEnHref = safeHref(links.interpret_html_en);
+      const interpretZhHref = safeHref(links.interpret_html_zh);
+      const briefEnHref = safeHref(links.brief_html_en);
+      const briefZhHref = safeHref(links.brief_html_zh);
       const localPdfHref = safeHref(links.pdf);
       const sourceHref = safeHref(paper.source_url);
       const sourcePdfHref = safeHref(paper.pdf_url);
       const localLinks = [
-        briefHref ? `<a class="link-btn primary" target="_blank" rel="noopener" href="${escapeHtml(briefHref)}">Brief HTML</a>` : '',
+        interpretEnHref ? `<a class="link-btn primary" target="_blank" rel="noopener" href="${escapeHtml(interpretEnHref)}">Interpret EN</a>` : '',
+        interpretZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretZhHref)}">Interpret 中文</a>` : '',
+        briefEnHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefEnHref)}">Brief EN</a>` : '',
+        briefZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefZhHref)}">Brief 中文</a>` : '',
         localPdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(localPdfHref)}">PDF</a>` : '',
         sourceHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourceHref)}">来源</a>` : '',
         sourcePdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourcePdfHref)}">原始 PDF URL</a>` : '',
@@ -645,7 +651,7 @@ INDEX_HTML = """<!doctype html>
           ${abstractHtml}
           <div class="meta-row">${meta}</div>
           <div class="tag-row">${renderTags(paper.matched_tags)}</div>
-          <div class="links-row">${localLinks || '<span class="meta">暂无本地 brief/PDF 链接</span>'}</div>
+          <div class="links-row">${localLinks || '<span class="meta">暂无本地 HTML/PDF 链接</span>'}</div>
         </article>
       `;
     }
@@ -793,11 +799,18 @@ def _add_links(config: dict, paper: dict) -> dict:
     links = {}
     if path_prefix:
         encoded = quote(path_prefix, safe='')
-        try:
-            _safe_artifact_path(config, path_prefix, '.brief.html', check_db=False)
-            links['brief_html'] = f'/files/brief/{encoded}'
-        except (ValueError, PermissionError, FileNotFoundError):
-            pass
+        html_links = [
+            ('interpret_html_en', '.interpret.html', 'interpret/en'),
+            ('interpret_html_zh', '.interpret.zh.html', 'interpret/zh'),
+            ('brief_html_en', '.brief.html', 'brief/en'),
+            ('brief_html_zh', '.brief.zh.html', 'brief/zh'),
+        ]
+        for key, suffix, route in html_links:
+            try:
+                _safe_artifact_path(config, path_prefix, suffix, check_db=False)
+                links[key] = f'/files/{route}/{encoded}'
+            except (ValueError, PermissionError, FileNotFoundError):
+                pass
         try:
             _safe_artifact_path(config, path_prefix, '.pdf', check_db=False)
             links['pdf'] = f'/files/pdf/{encoded}'
@@ -841,6 +854,14 @@ def make_handler(config: dict, config_path: str):
                     return self._handle_journals()
                 if path == '/api/stats':
                     return self._handle_stats()
+                if path.startswith('/files/interpret/en/'):
+                    return self._serve_artifact(path[len('/files/interpret/en/'):], '.interpret.html', 'text/html; charset=utf-8')
+                if path.startswith('/files/interpret/zh/'):
+                    return self._serve_artifact(path[len('/files/interpret/zh/'):], '.interpret.zh.html', 'text/html; charset=utf-8')
+                if path.startswith('/files/brief/en/'):
+                    return self._serve_artifact(path[len('/files/brief/en/'):], '.brief.html', 'text/html; charset=utf-8')
+                if path.startswith('/files/brief/zh/'):
+                    return self._serve_artifact(path[len('/files/brief/zh/'):], '.brief.zh.html', 'text/html; charset=utf-8')
                 if path.startswith('/files/brief/'):
                     return self._serve_artifact(path[len('/files/brief/'):], '.brief.html', 'text/html; charset=utf-8')
                 if path.startswith('/files/pdf/'):
