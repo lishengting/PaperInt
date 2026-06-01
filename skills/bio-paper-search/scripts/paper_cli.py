@@ -734,7 +734,7 @@ def pubmed_api(endpoint, params, config):
         return None
 
 
-BATCH_SIZE = 1000
+BATCH_SIZE = 200
 PUBMED_RETMAX_LIMIT = 9999
 
 
@@ -832,10 +832,26 @@ def pubmed_fetch_details(pmids, config):
             'tool': 'PaperInt',
             'email': cfg(config, 'download.user_agent', ''),
         })
-        req = urllib.request.Request(f"{url}?{params}", headers={'User-Agent': ua(config)})
+        get_url = f"{url}?{params}"
+        req = urllib.request.Request(get_url, headers={'User-Agent': ua(config)})
         try:
-            with _urlopen_with_retry(req, config, attempts=3) as r:
-                xml_text = r.read().decode('utf-8')
+            try:
+                with _urlopen_with_retry(req, config, attempts=3) as r:
+                    xml_text = r.read().decode('utf-8')
+            except urllib.error.HTTPError as e:
+                if e.code != 414:
+                    raise
+                print(f"{_ts()}   PubMed efetch GET returned HTTP 414 (URL length {len(get_url)}); retrying with POST", file=sys.stderr)
+                post_req = urllib.request.Request(
+                    url,
+                    data=params.encode('utf-8'),
+                    headers={
+                        'User-Agent': ua(config),
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                )
+                with _urlopen_with_retry(post_req, config, attempts=3) as r:
+                    xml_text = r.read().decode('utf-8')
         except Exception as e:
             print(f"{_ts()}   PubMed efetch error: {e}", file=sys.stderr)
             if not details:
