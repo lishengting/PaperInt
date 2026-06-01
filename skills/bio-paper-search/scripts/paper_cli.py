@@ -703,14 +703,32 @@ PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
 
 def pubmed_api(endpoint, params, config):
+    params = dict(params)
     params.setdefault('retmode', 'json')
     params.setdefault('tool', 'PaperInt')
     params.setdefault('email', cfg(config, 'download.user_agent', ''))
-    url = f"{PUBMED_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
+    encoded = urllib.parse.urlencode(params)
+    url = f"{PUBMED_BASE}/{endpoint}?{encoded}"
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
-        with _urlopen_with_retry(req, config, attempts=3) as r:
-            return json.loads(r.read().decode('utf-8'))
+        try:
+            with _urlopen_with_retry(req, config, attempts=3) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            if e.code != 414:
+                raise
+            post_url = f"{PUBMED_BASE}/{endpoint}"
+            print(f"{_ts()}   PubMed GET returned HTTP 414 (URL length {len(url)}); retrying with POST", file=sys.stderr)
+            post_req = urllib.request.Request(
+                post_url,
+                data=encoded.encode('utf-8'),
+                headers={
+                    'User-Agent': ua(config),
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+            )
+            with _urlopen_with_retry(post_req, config, attempts=3) as r:
+                return json.loads(r.read().decode('utf-8'))
     except Exception as e:
         print(f"{_ts()}   PubMed error: {e}", file=sys.stderr)
         return None

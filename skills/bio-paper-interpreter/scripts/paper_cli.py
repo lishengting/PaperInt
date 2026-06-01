@@ -242,14 +242,14 @@ def _log_phase2_tokens(usages):
 def _validate_pdf_content_llm(config, pdf_text, paper):
     """Use LLM to check whether extracted PDF content matches the paper's title and abstract.
 
-    Returns (passed: bool, confidence: float, reason: str, usage: dict).
+    Returns (passed: bool, confidence: float, reason: str, usage: dict, doc_type: str | None).
     """
     title = (paper.get('title') or '').strip()
     abstract = (paper.get('abstract') or '').strip()
     if not title and not abstract:
-        return True, 1.0, 'no title or abstract to validate', {}
+        return True, 1.0, 'no title or abstract to validate', {}, None
     if not pdf_text or len(pdf_text.strip()) < 200:
-        return True, 1.0, 'PDF text too short to validate', {}
+        return True, 1.0, 'PDF text too short to validate', {}, None
 
     header_chars = cfg(config, 'interpreter.pdf_content_validation.header_chars', 4000)
     pdf_sample = pdf_text[:header_chars]
@@ -334,6 +334,7 @@ def _validate_pdf_content_llm(config, pdf_text, paper):
     match = result.get('match', False)
     confidence = float(result.get('confidence', 0.5))
     reason = result.get('reason', 'no reason provided')
+    doc_type = result.get('doc_type')
     usage_raw = resp_data.get('usage', {})
     usage = {
         'prompt_tokens': usage_raw.get('prompt_tokens', 0),
@@ -342,7 +343,7 @@ def _validate_pdf_content_llm(config, pdf_text, paper):
         'elapsed_seconds': elapsed,
     }
     _log_llm_result(label, usage, elapsed)
-    return match, confidence, reason, usage
+    return match, confidence, reason, usage, doc_type
 
 
 def run_phase1(paper_path, paper, config, log_file):
@@ -373,9 +374,12 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
 
     pdf_path = os.path.join(paper_path, f'{safe_pid}.pdf')
     if not os.path.exists(pdf_path):
-        log_phase(log_file, paper_id, 2, 'FAILED', f'no PDF file at {pdf_path}')
-        mark_interpret_failed(get_conn(config), paper_id, f'no PDF file at {pdf_path}')
-        return False, f'no PDF file at {pdf_path}'
+        error = f'no PDF file at {pdf_path}'
+        log_phase(log_file, paper_id, 2, 'FAILED', error)
+        mark_interpret_failed(get_conn(config), paper_id, error,
+                              category='missing_pdf', subtype='pdf_file_missing',
+                              tags=['missing_pdf'], metadata={'pdf_path': pdf_path})
+        return False, error
 
     max_chars = cfg(config, 'download.pdf_text_max_chars', 100000)
     extractor_mode = cfg(config, 'download.pdf_extraction.extractor', 'auto')
@@ -409,7 +413,10 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
     if extract_data is None:
         ts_print(f"  PDF extract failed: {last_error}", file=sys.stderr)
         log_phase(log_file, paper_id, 2, 'FAILED', f'extract error: {last_error}')
-        mark_interpret_failed(get_conn(config), paper_id, f'PDF extract: {last_error}')
+        subtype = 'extract_timeout' if last_error and 'timed out' in last_error else 'pdf_extract_failed'
+        mark_interpret_failed(get_conn(config), paper_id, f'PDF extract: {last_error}',
+                              category='content_extraction', subtype=subtype,
+                              tags=['pdf_extraction'], metadata={'last_error': last_error})
         return False, f'extract error: {last_error}'
 
     pdf_text = extract_data.get('markdown', '')
@@ -420,20 +427,29 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
     _write_text(txt_path, pdf_text)
 
     if len(pdf_text) < 1000:
-        log_phase(log_file, paper_id, 2, 'FAILED',
-                  f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
-        mark_interpret_failed(get_conn(config), paper_id,
-                              f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})')
-        return False, f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})'
+        error = f'insufficient text ({len(pdf_text)} chars, extractor={extractor_used})'
+        log_phase(log_file, paper_id, 2, 'FAILED', error)
+        mark_interpret_failed(get_conn(config), paper_id, error,
+                              category='content_extraction', subtype='insufficient_text',
+                              tags=['insufficient_text'],
+                              metadata={'text_chars': len(pdf_text), 'extractor': extractor_used})
+        return False, error
 
     validation_enabled = cfg(config, 'interpreter.pdf_content_validation.enabled', True)
     val_usage = None
     if validation_enabled:
         try:
-            passed, confidence, reason, val_usage = _validate_pdf_content_llm(config, pdf_text, paper)
+            passed, confidence, reason, val_usage, doc_type = _validate_pdf_content_llm(config, pdf_text, paper)
             if not passed:
+                subtype = doc_type if doc_type and doc_type != 'research_article' else 'title_abstract_mismatch'
                 log_phase(log_file, paper_id, 2, 'FAILED', reason)
-                mark_interpret_failed(get_conn(config), paper_id, reason)
+                mark_interpret_failed(get_conn(config), paper_id, reason,
+                                      category='non_paper', subtype=subtype,
+                                      tags=[subtype], metadata={
+                                          'doc_type': doc_type,
+                                          'confidence': confidence,
+                                          'validator_reason': reason,
+                                      })
                 return False, reason
             ts_print(f"  PDF validation: {reason}")
         except Exception as e:
@@ -537,9 +553,12 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
     usage_entries.append(('brief_en', brief_usage))
 
     if not interpret_ok and not brief_ok:
-        log_phase(log_file, paper_id, 2, 'FAILED', 'both English interpret and brief LLM calls failed')
-        mark_interpret_failed(get_conn(config), paper_id, 'both English interpret and brief LLM calls failed')
-        return False, 'both English interpret and brief LLM calls failed'
+        error = 'both English interpret and brief LLM calls failed'
+        log_phase(log_file, paper_id, 2, 'FAILED', error)
+        mark_interpret_failed(get_conn(config), paper_id, error,
+                              category='llm_api', subtype='all_required_llm_calls_failed',
+                              tags=['interpret_en_failed', 'brief_en_failed'])
+        return False, error
 
     zh_interpret_ok = False
     zh_brief_ok = False

@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS papers (
     source_terms_text TEXT,
     oa_has_pdf      INTEGER DEFAULT 0,
     error_message   TEXT,
+    failure_phase   TEXT,
+    failure_category TEXT,
+    failure_subtype TEXT,
+    failure_tags    TEXT,
+    failure_metadata TEXT,
     relevance       TEXT,
     matched_tags    TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -142,10 +147,20 @@ def get_conn(config: dict) -> sqlite3.Connection:
         _conn.commit()
     except sqlite3.OperationalError:
         pass
+    for column in ('failure_phase', 'failure_category', 'failure_subtype', 'failure_tags', 'failure_metadata'):
+        try:
+            _conn.execute(f"ALTER TABLE papers ADD COLUMN {column} TEXT")
+            _conn.commit()
+        except sqlite3.OperationalError:
+            pass
     _conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_source_terms_text ON papers(source_terms_text)")
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_failure_phase ON papers(failure_phase)")
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_failure_category ON papers(failure_category)")
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_failure_subtype ON papers(failure_subtype)")
     _conn.commit()
     _backfill_path_prefix(_conn)
     _backfill_source_terms_text(_conn)
+    _backfill_failure_fields(_conn)
 
     _db_path = path
     return _conn
@@ -628,31 +643,49 @@ def mark_downloaded(conn: sqlite3.Connection, paper_id: str, dir_name: str,
         else:
             meta = metadata_updates
         conn.execute(
-            "UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?, metadata_json=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            """UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?,
+                      metadata_json=?, error_message=NULL, failure_phase=NULL,
+                      failure_category=NULL, failure_subtype=NULL, failure_tags=NULL,
+                      failure_metadata=NULL, updated_at=? WHERE paper_id=?""",
             (dir_name, pp, now, json.dumps(meta, ensure_ascii=False), now, paper_id),
         )
     else:
         conn.execute(
-            "UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?, error_message=NULL, updated_at=? WHERE paper_id=?",
+            """UPDATE papers SET status='downloaded', dir_name=?, path_prefix=?, download_date=?,
+                      error_message=NULL, failure_phase=NULL, failure_category=NULL,
+                      failure_subtype=NULL, failure_tags=NULL, failure_metadata=NULL,
+                      updated_at=? WHERE paper_id=?""",
             (dir_name, pp, now, now, paper_id),
         )
     conn.commit()
 
 
 def mark_download_failed(conn: sqlite3.Connection, paper_id: str, error: str,
-                         dir_name: str = None) -> None:
+                         dir_name: str = None, *, category: str = None,
+                         subtype: str = None, tags: list[str] | None = None,
+                         metadata: dict | None = None) -> None:
     """Mark a paper download as failed."""
     now = _now()
+    record = _failure_record('download', error, category, subtype, tags, metadata)
+    params = (
+        error, record['phase'], record['category'], record['subtype'],
+        _serialize_failure_value(record['tags']),
+        _serialize_failure_value(record['metadata']),
+    )
     if dir_name:
         pp = f"{dir_name}/{_sanitize_path(paper_id)}"
         conn.execute(
-            "UPDATE papers SET status='download_failed', error_message=?, dir_name=?, path_prefix=?, updated_at=? WHERE paper_id=?",
-            (error, dir_name, pp, now, paper_id),
+            """UPDATE papers SET status='download_failed', error_message=?, failure_phase=?,
+                      failure_category=?, failure_subtype=?, failure_tags=?, failure_metadata=?,
+                      dir_name=?, path_prefix=?, updated_at=? WHERE paper_id=?""",
+            params + (dir_name, pp, now, paper_id),
         )
     else:
         conn.execute(
-            "UPDATE papers SET status='download_failed', error_message=?, updated_at=? WHERE paper_id=?",
-            (error, now, paper_id),
+            """UPDATE papers SET status='download_failed', error_message=?, failure_phase=?,
+                      failure_category=?, failure_subtype=?, failure_tags=?, failure_metadata=?,
+                      updated_at=? WHERE paper_id=?""",
+            params + (now, paper_id),
         )
     conn.commit()
 
@@ -665,18 +698,30 @@ def mark_interpreted(conn: sqlite3.Connection, paper_id: str) -> None:
     """Mark a paper as interpreted."""
     now = _now()
     conn.execute(
-        "UPDATE papers SET status='interpreted', interpret_date=?, updated_at=? WHERE paper_id=?",
+        """UPDATE papers SET status='interpreted', interpret_date=?, error_message=NULL,
+                  failure_phase=NULL, failure_category=NULL, failure_subtype=NULL,
+                  failure_tags=NULL, failure_metadata=NULL, updated_at=? WHERE paper_id=?""",
         (now, now, paper_id),
     )
     conn.commit()
 
 
-def mark_interpret_failed(conn: sqlite3.Connection, paper_id: str, error: str) -> None:
+def mark_interpret_failed(conn: sqlite3.Connection, paper_id: str, error: str,
+                          *, category: str = None, subtype: str = None,
+                          tags: list[str] | None = None,
+                          metadata: dict | None = None) -> None:
     """Mark a paper interpretation as failed."""
     now = _now()
+    record = _failure_record('interpret', error, category, subtype, tags, metadata)
     conn.execute(
-        "UPDATE papers SET status='interpret_failed', error_message=?, updated_at=? WHERE paper_id=?",
-        (error, now, paper_id),
+        """UPDATE papers SET status='interpret_failed', error_message=?, failure_phase=?,
+                  failure_category=?, failure_subtype=?, failure_tags=?, failure_metadata=?,
+                  updated_at=? WHERE paper_id=?""",
+        (
+            error, record['phase'], record['category'], record['subtype'],
+            _serialize_failure_value(record['tags']),
+            _serialize_failure_value(record['metadata']), now, paper_id,
+        ),
     )
     conn.commit()
 
@@ -827,6 +872,150 @@ def _sanitize_path(name: str) -> str:
     return re.sub(r"[/\\:*?\"<>|']", '_', str(name))[:200]
 
 
+def _normalize_failure_tags(tags) -> list[str]:
+    if not tags:
+        return []
+    if isinstance(tags, str):
+        tags = [tags]
+    result = []
+    seen = set()
+    for tag in tags:
+        text = str(tag).strip().lower().replace(' ', '_')
+        if text and text not in seen:
+            result.append(text)
+            seen.add(text)
+    return result
+
+
+def _failure_text(error: str, metadata: dict | None = None) -> str:
+    parts = [str(error or '')]
+    if metadata:
+        for value in metadata.values():
+            if isinstance(value, (str, int, float, bool)):
+                parts.append(str(value))
+    return ' '.join(parts).lower()
+
+
+def _failure_record(phase: str, error: str, category: str = None,
+                    subtype: str = None, tags: list[str] | None = None,
+                    metadata: dict | None = None) -> dict:
+    classifier = classify_download_failure if phase == 'download' else classify_interpret_failure
+    inferred = classifier(error, metadata)
+    category = category or inferred.get('category')
+    subtype = subtype or inferred.get('subtype')
+    merged_tags = _normalize_failure_tags(inferred.get('tags', []))
+    merged_tags.extend(tag for tag in _normalize_failure_tags(tags) if tag not in merged_tags)
+    merged_metadata = {}
+    if inferred.get('metadata'):
+        merged_metadata.update(inferred['metadata'])
+    if metadata:
+        merged_metadata.update(metadata)
+    return {
+        'phase': phase,
+        'category': category,
+        'subtype': subtype,
+        'tags': merged_tags,
+        'metadata': merged_metadata,
+    }
+
+
+def _serialize_failure_value(value):
+    if value is None or value == [] or value == {}:
+        return None
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def classify_download_failure(error: str, metadata: dict | None = None) -> dict:
+    text = _failure_text(error, metadata)
+    if any(token in text for token in ('turnstile',)):
+        return {'category': 'anti_bot', 'subtype': 'turnstile', 'tags': ['turnstile', 'challenge_unresolved']}
+    if any(token in text for token in ('cloudflare', 'cf_challenge', 'cf challenge')):
+        return {'category': 'anti_bot', 'subtype': 'cloudflare', 'tags': ['cloudflare', 'challenge_unresolved']}
+    if any(token in text for token in ('flaresolverr not running', 'flaresolverr')):
+        return {'category': 'anti_bot', 'subtype': 'flaresolverr_missing', 'tags': ['flaresolverr', 'missing_service']}
+    if '2captcha' in text and any(token in text for token in ('no ', 'missing', 'not configured')):
+        return {'category': 'anti_bot', 'subtype': 'captcha_missing_key', 'tags': ['2captcha', 'missing_key']}
+    if any(token in text for token in ('recaptcha', 'captcha')):
+        return {'category': 'anti_bot', 'subtype': 'captcha_failed', 'tags': ['captcha']}
+    if any(token in text for token in ('anti-bot', 'anti bot', 'challenge did not resolve', 'proof-of-work', 'pow challenge')):
+        return {'category': 'anti_bot', 'subtype': 'challenge_unresolved', 'tags': ['challenge_unresolved']}
+    if any(token in text for token in ('no pdf links found', 'no pdf link', 'no valid download link', 'no usable pdf', 'no pdf url', 'pdf download failed')):
+        return {'category': 'no_download_link', 'subtype': 'no_pdf_links_found', 'tags': ['no_pdf_link']}
+    if any(token in text for token in ('not oa', 'not open access', 'paywall', 'subscription required', 'access denied', 'forbidden', 'http 401', 'http 403', 'likely blocked')):
+        return {'category': 'paywalled', 'subtype': 'not_open_access', 'tags': ['paywall']}
+    if any(token in text for token in ('html, not pdf', 'html instead of pdf', 'content-type: text/html', 'expected pdf but got')):
+        return {'category': 'invalid_pdf', 'subtype': 'html_instead_of_pdf', 'tags': ['html', 'not_pdf']}
+    if any(token in text for token in ('not a valid pdf', 'invalid pdf', 'non-pdf', 'non pdf', 'pdf too small', 'corrupt', 'truncated')):
+        subtype = 'pdf_too_small' if 'too small' in text else 'not_pdf'
+        return {'category': 'invalid_pdf', 'subtype': subtype, 'tags': ['invalid_pdf']}
+    if any(token in text for token in ('playwright not installed', 'chrome missing', 'chrome not found', 'real display', 'browser timeout', 'browser download error')):
+        return {'category': 'browser_failure', 'subtype': 'browser_unavailable', 'tags': ['browser']}
+    if any(token in text for token in ('invalid url', 'invalid doi', 'http 404', 'http 410', 'not found', 'urlerror', 'name or service not known', 'connection refused', 'timed out', 'timeout')):
+        subtype = 'http_404' if '404' in text else 'timeout' if 'timeout' in text or 'timed out' in text else 'invalid_or_dead_link'
+        return {'category': 'invalid_or_dead_link', 'subtype': subtype, 'tags': ['link_failure']}
+    if 'pdf unavailable' in text:
+        return {'category': 'unknown_download_failure', 'subtype': 'pdf_unavailable', 'tags': ['pdf_unavailable']}
+    return {'category': 'unknown_download_failure', 'subtype': 'unknown', 'tags': []}
+
+
+def classify_interpret_failure(error: str, metadata: dict | None = None) -> dict:
+    text = _failure_text(error, metadata)
+    doc_type = (metadata or {}).get('doc_type')
+    if doc_type and doc_type != 'research_article':
+        return {'category': 'non_paper', 'subtype': str(doc_type), 'tags': [str(doc_type)]}
+    if any(token in text for token in ('no pdf file', 'pdf file missing', 'missing pdf')):
+        return {'category': 'missing_pdf', 'subtype': 'pdf_file_missing', 'tags': ['missing_pdf']}
+    if 'insufficient text' in text:
+        return {'category': 'content_extraction', 'subtype': 'insufficient_text', 'tags': ['insufficient_text']}
+    if any(token in text for token in ('pdf extract', 'extract error', 'extractor', 'pdftotext')):
+        subtype = 'extract_timeout' if 'timed out' in text or 'timeout' in text else 'pdf_extract_failed'
+        return {'category': 'content_extraction', 'subtype': subtype, 'tags': ['pdf_extraction']}
+    for subtype, tokens in {
+        'author_correction': ('author_correction', 'correction', 'erratum'),
+        'supplementary_material': ('supplementary', 'supplemental'),
+        'editorial_commentary': ('editorial', 'commentary', 'letter to editor'),
+        'advertisement': ('advertisement', 'promotional'),
+    }.items():
+        if any(token in text for token in tokens):
+            return {'category': 'non_paper', 'subtype': subtype, 'tags': [subtype]}
+    if any(token in text for token in ('title', 'abstract', 'does not match', "don't match", 'mismatch')):
+        return {'category': 'non_paper', 'subtype': 'title_abstract_mismatch', 'tags': ['title_abstract_mismatch']}
+    if any(token in text for token in ('llm call failed', 'api', 'http error', 'json', 'both english interpret and brief llm calls failed')):
+        subtype = 'all_required_llm_calls_failed' if 'both english' in text else 'api_error'
+        return {'category': 'llm_api', 'subtype': subtype, 'tags': ['llm_api']}
+    if any(token in text for token in ('validation error', 'validator')):
+        return {'category': 'validation_error', 'subtype': 'validator_error', 'tags': ['validation_error']}
+    return {'category': 'unknown_interpret_failure', 'subtype': 'unknown', 'tags': []}
+
+
+def _backfill_failure_fields(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """SELECT paper_id, status, error_message FROM papers
+           WHERE status IN ('download_failed', 'interpret_failed')
+             AND (failure_category IS NULL OR failure_category = '')"""
+    ).fetchall()
+    for row in rows:
+        phase = 'download' if row['status'] == 'download_failed' else 'interpret'
+        record = _failure_record(
+            phase, row['error_message'] or '',
+            metadata={'backfilled': True, 'backfilled_from': 'error_message'},
+        )
+        conn.execute(
+            """UPDATE papers SET failure_phase=?, failure_category=?, failure_subtype=?,
+                      failure_tags=?, failure_metadata=? WHERE paper_id=?""",
+            (
+                record['phase'], record['category'], record['subtype'],
+                _serialize_failure_value(record['tags']),
+                _serialize_failure_value(record['metadata']),
+                row['paper_id'],
+            ),
+        )
+    if rows:
+        conn.commit()
+
+
 def _backfill_path_prefix(conn: sqlite3.Connection) -> None:
     """Backfill path_prefix for rows that have dir_name but no path_prefix."""
     rows = conn.execute(
@@ -875,11 +1064,12 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
             d['relevance'] = json.loads(d['relevance'])
         except json.JSONDecodeError:
             pass
-    if d.get('matched_tags'):
-        try:
-            d['matched_tags'] = json.loads(d['matched_tags'])
-        except json.JSONDecodeError:
-            pass
+    for json_field in ('matched_tags', 'failure_tags', 'failure_metadata'):
+        if d.get(json_field):
+            try:
+                d[json_field] = json.loads(d[json_field])
+            except json.JSONDecodeError:
+                pass
     return d
 
 

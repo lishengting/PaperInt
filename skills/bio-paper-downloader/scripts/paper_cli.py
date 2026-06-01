@@ -339,9 +339,17 @@ def download_arxiv(arxiv_id, config):
     try:
         with _urlopen_with_retry(req, config, attempts=2) as r:
             data = r.read()
-            return data if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) and data[:5] == b'%PDF-' else None
+            if len(data) >= cfg(config, 'download.min_pdf_size_bytes', 10000) and data[:5] == b'%PDF-':
+                return data
+            _record_download_failure('arXiv returned invalid PDF data',
+                                     category='invalid_pdf', subtype='not_pdf',
+                                     tags=['arxiv', 'invalid_pdf'],
+                                     metadata={'url': url, 'bytes': len(data)})
+            return None
     except Exception as e:
         print(f"    download error: {e}", file=sys.stderr)
+        _record_download_failure(str(e), category='invalid_or_dead_link',
+                                 metadata={'url': url, 'source': 'arxiv'})
         return None
 
 
@@ -359,6 +367,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
         chain_result = run_aabots_sync(pdf_url, aabots, config, is_biorxiv=True)
         if chain_result.success:
             return chain_result.content
+        _record_aabots_failure(chain_result, pdf_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -380,8 +389,9 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
                 data = r.read()
                 if data.startswith(b'%PDF'):
                     return data
-        except Exception:
-            pass
+        except Exception as e:
+            _record_download_failure(str(e), category='invalid_or_dead_link',
+                                     metadata={'url': url, 'source': server})
         time.sleep(1)
 
     if fallback_level >= 1:
@@ -395,6 +405,10 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
                 return data
         except Exception as e:
             print(f"  Browser fallback error: {e}", file=sys.stderr)
+            _record_download_failure(str(e), category='browser_failure',
+                                     subtype='browser_fallback_failed',
+                                     tags=['browser_fallback'],
+                                     metadata={'source': server})
 
     return None
 
@@ -425,7 +439,14 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
         cmd.append('--stealth')
     if aabots_stealth:
         cmd.append('--aabots-stealth')
-    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                           text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        _record_download_failure('browser helper timed out', category='browser_failure',
+                                 subtype='browser_timeout', tags=['browser_timeout'],
+                                 metadata={'source': server})
+        raise
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -434,6 +455,7 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
                 data = f.read()
             os.unlink(pdf_path)
             return data
+    _print_and_record_subprocess_failure(r, metadata={'source': server, 'helper': 'download_biorxiv_browser'})
     return None
 
 
@@ -481,6 +503,14 @@ async def _browser_download_cdp(doi, server, config, chrome_port):
     if isinstance(js_result, dict) and 'data' in js_result:
         import base64
         return base64.b64decode(js_result['data'])
+    if isinstance(js_result, dict) and 'error' in js_result:
+        _record_download_failure(f"JS fetch failed: {js_result['error']}",
+                                 category='browser_failure', subtype='js_fetch_failed',
+                                 tags=['js_fetch_failed'], metadata={'source': server})
+        return None
+    _record_download_failure(f"Unexpected JS result: {js_result}",
+                             category='browser_failure', subtype='unexpected_js_result',
+                             tags=['browser'], metadata={'source': server})
     return None
 
 
@@ -526,13 +556,17 @@ def _download_browser_only(paper, config, data_dir, conn, force=False,
                                               stealth_enabled=stealth_enabled)
     except Exception as e:
         print(f"  [browser-only] FAILED: {e}", file=sys.stderr)
-        mark_download_failed(conn, pid, f"Browser-only failed: {e}", dirname)
+        mark_download_failed(conn, pid, f"Browser-only failed: {e}", dirname,
+                             category='browser_failure', subtype='browser_only_failed',
+                             tags=['browser_only'], metadata={'error': str(e)})
         return False
 
     if not pdf_data or not pdf_data.startswith(b'%PDF'):
         msg = 'Browser-only returned non-PDF data'
         print(f"  [browser-only] FAILED: {msg}", file=sys.stderr)
-        mark_download_failed(conn, pid, msg, dirname)
+        mark_download_failed(conn, pid, msg, dirname,
+                             category='invalid_pdf', subtype='not_pdf',
+                             tags=['browser_only', 'not_pdf'])
         return False
 
     pdf_path = os.path.join(paper_dir, f"{safe_pid}.pdf")
@@ -643,6 +677,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
         chain_result = run_aabots_sync(doi_url, aabots, config)
         if chain_result.success:
             return chain_result.content
+        _record_aabots_failure(chain_result, doi_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -668,9 +703,15 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
-    r = subprocess.run(
-        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr,
-        timeout=600)
+    try:
+        r = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        _record_download_failure('publisher browser helper timed out', category='browser_failure',
+                                 subtype='browser_timeout', tags=['browser_timeout'],
+                                 metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
+        return None
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -679,6 +720,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
                 data = f.read()
             os.unlink(pdf_path)
             return data
+    _print_and_record_subprocess_failure(r, metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
     return None
 
 
@@ -719,6 +761,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
         chain_result = run_aabots_sync(pdf_url, aabots, config)
         if chain_result.success:
             return chain_result.content
+        _record_aabots_failure(chain_result, pdf_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -731,8 +774,13 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
             data = r.read()
             if _is_pdf(data):
                 return data
-    except Exception:
-        pass
+            _record_download_failure('direct PDF URL returned non-PDF data',
+                                     category='invalid_pdf', subtype='not_pdf',
+                                     tags=['direct_pdf', 'not_pdf'],
+                                     metadata={'url': pdf_url, 'bytes': len(data)})
+    except Exception as e:
+        _record_download_failure(str(e), category='invalid_or_dead_link',
+                                 metadata={'url': pdf_url})
 
     # Browser fallback (if fallback_level >= 1)
     if fallback_level < 1:
@@ -757,8 +805,15 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
-    r = subprocess.run(
-        cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
+    try:
+        r = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        _record_download_failure('direct PDF browser helper timed out', category='browser_failure',
+                                 subtype='browser_timeout', tags=['browser_timeout'],
+                                 metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
+        return None
     if r.returncode == 0:
         for f in os.listdir(tmpdir):
             if f.endswith('.pdf'):
@@ -767,6 +822,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                     data = fh.read()
                 os.unlink(pdf_path)
                 return data
+    _print_and_record_subprocess_failure(r, metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
     return None
 
 
@@ -793,8 +849,9 @@ def _download_pmc_pdf(pmc_id, config):
             data = r.read()
             if data[:5] == b'%PDF-' and len(data) > 10000:
                 return data
-    except Exception:
-        pass
+    except Exception as e:
+        _record_download_failure(str(e), category='invalid_or_dead_link',
+                                 metadata={'pmc_id': pmc_id, 'url': url})
 
     # Fallback: Europe PMC (no Cloudflare/PoW anti-bot wall)
     try:
@@ -805,8 +862,12 @@ def _download_pmc_pdf(pmc_id, config):
             if data[:5] == b'%PDF-' and len(data) > 10000:
                 print(f"  Downloaded from Europe PMC", file=sys.stderr)
                 return data
-    except Exception:
-        pass
+    except Exception as e:
+        _record_download_failure(str(e), category='invalid_or_dead_link',
+                                 metadata={'pmc_id': pmc_id, 'url': epmc_url})
+    _record_download_failure('PMC PDF unavailable', category='no_download_link',
+                             subtype='pmc_no_pdf', tags=['pmc_no_pdf'],
+                             metadata={'pmc_id': pmc_id})
     return None
 
 
@@ -887,10 +948,65 @@ def _generate_info_md(paper, paper_dir, safe_pid) -> dict | None:
 
 SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv': 4}
 
+_LAST_DOWNLOAD_FAILURE = None
+_DOWNLOAD_FAILURE_PRIORITY = {
+    'unknown_download_failure': 0,
+    'browser_failure': 1,
+    'invalid_or_dead_link': 2,
+    'no_download_link': 3,
+    'paywalled': 4,
+    'invalid_pdf': 5,
+    'anti_bot': 6,
+}
+
+
+def _record_download_failure(message, category=None, subtype=None, tags=None, metadata=None):
+    global _LAST_DOWNLOAD_FAILURE
+    failure = {
+        'message': message,
+        'category': category,
+        'subtype': subtype,
+        'tags': tags or [],
+        'metadata': metadata or {},
+    }
+    current_priority = _DOWNLOAD_FAILURE_PRIORITY.get((_LAST_DOWNLOAD_FAILURE or {}).get('category'), -1)
+    next_priority = _DOWNLOAD_FAILURE_PRIORITY.get(category, 0)
+    if _LAST_DOWNLOAD_FAILURE is None or next_priority >= current_priority:
+        _LAST_DOWNLOAD_FAILURE = failure
+    return failure
+
+
+def _record_aabots_failure(result, url=None):
+    if not result or not getattr(result, 'error', None):
+        return None
+    metadata = {
+        'method': getattr(result, 'method', None),
+        'needs_browser': getattr(result, 'needs_browser', None),
+        'stealth_recommended': getattr(result, 'stealth_recommended', None),
+        'captcha_recommended': getattr(result, 'captcha_recommended', None),
+        'url': url,
+    }
+    return _record_download_failure(
+        getattr(result, 'error', 'anti-bot bypass failed'),
+        category='anti_bot', metadata={k: v for k, v in metadata.items() if v is not None},
+    )
+
+
+def _print_and_record_subprocess_failure(result, category=None, subtype=None, tags=None, metadata=None):
+    stderr = (getattr(result, 'stderr', '') or '').strip()
+    if stderr:
+        print(stderr, file=sys.stderr)
+    if getattr(result, 'returncode', 0) != 0 or stderr:
+        message = stderr.splitlines()[-1] if stderr else f'helper exited with status {result.returncode}'
+        return _record_download_failure(message, category, subtype, tags, metadata)
+    return None
+
 
 def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                    captcha_enabled=False, stealth_enabled=False, aabots=None):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
+    global _LAST_DOWNLOAD_FAILURE
+    _LAST_DOWNLOAD_FAILURE = None
     if aabots is None:
         aabots = []
     pid = paper.get('paper_id', '')
@@ -957,6 +1073,10 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
             if not pdf_data and not pmc_has_pdf:
                 print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
+                _record_download_failure('not OA via PMC, PDF unavailable',
+                                         category='paywalled', subtype='not_open_access',
+                                         tags=['not_oa', 'pmc_no_pdf'],
+                                         metadata={'source': src, 'pmid': paper.get('pmid', pid)})
     elif src in ('crossref', 'europepmc'):
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
@@ -995,6 +1115,9 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                     print(f"  [cnsp] PMC OA download failed, falling back to pipeline", file=sys.stderr)
             else:
                 print(f"  [cnsp] has_pdf=True but no PMCID, skipping PMC download", file=sys.stderr)
+                _record_download_failure('has_pdf=True but no PMCID for PMC download',
+                                         category='no_download_link', subtype='pmc_no_pdf',
+                                         tags=['pmc_no_pdf'], metadata={'doi': doi})
 
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
@@ -1002,6 +1125,10 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                                   stealth_enabled=stealth_enabled, aabots=aabots)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
+                _record_download_failure('direct download returned HTML, not PDF (paywall/blocked)',
+                                         category='invalid_pdf', subtype='html_instead_of_pdf',
+                                         tags=['html_instead_of_pdf', 'paywall_or_blocked'],
+                                         metadata={'source': src, 'url': paper.get('pdf_url')})
                 pdf_data = None
 
         # Step 2: if direct failed, use publisher download via DOI
@@ -1013,6 +1140,9 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
     # Validate PDF before accepting (catch corrupt/truncated files early)
     if pdf_data and not _validate_pdf(pdf_data):
         print(f"  [warn] downloaded data is not a valid PDF, discarding", file=sys.stderr)
+        _record_download_failure('downloaded data is not a valid PDF',
+                                 category='invalid_pdf', subtype='corrupt_pdf',
+                                 tags=['invalid_pdf'], metadata={'source': src})
         pdf_data = None
 
     # Fallback: try alternative sources
@@ -1053,6 +1183,10 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                     break
                 else:
                     print(f"  [warn] fallback {alt_src} returned invalid PDF, discarding", file=sys.stderr)
+                    _record_download_failure(f'fallback {alt_src} returned invalid PDF',
+                                             category='invalid_pdf', subtype='corrupt_pdf',
+                                             tags=['invalid_pdf', 'fallback'],
+                                             metadata={'fallback_source': alt_src})
                     pdf_data = None
             time.sleep(2)
 
@@ -1063,7 +1197,18 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         print(f"  OK: {len(pdf_data)} bytes")
         return True
     else:
-        mark_download_failed(conn, pid, "PDF unavailable", dirname)
+        failure = _LAST_DOWNLOAD_FAILURE or {
+            'message': 'PDF unavailable',
+            'category': 'unknown_download_failure',
+            'subtype': 'pdf_unavailable',
+            'tags': ['pdf_unavailable'],
+            'metadata': {'source': src},
+        }
+        mark_download_failed(conn, pid, failure['message'], dirname,
+                             category=failure.get('category'),
+                             subtype=failure.get('subtype'),
+                             tags=failure.get('tags'),
+                             metadata=failure.get('metadata'))
         print(f"  UNAVAILABLE (metadata saved)")
         return False
 

@@ -647,6 +647,9 @@ def cmd_show(args, config):
         ('pdf_url', 'PDF URL'),
         ('dir_name', 'Directory'),
         ('status', 'Status'),
+        ('failure_phase', 'Failure Phase'),
+        ('failure_category', 'Failure Category'),
+        ('failure_subtype', 'Failure Subtype'),
         ('search_date', 'Search Date'),
         ('download_date', 'Download Date'),
         ('interpret_date', 'Interpret Date'),
@@ -664,7 +667,12 @@ def cmd_show(args, config):
         print(f"{label}: {value}")
 
     # Show parsed JSON fields if present
-    for json_field, label in (('relevance', 'Relevance'), ('matched_tags', 'Tags')):
+    for json_field, label in (
+        ('relevance', 'Relevance'),
+        ('matched_tags', 'Tags'),
+        ('failure_tags', 'Failure Tags'),
+        ('failure_metadata', 'Failure Metadata'),
+    ):
         value = paper.get(json_field)
         if value and isinstance(value, (dict, list)):
             print(f"\n{label}:")
