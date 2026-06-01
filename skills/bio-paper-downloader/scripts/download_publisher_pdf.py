@@ -18,6 +18,7 @@ import asyncio
 import atexit
 import base64
 import os
+import random
 import re
 import signal
 import subprocess
@@ -41,6 +42,59 @@ try:
     _CAPTCHA_AVAILABLE = True
 except ImportError:
     _CAPTCHA_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Enhanced anti-bot stealth helpers
+# ---------------------------------------------------------------------------
+
+def _bezier_curve(start, end, steps=25):
+    """Generate control points for a human-like mouse movement between two points."""
+    cx1 = start[0] + (end[0] - start[0]) * random.uniform(0.2, 0.4) + random.randint(-20, 20)
+    cy1 = start[1] + (end[1] - start[1]) * random.uniform(0.1, 0.3) + random.randint(-15, 15)
+    cx2 = start[0] + (end[0] - start[0]) * random.uniform(0.6, 0.8) + random.randint(-20, 20)
+    cy2 = start[1] + (end[1] - start[1]) * random.uniform(0.7, 0.9) + random.randint(-15, 15)
+    points = []
+    for i in range(steps + 1):
+        t = i / steps
+        x = (1-t)**3 * start[0] + 3*(1-t)**2*t * cx1 + 3*(1-t)*t**2 * cx2 + t**3 * end[0]
+        y = (1-t)**3 * start[1] + 3*(1-t)**2*t * cy1 + 3*(1-t)*t**2 * cy2 + t**3 * end[1]
+        points.append((x, y))
+    return points
+
+
+async def _human_mouse_move(page, target_x, target_y, steps=25):
+    """Move mouse to target using bezier curve with random micro-delays."""
+    start_x, start_y = 100 + random.randint(0, 500), 100 + random.randint(0, 300)
+    curve = _bezier_curve((start_x, start_y), (target_x, target_y), steps)
+    for x, y in curve:
+        await page.mouse.move(x, y)
+        await asyncio.sleep(random.uniform(0.002, 0.015))
+
+
+async def _apply_enhanced_stealth(page):
+    """Enhanced stealth: playwright-stealth + fingerprint randomization + human behavior."""
+    if _STEALTH_AVAILABLE:
+        await Stealth().apply_stealth_async(page)
+
+    resolutions = [(1920, 1080), (1680, 1050), (1440, 900), (1366, 768)]
+    w, h = random.choice(resolutions)
+    await page.set_viewport_size({"width": w, "height": h})
+
+    await page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => false});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+        const origQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({state: Notification.permission}) :
+            origQuery(parameters)
+        );
+    """)
+
+    print("  [aabots-stealth] Enhanced stealth applied (fingerprint randomization + viewport variation)",
+          file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +508,7 @@ async def _safe_eval(page, js, retries=3):
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
                                        captcha_enabled=False, captcha_api_key='',
-                                       stealth_enabled=False):
+                                       stealth_enabled=False, aabots_stealth=False):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -473,7 +527,9 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
             page = await ctx.new_page()
-            if _STEALTH_AVAILABLE and stealth_enabled:
+            if aabots_stealth:
+                await _apply_enhanced_stealth(page)
+            elif _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(page)
 
             # Step 1: follow DOI to publisher page
@@ -745,7 +801,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
-                                  stealth_enabled=False):
+                                  stealth_enabled=False, aabots_stealth=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -802,7 +858,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=attempt_stealth)
+                                                    stealth_enabled=attempt_stealth,
+                                                    aabots_stealth=aabots_stealth)
         if result['success']:
             # ...
             return result
@@ -831,7 +888,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait, xvfb=True,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=headed_stealth)
+                                                    stealth_enabled=headed_stealth,
+                                                    aabots_stealth=aabots_stealth)
         if result['success']:
             # ...
             return result
@@ -864,7 +922,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     wait=wait, xvfb=False,
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=headed_stealth)
+                                                    stealth_enabled=headed_stealth,
+                                                    aabots_stealth=aabots_stealth)
         if result['success']:
             # ...
             return result
@@ -900,6 +959,8 @@ def main():
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
     p.add_argument('--stealth', action='store_true', default=False,
                    help='Enable playwright-stealth (default: off)')
+    p.add_argument('--aabots-stealth', action='store_true', default=False,
+                   help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -911,7 +972,8 @@ def main():
         fallback_level=args.fallback_level, wait=args.wait,
         captcha_enabled=args.captcha,
         captcha_api_key=args.twocap_api,
-        stealth_enabled=args.stealth))
+        stealth_enabled=args.stealth,
+        aabots_stealth=args.aabots_stealth))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

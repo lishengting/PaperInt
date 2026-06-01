@@ -22,6 +22,7 @@ import asyncio
 import atexit
 import base64
 import os
+import random
 import re
 import signal
 import subprocess
@@ -48,6 +49,58 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _bezier_curve(start, end, steps=25):
+    """Generate control points for a human-like mouse movement between two points."""
+    cx1 = start[0] + (end[0] - start[0]) * random.uniform(0.2, 0.4) + random.randint(-20, 20)
+    cy1 = start[1] + (end[1] - start[1]) * random.uniform(0.1, 0.3) + random.randint(-15, 15)
+    cx2 = start[0] + (end[0] - start[0]) * random.uniform(0.6, 0.8) + random.randint(-20, 20)
+    cy2 = start[1] + (end[1] - start[1]) * random.uniform(0.7, 0.9) + random.randint(-15, 15)
+    points = []
+    for i in range(steps + 1):
+        t = i / steps
+        x = (1-t)**3 * start[0] + 3*(1-t)**2*t * cx1 + 3*(1-t)*t**2 * cx2 + t**3 * end[0]
+        y = (1-t)**3 * start[1] + 3*(1-t)**2*t * cy1 + 3*(1-t)*t**2 * cy2 + t**3 * end[1]
+        points.append((x, y))
+    return points
+
+
+async def _human_mouse_move(page, target_x, target_y, steps=25):
+    """Move mouse to target using bezier curve with random micro-delays."""
+    start_x, start_y = 100 + random.randint(0, 500), 100 + random.randint(0, 300)
+    curve = _bezier_curve((start_x, start_y), (target_x, target_y), steps)
+    for x, y in curve:
+        await page.mouse.move(x, y)
+        await asyncio.sleep(random.uniform(0.002, 0.015))
+
+
+async def _apply_enhanced_stealth(page):
+    """Enhanced stealth: playwright-stealth + fingerprint randomization + human behavior."""
+    # 1. Apply playwright_stealth patches if available
+    if _STEALTH_AVAILABLE:
+        await Stealth().apply_stealth_async(page)
+
+    # 2. Randomize viewport to a common resolution
+    resolutions = [(1920, 1080), (1680, 1050), (1440, 900), (1366, 768)]
+    w, h = random.choice(resolutions)
+    await page.set_viewport_size({"width": w, "height": h})
+
+    # 3. Override navigator properties for consistency
+    await page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => false});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+        const origQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({state: Notification.permission}) :
+            origQuery(parameters)
+        );
+    """)
+
+    print("  [aabots-stealth] Enhanced stealth applied (fingerprint randomization + viewport variation)",
+          file=sys.stderr)
+
 
 def _pick_chrome():
     """Find an available Chrome/Chromium binary."""
@@ -559,7 +612,7 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10)
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                                      headless, profile_dir=None, wait=10, xvfb=True,
                                      captcha_enabled=False, captcha_api_key='',
-                                     stealth_enabled=False):
+                                     stealth_enabled=False, aabots_stealth=False):
     """
     Core download logic. Returns dict result.
     """
@@ -620,7 +673,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                 await cdp_tmp.detach()
 
                 page = await ctx.new_page()
-                if _STEALTH_AVAILABLE and stealth_enabled:
+                if aabots_stealth:
+                    await _apply_enhanced_stealth(page)
+                elif _STEALTH_AVAILABLE and stealth_enabled:
                     await Stealth().apply_stealth_async(page)
                 sub_result = await _download_generic_pdf(page, url_or_doi,
                                                          output_path, timeout,
@@ -678,7 +733,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             # Step 1 — navigate to homepage, pass Cloudflare challenge
             print(f"  [browser:{mode}] Passing Cloudflare...", file=sys.stderr)
             page = await ctx.new_page()
-            if _STEALTH_AVAILABLE and stealth_enabled:
+            if aabots_stealth:
+                await _apply_enhanced_stealth(page)
+            elif _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(page)
             await page.goto(f'https://www.{server}.org/', wait_until='domcontentloaded',
                             timeout=timeout * 1000)
@@ -714,7 +771,9 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 
             pdf_page = await ctx.new_page()
 
-            if _STEALTH_AVAILABLE and stealth_enabled:
+            if aabots_stealth:
+                await _apply_enhanced_stealth(pdf_page)
+            elif _STEALTH_AVAILABLE and stealth_enabled:
                 await Stealth().apply_stealth_async(pdf_page)
 
             # Try download capture first (in case server sends attachment)
@@ -800,7 +859,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
                                fallback_level=2, wait=10, captcha_enabled=False,
                                captcha_api_key='', stealth_enabled=False,
-                               cookie_dir=None):
+                               aabots_stealth=False, cookie_dir=None):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -840,7 +899,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 wait=wait,
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
-                                                stealth_enabled=stealth_enabled)
+                                                stealth_enabled=stealth_enabled,
+                                                aabots_stealth=aabots_stealth)
         if result['success']:
             # ... (headless success)
             return result
@@ -868,7 +928,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 wait=wait, xvfb=True,
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
-                                                stealth_enabled=stealth_enabled)
+                                                stealth_enabled=stealth_enabled,
+                                                aabots_stealth=aabots_stealth)
         if result['success']:
             # ... (headless success)
             return result
@@ -901,7 +962,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 wait=wait, xvfb=False,
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
-                                                stealth_enabled=stealth_enabled)
+                                                stealth_enabled=stealth_enabled,
+                                                aabots_stealth=aabots_stealth)
         if result['success']:
             # ... (headless success)
             return result
@@ -936,6 +998,8 @@ def main():
                    help='2Captcha API key (resolved from config.yaml download.twocaptcha_api_key_env)')
     p.add_argument('--stealth', action='store_true', default=False,
                    help='Enable playwright-stealth (default: off)')
+    p.add_argument('--aabots-stealth', action='store_true', default=False,
+                   help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
     p.add_argument('--cookie-dir', default=None,
                    help='Directory for persistent browser profile/cookies (default: <output-dir>/chrome_profile)')
     args = p.parse_args()
@@ -946,6 +1010,7 @@ def main():
         captcha_enabled=args.captcha,
         captcha_api_key=args.twocap_api,
         stealth_enabled=args.stealth,
+        aabots_stealth=args.aabots_stealth,
         cookie_dir=args.cookie_dir))
 
     if result['success']:

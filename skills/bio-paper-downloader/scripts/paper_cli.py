@@ -346,9 +346,24 @@ def download_arxiv(arxiv_id, config):
 
 
 def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False):
+                      stealth_enabled=False, aabots=None):
     if not doi:
         return None
+
+    # Try aabots chain first (HTTP-level methods before direct/browser attempts)
+    stealth_enhanced = stealth_enabled
+    captcha_enhanced = captcha_enabled
+    if aabots:
+        from aabots import run_aabots_sync
+        pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
+        chain_result = run_aabots_sync(pdf_url, aabots, config, is_biorxiv=True)
+        if chain_result.success:
+            return chain_result.content
+        if chain_result.stealth_recommended:
+            stealth_enhanced = True
+        if chain_result.captcha_recommended:
+            captcha_enhanced = True
+
     headers = {
         'User-Agent': ua(config),
         'Accept': 'application/pdf,*/*;q=0.9',
@@ -373,8 +388,9 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
         print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
         try:
             data = _browser_download(doi, server, config, fallback_level=fallback_level,
-                                         captcha_enabled=captcha_enabled,
-                                         stealth_enabled=stealth_enabled)
+                                         captcha_enabled=captcha_enhanced,
+                                         stealth_enabled=stealth_enhanced,
+                                         aabots_stealth=stealth_enhanced and aabots)
             if data:
                 return data
         except Exception as e:
@@ -384,7 +400,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
 
 
 def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False):
+                      stealth_enabled=False, aabots_stealth=False):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -407,6 +423,8 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
             cmd.extend(['--twocap-api', twocap_api])
     if stealth_enabled:
         cmd.append('--stealth')
+    if aabots_stealth:
+        cmd.append('--aabots-stealth')
     r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=sys.stderr, timeout=600)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -615,13 +633,27 @@ def _run_browser_only_download(homepage, article_url, pdf_url,
 
 
 def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False,
-                        stealth_enabled=False):
+                        stealth_enabled=False, aabots=None):
+    # Try aabots chain first (HTTP-level methods before subprocess)
+    stealth_enhanced = stealth_enabled
+    captcha_enhanced = captcha_enabled
+    if aabots and doi:
+        from aabots import run_aabots_sync
+        doi_url = f"https://doi.org/{doi}"
+        chain_result = run_aabots_sync(doi_url, aabots, config)
+        if chain_result.success:
+            return chain_result.content
+        if chain_result.stealth_recommended:
+            stealth_enhanced = True
+        if chain_result.captcha_recommended:
+            captcha_enhanced = True
+
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     base_cmd = [sys.executable, script, '--doi', doi,
                 '--timeout', '60',
                 '--fallback-level', str(fallback_level)]
-    if captcha_enabled:
+    if captcha_enhanced:
         base_cmd.append('--captcha')
         api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
         twocap_api = os.environ.get(api_key_env, '')
@@ -629,8 +661,10 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
             twocap_api = api_key_env
         if twocap_api:
             base_cmd.extend(['--twocap-api', twocap_api])
-    if stealth_enabled:
+    if stealth_enhanced:
         base_cmd.append('--stealth')
+    if aabots and stealth_enhanced:
+        base_cmd.append('--aabots-stealth')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -673,9 +707,23 @@ def _validate_pdf(data: bytes) -> bool:
 
 
 def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False,
-                         stealth_enabled=False):
+                         stealth_enabled=False, aabots=None):
     if not pdf_url:
         return None
+
+    # Try aabots chain first (HTTP-level methods before direct/browser attempts)
+    stealth_enhanced = stealth_enabled
+    captcha_enhanced = captcha_enabled
+    if aabots:
+        from aabots import run_aabots_sync
+        chain_result = run_aabots_sync(pdf_url, aabots, config)
+        if chain_result.success:
+            return chain_result.content
+        if chain_result.stealth_recommended:
+            stealth_enhanced = True
+        if chain_result.captcha_recommended:
+            captcha_enhanced = True
+
     # Direct HTTP attempt
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
@@ -694,7 +742,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     base_cmd = [sys.executable, script, pdf_url,
                 '--timeout', '180',
                 '--fallback-level', str(fallback_level)]
-    if captcha_enabled:
+    if captcha_enhanced:
         base_cmd.append('--captcha')
         api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
         twocap_api = os.environ.get(api_key_env, '')
@@ -702,8 +750,10 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
             twocap_api = api_key_env
         if twocap_api:
             base_cmd.extend(['--twocap-api', twocap_api])
-    if stealth_enabled:
+    if stealth_enhanced:
         base_cmd.append('--stealth')
+    if aabots and stealth_enhanced:
+        base_cmd.append('--aabots-stealth')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -839,8 +889,10 @@ SOURCE_PRIORITY = {'pubmed': 0, 'scholar': 1, 'arxiv': 2, 'medrxiv': 3, 'biorxiv
 
 
 def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
-                   captcha_enabled=False, stealth_enabled=False):
+                   captcha_enabled=False, stealth_enabled=False, aabots=None):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
+    if aabots is None:
+        aabots = []
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
 
@@ -877,22 +929,22 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi') or pid, src, config,
                                      fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
     elif src == 'scholar':
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
         if pdf_url and fallback_level >= 1:
             pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
         if not pdf_data and doi and fallback_level >= 1:
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
         if not pdf_data:
             # Try PMC download (with Europe PMC fallback) even if API
             # says has_pdf=False — the API may be wrong, and Europe PMC often
@@ -910,7 +962,8 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
                                            fallback_level=fallback_level,
                                            captcha_enabled=captcha_enabled,
-                                           stealth_enabled=stealth_enabled)
+                                           stealth_enabled=stealth_enabled,
+                                           aabots=aabots)
         if not pdf_data:
             pmc_id = paper.get('pmc_id')
             if not pmc_id and paper.get('pmid'):
@@ -919,7 +972,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                 pdf_data = _download_pmc_pdf(pmc_id, config)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -946,7 +999,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
             pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 pdf_data = None
@@ -955,7 +1008,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         if not pdf_data and doi:
             print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots)
 
     # Validate PDF before accepting (catch corrupt/truncated files early)
     if pdf_data and not _validate_pdf(pdf_data):
@@ -1199,10 +1252,13 @@ def cmd_get(args, config):
                                     force=args.force,
                                     stealth_enabled=args.stealth)
     else:
+        from aabots import resolve_methods
+        aabots_methods = resolve_methods(args.aabots) if args.aabots else []
         ok = download_paper(paper, config, args.data_dir, conn,
                             force=args.force, fallback_level=args.fallback_level,
                             captcha_enabled=args.captcha,
-                            stealth_enabled=args.stealth)
+                            stealth_enabled=args.stealth,
+                            aabots=aabots_methods)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -1213,8 +1269,11 @@ def cmd_get(args, config):
 
 
 def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
-             cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False):
+             cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False,
+             aabots=None):
     """Auto-mode: download all papers with status='searched' from the database."""
+    from aabots import resolve_methods
+    aabots_methods = resolve_methods(aabots) if aabots else []
     conn = get_conn(config)
     if retry_failed:
         papers = get_papers_by_status(conn, 'download_failed')
@@ -1251,7 +1310,7 @@ def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
         result = download_paper(p, config, data_dir, conn,
                                fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, aabots=aabots_methods)
         if result is True:
             ok += 1
         elif result is False:
@@ -1314,9 +1373,17 @@ def main():
     p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                    help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
     p.add_argument('--captcha', action='store_true', default=False,
-                   help='Enable 2Captcha solving for Cloudflare/reCAPTCHA (default: off, costs money)')
+                   help='Enable 2Captcha solving for Cloudflare/reCAPTCHA (default: off, costs money). '
+                        'Deprecated: use --aabots 2Captcha instead.')
     p.add_argument('--stealth', action='store_true', default=False,
-                   help='Enable playwright-stealth for browser downloads (default: off)')
+                   help='Enable playwright-stealth for browser downloads (default: off). '
+                        'Deprecated: use --aabots Stealth instead.')
+    p.add_argument('--aabots', type=str, default='Default',
+                   help='Anti-anti-bot bypass chain. Presets: Default, Quick, Full, CloudScraper, '
+                        'Stealth, FlareSolverr, 2Captcha, Browser. '
+                        'Or comma-separated methods: cloudscraper,curl_cffi,stealth,flaresolverr,2captcha. '
+                        'Default preserves existing behavior. Example: --aabots Default,FlareSolverr '
+                        'tries FlareSolverr before the existing pipeline.')
     p.add_argument('--limit', '-n', type=int, default=None,
                    help='Max number of papers to download in auto-mode')
     p.add_argument('--retry-failed', action='store_true',
@@ -1348,12 +1415,16 @@ def main():
     gp.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                     help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
     gp.add_argument('--captcha', action='store_true', default=False,
-                    help='Enable 2Captcha solving (default: off)')
+                    help='Enable 2Captcha solving (default: off). Deprecated: use --aabots 2Captcha')
     gp.add_argument('--browser-only', action='store_true',
                     help='Bypass all fallback logic: headed Chrome with real GUI display, '
                          'no Xvfb, no captcha. Only for biorxiv/medrxiv.')
     gp.add_argument('--stealth', action='store_true', default=False,
-                    help='Enable playwright-stealth (default: off)')
+                    help='Enable playwright-stealth (default: off). Deprecated: use --aabots Stealth')
+    gp.add_argument('--aabots', type=str, default='Default',
+                    help='Anti-anti-bot bypass chain. Presets: Default, Quick, Full, CloudScraper, '
+                         'Stealth, FlareSolverr, 2Captcha, Browser. '
+                         'Or comma-separated methods. Overrides top-level --aabots for this download.')
 
     # ---- pdf ----
     pp = sub.add_parser(
@@ -1368,6 +1439,24 @@ def main():
                     help='Output file path (default: derived from URL)')
 
     args = p.parse_args()
+
+    # --aabots takes precedence; --stealth/--captcha map to aabots presets (backward compat)
+    # If --aabots is Default and --stealth/--captcha are set, augment the chain
+    _aabots_parts = []
+    if args.stealth:
+        _aabots_parts.append("Stealth")
+    if args.captcha:
+        _aabots_parts.append("2Captcha")
+    if _aabots_parts:
+        if args.aabots == 'Default':
+            args.aabots = ','.join(_aabots_parts)
+        else:
+            args.aabots = args.aabots + ',' + ','.join(_aabots_parts)
+        if args.stealth:
+            print("  [note] --stealth is deprecated, use --aabots Stealth", file=sys.stderr)
+        if args.captcha:
+            print("  [note] --captcha is deprecated, use --aabots 2Captcha", file=sys.stderr)
+
     config = load_config(args.config)
     config['__config_path__'] = args.config
 
@@ -1385,7 +1474,8 @@ def main():
                         cns_only=args.cns,
                         fallback_level=args.fallback_level,
                         captcha_enabled=args.captcha,
-                        stealth_enabled=args.stealth)
+                        stealth_enabled=args.stealth,
+                        aabots=args.aabots)
     return 1
 
 
