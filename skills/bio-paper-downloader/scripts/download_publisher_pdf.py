@@ -1053,8 +1053,7 @@ def main():
                    help='Enable playwright-stealth (default: off)')
     p.add_argument('--aabots-stealth', action='store_true', default=False,
                    help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
-    p.add_argument('--aabots-handoff', default=None,
-                   help='Path to JSON handoff from AABots containing final_url/html/cookies')
+    p.add_argument('--aabots-handoff', default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
 
     if not args.doi and not args.pmid:

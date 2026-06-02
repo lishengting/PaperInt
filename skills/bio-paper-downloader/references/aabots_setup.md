@@ -164,6 +164,8 @@ Do not put the raw API key into `config.yaml` unless this is a private, non-shar
 
 ## Usage examples
 
+Public usage is unchanged: use `--aabots` on `paper_cli.py`. You do not need to pass `--aabots-handoff`; that is an internal argument used only when `paper_cli.py` transfers a solved HTML session, final URL, and cookies to browser helper subprocesses.
+
 Default behavior, unchanged:
 
 ```bash
