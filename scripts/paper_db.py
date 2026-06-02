@@ -1048,10 +1048,11 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     if d.get('metadata_json'):
         try:
-            meta = json.loads(d['metadata_json'])
+            meta = json.loads(d['metadata_json']) if isinstance(d['metadata_json'], (str, bytes, bytearray)) else d['metadata_json']
             # Only apply meta values that are non-null and don't clobber existing column values
-            meta = {k: v for k, v in meta.items() if v is not None and not d.get(k)}
-            d.update(meta)
+            if isinstance(meta, dict):
+                meta = {k: v for k, v in meta.items() if v is not None and not d.get(k)}
+                d.update(meta)
         except json.JSONDecodeError:
             pass
     # Normalize DOI — fix malformed PII-prefixed values from PubMed search
@@ -1059,13 +1060,13 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         d['doi'] = _normalize_doi(d['doi'])
     if d.get('title'):
         d['title'] = _clean_markup_text(d['title'])
-    if d.get('relevance'):
+    if d.get('relevance') and isinstance(d['relevance'], (str, bytes, bytearray)):
         try:
             d['relevance'] = json.loads(d['relevance'])
         except json.JSONDecodeError:
             pass
     for json_field in ('matched_tags', 'failure_tags', 'failure_metadata'):
-        if d.get(json_field):
+        if d.get(json_field) and isinstance(d[json_field], (str, bytes, bytearray)):
             try:
                 d[json_field] = json.loads(d[json_field])
             except json.JSONDecodeError:
