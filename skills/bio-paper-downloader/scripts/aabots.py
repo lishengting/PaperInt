@@ -368,10 +368,13 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
 async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> BypassResult:
     """FlareSolverr Docker service at localhost:8191. Handles interactive CF challenges."""
     fs_url = "http://localhost:8191/v1"
+    session_id = f"aabots_{int(time.time() * 1000)}_{os.getpid()}"
     payload_obj = {
         "cmd": "request.get",
         "url": url,
         "maxTimeout": 180000,
+        "session": session_id,
+        "session_ttl_minutes": 5,
     }
     payload_text = json.dumps(payload_obj, ensure_ascii=False)
     payload = payload_text.encode()
@@ -387,6 +390,7 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
         req = urllib.request.Request(
             fs_url, data=payload,
             headers={"Content-Type": "application/json"},
+            method="POST",
         )
         resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=210)
         data = json.loads(resp.read())
