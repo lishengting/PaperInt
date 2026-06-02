@@ -505,6 +505,16 @@ async def _safe_eval(page, js, retries=3):
     raise Exception('Page navigation destroyed execution context')
 
 
+_OBVIOUS_NON_PDF_EXTENSIONS = (
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.avif', '.bmp',
+    '.tif', '.tiff', '.ico', '.mp4', '.webm', '.mov', '.avi', '.mp3', '.wav',
+)
+
+
+def _is_obvious_non_pdf_url(url):
+    return urlparse(url).path.lower().endswith(_OBVIOUS_NON_PDF_EXTENSIONS)
+
+
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
                                        captcha_enabled=False, captcha_api_key='',
@@ -623,6 +633,27 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
 
             print(f"  [publisher:{mode}] PDF links found: {len(unique)}", file=sys.stderr)
 
+            def _resolve_pdf_href(href):
+                if href.startswith('/'):
+                    parsed = urlparse(page.url)
+                    return f'{parsed.scheme}://{parsed.netloc}{href}'
+                if not href.startswith('http'):
+                    return urljoin(page.url, href)
+                return href
+
+            filtered = []
+            for l in unique:
+                resolved_href = _resolve_pdf_href(l['href'])
+                if _is_obvious_non_pdf_url(resolved_href):
+                    continue
+                candidate = dict(l)
+                candidate['_resolved_href'] = resolved_href
+                filtered.append(candidate)
+
+            if not filtered:
+                result['message'] = 'No PDF links found on publisher page after filtering obvious non-PDF links'
+                return result
+
             def _score(link):
                 s = 0
                 t = link['text']
@@ -648,16 +679,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 s -= len(h)
                 return s
 
-            best = max(unique, key=_score)
-            pdf_href = best['href']
-
-            if pdf_href.startswith('/'):
-                parsed = urlparse(page.url)
-                pdf_url = f'{parsed.scheme}://{parsed.netloc}{pdf_href}'
-            elif not pdf_href.startswith('http'):
-                pdf_url = urljoin(page.url, pdf_href)
-            else:
-                pdf_url = pdf_href
+            best = max(filtered, key=_score)
+            pdf_url = best['_resolved_href']
 
             print(f"  [publisher:{mode}] PDF URL: {pdf_url}", file=sys.stderr)
 

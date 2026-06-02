@@ -4,7 +4,7 @@ Bio Paper DB Viewer CLI — view papers and statistics from the SQLite database.
 
 Usage:
   paper_cli.py stats
-  paper_cli.py list [-s STATUS] [--source SOURCE] [-k KEYWORD] [--found-by KEYWORD] [-n N] [--offset OFFSET]
+  paper_cli.py list [-s STATUS] [--source SOURCE] [-k KEYWORD] [--found-by KEYWORD] [-n N] [--offset OFFSET] [--id-only]
   paper_cli.py show -p PAPER_ID
   paper_cli.py delete -p PAPER_ID
   paper_cli.py set-status -p PAPER_ID [PAPER_ID ...] -s STATUS
@@ -556,6 +556,10 @@ def cmd_list(args, config):
         params.extend([args.limit, args.offset])
         rows = [_row_to_dict(r) for r in conn.execute(sql, params).fetchall()]
 
+    if args.id_only:
+        print(' '.join(str(paper.get('paper_id') or '') for paper in rows))
+        return 0
+
     if not rows:
         which = 'CNS ' if args.cns else ('CNSP ' if args.cnsp else '')
         print(f"No {which}papers found{f' matching filters' if (args.status or args.source or args.keyword or args.found_by or args.journals) else ''}.")
@@ -828,6 +832,8 @@ def main():
                     help='Show full field values without truncation')
     lp.add_argument('--json', action='store_true',
                     help='Output as JSON with full paper details')
+    lp.add_argument('--id-only', action='store_true',
+                    help='Output only space-separated paper IDs')
     lp.add_argument('--cnsp', action='store_true',
                     help='Only show papers whose journal is in CNSP (Nature/Science/Cell/PLOS)')
     lp.add_argument('--cns', action='store_true',
