@@ -147,13 +147,15 @@ def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str
     is_html = 'text/html' in (content_type or '').lower() or b'<html' in lower or b'<!doctype html' in lower
     if not is_html:
         return False
-    if len(data) < 2000:
+    # Tiny redirect/interstitial pages are not useful handoff sessions; they just
+    # stop the chain before stronger methods like FlareSolverr get a chance.
+    if len(data) < 20000:
         return False
     markers = (
-        b'citation_', b'article', b'fulltext', b'.pdf', b'showpdf',
-        b'/pdf', b'download', b'doi.org', b'publisher', b'journal'
+        b'citation_', b'citation_pdf_url', b'article', b'fulltext', b'.pdf', b'showpdf',
+        b'/pdf', b'download', b'publisher', b'journal'
     )
-    url_markers = ('doi.org', 'cell.com', 'elsevier', 'sciencedirect', 'nature.com', 'springer')
+    url_markers = ('cell.com', 'sciencedirect', 'nature.com', 'springer')
     return any(m in lower for m in markers) or any(m in (final_url or '').lower() for m in url_markers)
 
 
@@ -211,10 +213,22 @@ def _flaresolverr_cookies_to_playwright(cookie_list: list, final_url: str = '') 
 
 
 def _cookiejar_to_playwright(jar, final_url: str = '') -> list[dict]:
-    """Convert requests-like cookie jars to Playwright cookies."""
+    """Convert requests-like or dict-like cookie jars to Playwright cookies."""
     host = _domain_from_url(final_url)
     result = []
+    if not jar:
+        return result
+    if hasattr(jar, 'items'):
+        for name, value in jar.items():
+            if name and value is not None:
+                result.append({'name': str(name), 'value': str(value), 'domain': host, 'path': '/'})
+        return result
     for c in list(jar or []):
+        if isinstance(c, str):
+            value = jar.get(c) if hasattr(jar, 'get') else None
+            if c and value is not None:
+                result.append({'name': c, 'value': str(value), 'domain': host, 'path': '/'})
+            continue
         name = getattr(c, 'name', None)
         value = getattr(c, 'value', None)
         if not name or value is None:
@@ -309,7 +323,7 @@ async def _method_curl_cffi(url: str, config: dict, is_biorxiv: bool) -> BypassR
         content = resp.content
         content_type = resp.headers.get('content-type', '')
         final_url = getattr(resp, 'url', url)
-        cookies = {c.name: c.value for c in session.cookies}
+        cookies = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else dict(session.cookies.items())
         browser_cookies = _cookiejar_to_playwright(session.cookies, final_url)
         if resp.status_code == 200 and _is_pdf(content):
             return BypassResult(success=True, mode="pdf", content=content,

@@ -868,6 +868,7 @@ def _download_pmc_pdf(pmc_id, config):
     if not pmc_id.upper().startswith('PMC'):
         pmc_id = f'PMC{pmc_id}'
     url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/main.pdf"
+    print(f"  [pmc] trying NCBI PMC PDF: {pmc_id}", file=sys.stderr)
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
         with _urlopen_with_retry(req, config, attempts=2) as r:
@@ -881,6 +882,7 @@ def _download_pmc_pdf(pmc_id, config):
     # Fallback: Europe PMC (no Cloudflare/PoW anti-bot wall)
     try:
         epmc_url = f"https://europepmc.org/articles/{pmc_id}?pdf=render"
+        print(f"  [pmc] trying Europe PMC PDF: {pmc_id}", file=sys.stderr)
         req2 = urllib.request.Request(epmc_url, headers={'User-Agent': ua(config)})
         with _urlopen_with_retry(req2, config, attempts=2) as r:
             data = r.read()
@@ -1133,6 +1135,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             # has PDFs that NCBI's PMC gates behind PoW challenges.
             pmc_id = paper.get('pmc_id')
             if not pmc_id:
+                print(f"  [pmc] checking PubMed PMC link for PMID {paper.get('pmid', pid)}...", file=sys.stderr)
                 pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
             if pmc_id:
                 pdf_data = _download_pmc_pdf(pmc_id, config)
