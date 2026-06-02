@@ -15,6 +15,7 @@ import json
 import os
 import random
 import re
+import selectors
 import signal
 import socket
 import ssl
@@ -54,6 +55,60 @@ def _data_tmp(config):
     tmp_dir = os.path.join(os.path.dirname(db_path) or 'data', 'tmp')
     os.makedirs(tmp_dir, exist_ok=True)
     return tmp_dir
+
+
+def _run_helper_streaming_stderr(cmd, timeout=600):
+    """Run a helper subprocess while teeing stderr in real time."""
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        bufsize=0, env=env)
+    stderr_chunks = []
+    passthrough = getattr(sys.stderr, '_real', sys.stderr)
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stderr, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout if timeout is not None else None
+
+    def _tee(data):
+        if not data:
+            return
+        text = data.decode('utf-8', errors='replace') if isinstance(data, bytes) else data
+        stderr_chunks.append(text)
+        passthrough.write(text)
+        passthrough.flush()
+
+    def _drain_stderr():
+        while True:
+            data = os.read(proc.stderr.fileno(), 4096)
+            if not data:
+                return
+            _tee(data)
+
+    try:
+        while True:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 and proc.poll() is None:
+                    proc.kill()
+                    _, tail = proc.communicate()
+                    _tee(tail)
+                    raise subprocess.TimeoutExpired(cmd, timeout, stderr=''.join(stderr_chunks))
+                wait = min(0.1, max(0, remaining))
+            else:
+                wait = 0.1
+
+            for key, _ in selector.select(wait):
+                data = os.read(key.fileobj.fileno(), 4096)
+                _tee(data)
+
+            if proc.poll() is not None:
+                _drain_stderr()
+                result = subprocess.CompletedProcess(cmd, proc.returncode, stderr=''.join(stderr_chunks))
+                result._stderr_streamed = True
+                return result
+    finally:
+        selector.close()
 
 
 # ---------------------------------------------------------------------------
@@ -447,8 +502,7 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
     if aabots_handoff:
         cmd.extend(['--aabots-handoff', aabots_handoff])
     try:
-        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                           text=True, timeout=600)
+        r = _run_helper_streaming_stderr(cmd, timeout=600)
     except subprocess.TimeoutExpired:
         _record_download_failure('browser helper timed out', category='browser_failure',
                                  subtype='browser_timeout', tags=['browser_timeout'],
@@ -719,9 +773,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
     try:
-        r = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, timeout=600)
+        r = _run_helper_streaming_stderr(cmd, timeout=600)
     except subprocess.TimeoutExpired:
         _record_download_failure('publisher browser helper timed out', category='browser_failure',
                                  subtype='browser_timeout', tags=['browser_timeout'],
@@ -829,9 +881,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
     try:
-        r = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, timeout=600)
+        r = _run_helper_streaming_stderr(cmd, timeout=600)
     except subprocess.TimeoutExpired:
         _record_download_failure('direct PDF browser helper timed out', category='browser_failure',
                                  subtype='browser_timeout', tags=['browser_timeout'],
@@ -1062,7 +1112,7 @@ def _cleanup_aabots_handoff(path):
 
 def _print_and_record_subprocess_failure(result, category=None, subtype=None, tags=None, metadata=None):
     stderr = (getattr(result, 'stderr', '') or '').strip()
-    if stderr:
+    if stderr and not getattr(result, '_stderr_streamed', False):
         print(stderr, file=sys.stderr)
     if getattr(result, 'returncode', 0) != 0 or stderr:
         message = stderr.splitlines()[-1] if stderr else f'helper exited with status {result.returncode}'
