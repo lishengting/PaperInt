@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import atexit
 import base64
+import json
 import os
 import random
 import re
@@ -515,10 +516,58 @@ def _is_obvious_non_pdf_url(url):
     return urlparse(url).path.lower().endswith(_OBVIOUS_NON_PDF_EXTENSIONS)
 
 
+def _load_aabots_handoff(path):
+    if not path:
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('version') != 1 or data.get('mode') != 'session':
+            print(f"  [publisher] ignoring invalid AABots handoff: {path}", file=sys.stderr)
+            return None
+        return data
+    except Exception as e:
+        print(f"  [publisher] could not load AABots handoff: {e}", file=sys.stderr)
+        return None
+
+
+def _valid_playwright_cookie(cookie):
+    if not isinstance(cookie, dict) or not cookie.get('name') or cookie.get('value') is None:
+        return None
+    allowed = {'name', 'value', 'url', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'}
+    clean = {k: v for k, v in cookie.items() if k in allowed and v is not None}
+    clean['value'] = str(clean['value'])
+    if 'url' not in clean:
+        clean.setdefault('path', '/')
+        if not clean.get('domain'):
+            return None
+    return clean
+
+
+async def _apply_aabots_handoff(ctx, handoff, log_prefix):
+    if not handoff:
+        return None
+    cookies = []
+    for cookie in handoff.get('browser_cookies') or []:
+        clean = _valid_playwright_cookie(cookie)
+        if clean:
+            cookies.append(clean)
+    final_url = handoff.get('final_url') or handoff.get('source_url')
+    print(f"{log_prefix} AABots handoff: method={handoff.get('method')} cookies={len(cookies)} final_url={final_url}", file=sys.stderr)
+    if cookies:
+        try:
+            await ctx.add_cookies(cookies)
+            print(f"{log_prefix} Injected AABots cookies: {','.join(c['name'] for c in cookies)}", file=sys.stderr)
+        except Exception as e:
+            print(f"{log_prefix} AABots cookie injection failed: {e}", file=sys.stderr)
+    return final_url
+
+
 async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                                        headless, profile_dir=None, wait=10, xvfb=True,
                                        captcha_enabled=False, captcha_api_key='',
-                                       stealth_enabled=False, aabots_stealth=False):
+                                       stealth_enabled=False, aabots_stealth=False,
+                                       aabots_handoff=None):
     """Core download logic. Returns dict result."""
     from playwright.async_api import async_playwright
 
@@ -536,6 +585,8 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
+            handoff_final_url = await _apply_aabots_handoff(ctx, aabots_handoff,
+                                                            f'  [publisher:{mode}]')
             page = await ctx.new_page()
             if aabots_stealth:
                 await _apply_enhanced_stealth(page)
@@ -543,20 +594,33 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
                 await Stealth().apply_stealth_async(page)
 
             # Step 1: follow DOI to publisher page
-            print(f"  [publisher:{mode}] Following DOI...", file=sys.stderr)
-            await page.goto(doi_url, wait_until='domcontentloaded',
+            target_url = handoff_final_url or doi_url
+            print(f"  [publisher:{mode}] Following {'AABots final URL' if handoff_final_url else 'DOI'}...", file=sys.stderr)
+            await page.goto(target_url, wait_until='domcontentloaded',
                             timeout=timeout * 1000)
             # Elsevier redirect chain (doi.org → linkinghub → cell.com):
             # wait for JS-driven navigations to settle before touching the page
             final_url = await _wait_for_url_stable(page)
             print(f"  [publisher:{mode}] Landed on: {final_url}", file=sys.stderr)
 
-            if not await _wait_for_page(page, 30,
-                                         captcha_enabled=captcha_enabled,
-                                         captcha_api_key=captcha_api_key,
-                                         log_prefix=f'  [publisher:{mode}]'):
-                result['message'] = 'Anti-bot challenge did not resolve'
-                return result
+            snapshot_loaded = False
+            page_ready = await _wait_for_page(page, 30,
+                                              captcha_enabled=captcha_enabled,
+                                              captcha_api_key=captcha_api_key,
+                                              log_prefix=f'  [publisher:{mode}]')
+            if not page_ready:
+                if aabots_handoff and aabots_handoff.get('html'):
+                    print(f"  [publisher:{mode}] Browser page still challenged; scanning AABots HTML snapshot", file=sys.stderr)
+                    try:
+                        await page.set_content(aabots_handoff['html'], wait_until='domcontentloaded',
+                                               timeout=timeout * 1000)
+                        snapshot_loaded = True
+                    except Exception as e:
+                        result['message'] = f'AABots HTML snapshot could not be loaded: {e}'
+                        return result
+                else:
+                    result['message'] = 'Anti-bot challenge did not resolve'
+                    return result
 
             # Verify page has real content (bot pages have very few links)
             try:
@@ -564,7 +628,7 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
             except Exception:
                 result['message'] = 'Page navigation destroyed execution context'
                 return result
-            if link_count < 5:
+            if link_count < 5 and not snapshot_loaded:
                 result['message'] = f'Page has no content ({link_count} links), likely blocked'
                 return result
 
@@ -824,7 +888,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
-                                  stealth_enabled=False, aabots_stealth=False):
+                                  stealth_enabled=False, aabots_stealth=False,
+                                  aabots_handoff_path=None):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -845,7 +910,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     if not doi:
         return {'success': False, 'message': 'No DOI provided'}
 
-    doi_url = f'https://doi.org/{doi}'
+    aabots_handoff = _load_aabots_handoff(aabots_handoff_path)
+    doi_url = aabots_handoff.get('final_url') if aabots_handoff and aabots_handoff.get('final_url') else f'https://doi.org/{doi}'
     safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
     output_path = Path(output_dir) / safe_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -882,7 +948,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
                                                     stealth_enabled=attempt_stealth,
-                                                    aabots_stealth=aabots_stealth)
+                                                    aabots_stealth=aabots_stealth,
+                                                    aabots_handoff=aabots_handoff)
         if result['success']:
             # ...
             return result
@@ -912,7 +979,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
                                                     stealth_enabled=headed_stealth,
-                                                    aabots_stealth=aabots_stealth)
+                                                    aabots_stealth=aabots_stealth,
+                                                    aabots_handoff=aabots_handoff)
         if result['success']:
             # ...
             return result
@@ -946,7 +1014,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     captcha_enabled=captcha_enabled,
                                                     captcha_api_key=captcha_api_key,
                                                     stealth_enabled=headed_stealth,
-                                                    aabots_stealth=aabots_stealth)
+                                                    aabots_stealth=aabots_stealth,
+                                                    aabots_handoff=aabots_handoff)
         if result['success']:
             # ...
             return result
@@ -984,6 +1053,8 @@ def main():
                    help='Enable playwright-stealth (default: off)')
     p.add_argument('--aabots-stealth', action='store_true', default=False,
                    help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
+    p.add_argument('--aabots-handoff', default=None,
+                   help='Path to JSON handoff from AABots containing final_url/html/cookies')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -996,7 +1067,8 @@ def main():
         captcha_enabled=args.captcha,
         captcha_api_key=args.twocap_api,
         stealth_enabled=args.stealth,
-        aabots_stealth=args.aabots_stealth))
+        aabots_stealth=args.aabots_stealth,
+        aabots_handoff_path=args.aabots_handoff))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

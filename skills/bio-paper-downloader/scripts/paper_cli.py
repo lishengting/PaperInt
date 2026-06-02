@@ -361,13 +361,17 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
     # Try aabots chain first (HTTP-level methods before direct/browser attempts)
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
+    aabots_handoff = None
     if aabots:
         from aabots import run_aabots_sync
         pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
         chain_result = run_aabots_sync(pdf_url, aabots, config, is_biorxiv=True)
-        if chain_result.success:
+        if _is_aabots_pdf_result(chain_result):
             return chain_result.content
-        _record_aabots_failure(chain_result, pdf_url)
+        if _is_aabots_session_result(chain_result):
+            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+        else:
+            _record_aabots_failure(chain_result, pdf_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -400,7 +404,8 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
             data = _browser_download(doi, server, config, fallback_level=fallback_level,
                                          captcha_enabled=captcha_enhanced,
                                          stealth_enabled=stealth_enhanced,
-                                         aabots_stealth=stealth_enhanced and aabots)
+                                         aabots_stealth=stealth_enhanced and aabots,
+                                         aabots_handoff=aabots_handoff)
             if data:
                 return data
         except Exception as e:
@@ -414,7 +419,7 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
 
 
 def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False, aabots_stealth=False):
+                      stealth_enabled=False, aabots_stealth=False, aabots_handoff=None):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -439,6 +444,8 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
         cmd.append('--stealth')
     if aabots_stealth:
         cmd.append('--aabots-stealth')
+    if aabots_handoff:
+        cmd.extend(['--aabots-handoff', aabots_handoff])
     try:
         r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                            text=True, timeout=600)
@@ -447,6 +454,8 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
                                  subtype='browser_timeout', tags=['browser_timeout'],
                                  metadata={'source': server})
         raise
+    finally:
+        _cleanup_aabots_handoff(aabots_handoff)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -671,13 +680,17 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
     # Try aabots chain first (HTTP-level methods before subprocess)
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
+    aabots_handoff = None
     if aabots and doi:
         from aabots import run_aabots_sync
         doi_url = f"https://doi.org/{doi}"
         chain_result = run_aabots_sync(doi_url, aabots, config)
-        if chain_result.success:
+        if _is_aabots_pdf_result(chain_result):
             return chain_result.content
-        _record_aabots_failure(chain_result, doi_url)
+        if _is_aabots_session_result(chain_result):
+            aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
+        else:
+            _record_aabots_failure(chain_result, doi_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -700,6 +713,8 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
         base_cmd.append('--stealth')
     if aabots and stealth_enhanced:
         base_cmd.append('--aabots-stealth')
+    if aabots_handoff:
+        base_cmd.extend(['--aabots-handoff', aabots_handoff])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -712,6 +727,8 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
                                  subtype='browser_timeout', tags=['browser_timeout'],
                                  metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
         return None
+    finally:
+        _cleanup_aabots_handoff(aabots_handoff)
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -756,12 +773,16 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     # Try aabots chain first (HTTP-level methods before direct/browser attempts)
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
+    aabots_handoff = None
     if aabots:
         from aabots import run_aabots_sync
         chain_result = run_aabots_sync(pdf_url, aabots, config)
-        if chain_result.success:
+        if _is_aabots_pdf_result(chain_result):
             return chain_result.content
-        _record_aabots_failure(chain_result, pdf_url)
+        if _is_aabots_session_result(chain_result):
+            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+        else:
+            _record_aabots_failure(chain_result, pdf_url)
         if chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result.captcha_recommended:
@@ -802,6 +823,8 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
         base_cmd.append('--stealth')
     if aabots and stealth_enhanced:
         base_cmd.append('--aabots-stealth')
+    if aabots_handoff:
+        base_cmd.extend(['--aabots-handoff', aabots_handoff])
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -814,6 +837,8 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                                  subtype='browser_timeout', tags=['browser_timeout'],
                                  metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
         return None
+    finally:
+        _cleanup_aabots_handoff(aabots_handoff)
     if r.returncode == 0:
         for f in os.listdir(tmpdir):
             if f.endswith('.pdf'):
@@ -977,10 +1002,11 @@ def _record_download_failure(message, category=None, subtype=None, tags=None, me
 
 
 def _record_aabots_failure(result, url=None):
-    if not result or not getattr(result, 'error', None):
+    if not result or getattr(result, 'mode', None) == 'session' or not getattr(result, 'error', None):
         return None
     metadata = {
         'method': getattr(result, 'method', None),
+        'mode': getattr(result, 'mode', None),
         'needs_browser': getattr(result, 'needs_browser', None),
         'stealth_recommended': getattr(result, 'stealth_recommended', None),
         'captcha_recommended': getattr(result, 'captcha_recommended', None),
@@ -990,6 +1016,46 @@ def _record_aabots_failure(result, url=None):
         getattr(result, 'error', 'anti-bot bypass failed'),
         category='anti_bot', metadata={k: v for k, v in metadata.items() if v is not None},
     )
+
+
+def _is_aabots_pdf_result(result):
+    return bool(result and getattr(result, 'success', False) and getattr(result, 'mode', None) == 'pdf' and getattr(result, 'content', None))
+
+
+def _is_aabots_session_result(result):
+    return bool(result and getattr(result, 'success', False) and getattr(result, 'mode', None) == 'session')
+
+
+def _write_aabots_handoff(result, config, source_url):
+    if not _is_aabots_session_result(result):
+        return None
+    tmpdir = _data_tmp(config)
+    fd, path = tempfile.mkstemp(prefix='aabots_handoff_', suffix='.json', dir=tmpdir)
+    payload = {
+        'version': 1,
+        'method': getattr(result, 'method', None),
+        'mode': getattr(result, 'mode', None),
+        'source_url': source_url,
+        'final_url': getattr(result, 'final_url', None),
+        'status_code': getattr(result, 'status_code', None),
+        'content_type': getattr(result, 'content_type', None),
+        'html': getattr(result, 'html', None),
+        'cookies': getattr(result, 'cookies', None),
+        'browser_cookies': getattr(result, 'browser_cookies', None),
+    }
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print(f"  [aabots] Session handoff written: method={payload.get('method')} cookies={len(payload.get('browser_cookies') or [])} final_url={payload.get('final_url') or source_url}", file=sys.stderr)
+    return path
+
+
+def _cleanup_aabots_handoff(path):
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _print_and_record_subprocess_failure(result, category=None, subtype=None, tags=None, metadata=None):

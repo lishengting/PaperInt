@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import atexit
 import base64
+import json
 import os
 import random
 import re
@@ -100,6 +101,53 @@ async def _apply_enhanced_stealth(page):
 
     print("  [aabots-stealth] Enhanced stealth applied (fingerprint randomization + viewport variation)",
           file=sys.stderr)
+
+
+def _load_aabots_handoff(path):
+    if not path:
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('version') != 1 or data.get('mode') != 'session':
+            print(f"  [browser] ignoring invalid AABots handoff: {path}", file=sys.stderr)
+            return None
+        return data
+    except Exception as e:
+        print(f"  [browser] could not load AABots handoff: {e}", file=sys.stderr)
+        return None
+
+
+def _valid_playwright_cookie(cookie):
+    if not isinstance(cookie, dict) or not cookie.get('name') or cookie.get('value') is None:
+        return None
+    allowed = {'name', 'value', 'url', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'}
+    clean = {k: v for k, v in cookie.items() if k in allowed and v is not None}
+    clean['value'] = str(clean['value'])
+    if 'url' not in clean:
+        clean.setdefault('path', '/')
+        if not clean.get('domain'):
+            return None
+    return clean
+
+
+async def _apply_aabots_handoff(ctx, handoff, log_prefix):
+    if not handoff:
+        return None
+    cookies = []
+    for cookie in handoff.get('browser_cookies') or []:
+        clean = _valid_playwright_cookie(cookie)
+        if clean:
+            cookies.append(clean)
+    final_url = handoff.get('final_url') or handoff.get('source_url')
+    print(f"{log_prefix} AABots handoff: method={handoff.get('method')} cookies={len(cookies)} final_url={final_url}", file=sys.stderr)
+    if cookies:
+        try:
+            await ctx.add_cookies(cookies)
+            print(f"{log_prefix} Injected AABots cookies: {','.join(c['name'] for c in cookies)}", file=sys.stderr)
+        except Exception as e:
+            print(f"{log_prefix} AABots cookie injection failed: {e}", file=sys.stderr)
+    return final_url
 
 
 def _pick_chrome():
@@ -612,7 +660,8 @@ async def _download_generic_pdf(page, url_or_doi, output_path, timeout, wait=10)
 async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                                      headless, profile_dir=None, wait=10, xvfb=True,
                                      captcha_enabled=False, captcha_api_key='',
-                                     stealth_enabled=False, aabots_stealth=False):
+                                     stealth_enabled=False, aabots_stealth=False,
+                                     aabots_handoff=None):
     """
     Core download logic. Returns dict result.
     """
@@ -662,6 +711,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
                 ctx = browser.contexts[0]
+                handoff_final_url = await _apply_aabots_handoff(ctx, aabots_handoff,
+                                                                f'  [browser:{mode}]')
 
                 about_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 cdp_tmp = await ctx.new_cdp_session(about_page)
@@ -677,7 +728,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
                     await _apply_enhanced_stealth(page)
                 elif _STEALTH_AVAILABLE and stealth_enabled:
                     await Stealth().apply_stealth_async(page)
-                sub_result = await _download_generic_pdf(page, url_or_doi,
+                sub_result = await _download_generic_pdf(page, handoff_final_url or url_or_doi,
                                                          output_path, timeout,
                                                          wait=wait)
                 await browser.close()
@@ -729,6 +780,7 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
             print(f"  [browser:{mode}] Connecting to {chrome.cdp_url}", file=sys.stderr)
             browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
             ctx = browser.contexts[0]
+            await _apply_aabots_handoff(ctx, aabots_handoff, f'  [browser:{mode}]')
 
             # Step 1 — navigate to homepage, pass Cloudflare challenge
             print(f"  [browser:{mode}] Passing Cloudflare...", file=sys.stderr)
@@ -859,7 +911,8 @@ async def _do_download_via_browser(url_or_doi, output_dir, chrome_bin, timeout,
 async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=60,
                                fallback_level=2, wait=10, captcha_enabled=False,
                                captcha_api_key='', stealth_enabled=False,
-                               aabots_stealth=False, cookie_dir=None):
+                               aabots_stealth=False, aabots_handoff_path=None,
+                               cookie_dir=None):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -874,6 +927,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
     Returns dict: {success, file_path, file_size, message}
     """
     # Shared profile dir so retries share cookies (persists across downloads)
+    aabots_handoff = _load_aabots_handoff(aabots_handoff_path)
     profile_dir = cookie_dir or os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
 
@@ -900,7 +954,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
                                                 stealth_enabled=stealth_enabled,
-                                                aabots_stealth=aabots_stealth)
+                                                aabots_stealth=aabots_stealth,
+                                                aabots_handoff=aabots_handoff)
         if result['success']:
             # ... (headless success)
             return result
@@ -929,7 +984,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
                                                 stealth_enabled=stealth_enabled,
-                                                aabots_stealth=aabots_stealth)
+                                                aabots_stealth=aabots_stealth,
+                                                aabots_handoff=aabots_handoff)
         if result['success']:
             # ... (headless success)
             return result
@@ -963,7 +1019,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                                 captcha_enabled=captcha_enabled,
                                                 captcha_api_key=captcha_api_key,
                                                 stealth_enabled=stealth_enabled,
-                                                aabots_stealth=aabots_stealth)
+                                                aabots_stealth=aabots_stealth,
+                                                aabots_handoff=aabots_handoff)
         if result['success']:
             # ... (headless success)
             return result
@@ -1000,6 +1057,8 @@ def main():
                    help='Enable playwright-stealth (default: off)')
     p.add_argument('--aabots-stealth', action='store_true', default=False,
                    help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
+    p.add_argument('--aabots-handoff', default=None,
+                   help='Path to JSON handoff from AABots containing final_url/html/cookies')
     p.add_argument('--cookie-dir', default=None,
                    help='Directory for persistent browser profile/cookies (default: <output-dir>/chrome_profile)')
     args = p.parse_args()
@@ -1011,6 +1070,7 @@ def main():
         captcha_api_key=args.twocap_api,
         stealth_enabled=args.stealth,
         aabots_stealth=args.aabots_stealth,
+        aabots_handoff_path=args.aabots_handoff,
         cookie_dir=args.cookie_dir))
 
     if result['success']:

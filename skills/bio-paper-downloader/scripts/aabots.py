@@ -20,8 +20,9 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 
@@ -32,8 +33,14 @@ from typing import Callable
 @dataclass
 class BypassResult:
     success: bool = False
+    mode: str = "none"  # "pdf", "session", "signal", "none"
     content: bytes | None = None
+    html: str | None = None
+    content_type: str | None = None
+    final_url: str | None = None
+    status_code: int | None = None
     cookies: dict | None = None
+    browser_cookies: list[dict] | None = None
     method: str = ""
     error: str | None = None
     elapsed_ms: float = 0.0
@@ -115,18 +122,114 @@ def _is_pdf(data: bytes, min_size: int = 10000) -> bool:
 
 
 def _is_cf_challenge(data: bytes) -> bool:
-    """Check if response body looks like a Cloudflare challenge page."""
+    """Check if response body looks like an unresolved challenge page."""
+    lower = data[:200000].lower()
     return (
-        b'cf-browser-verify' in data
-        or b'challenges.cloudflare.com' in data
-        or b'Just a moment' in data
-        or b'checking your browser' in data
+        b'cf-browser-verify' in lower
+        or b'cf-challenge' in lower
+        or b'cf-please-wait' in lower
+        or b'cf-spinner' in lower
+        or b'just a moment' in lower
+        or b'checking your browser' in lower
+        or b'attention required' in lower
     )
 
 
+def _decode_html(data: bytes) -> str:
+    return data.decode('utf-8', errors='replace')
+
+
+def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str = '') -> bool:
+    """Return True when HTML looks useful enough to hand to browser fallback."""
+    lower = data[:200000].lower()
+    if not data or _is_cf_challenge(data):
+        return False
+    is_html = 'text/html' in (content_type or '').lower() or b'<html' in lower or b'<!doctype html' in lower
+    if not is_html:
+        return False
+    if len(data) < 2000:
+        return False
+    markers = (
+        b'citation_', b'article', b'fulltext', b'.pdf', b'showpdf',
+        b'/pdf', b'download', b'doi.org', b'publisher', b'journal'
+    )
+    url_markers = ('doi.org', 'cell.com', 'elsevier', 'sciencedirect', 'nature.com', 'springer')
+    return any(m in lower for m in markers) or any(m in (final_url or '').lower() for m in url_markers)
+
+
 def _extract_cookies(cookie_list: list) -> dict:
-    """Convert FlareSolverr cookie list to a simple dict."""
-    return {c["name"]: c["value"] for c in cookie_list} if cookie_list else {}
+    """Convert cookie list to a simple name/value dict."""
+    cookies = {}
+    if not cookie_list:
+        return cookies
+    for c in cookie_list:
+        name = c.get('name') if isinstance(c, dict) else None
+        value = c.get('value') if isinstance(c, dict) else None
+        if name and value is not None:
+            cookies[name] = value
+    return cookies
+
+
+def _domain_from_url(url: str) -> str:
+    host = urllib.parse.urlparse(url or '').hostname or ''
+    return host
+
+
+def _valid_same_site(value):
+    if not value:
+        return None
+    value = str(value)
+    mapping = {'lax': 'Lax', 'strict': 'Strict', 'none': 'None'}
+    return mapping.get(value.lower())
+
+
+def _flaresolverr_cookies_to_playwright(cookie_list: list, final_url: str = '') -> list[dict]:
+    """Convert FlareSolverr cookies to Playwright add_cookies() shape."""
+    host = _domain_from_url(final_url)
+    result = []
+    for c in cookie_list or []:
+        if not isinstance(c, dict) or not c.get('name') or c.get('value') is None:
+            continue
+        cookie = {
+            'name': c['name'],
+            'value': str(c['value']),
+            'domain': c.get('domain') or host,
+            'path': c.get('path') or '/',
+        }
+        if 'secure' in c:
+            cookie['secure'] = bool(c.get('secure'))
+        if 'httpOnly' in c:
+            cookie['httpOnly'] = bool(c.get('httpOnly'))
+        same_site = _valid_same_site(c.get('sameSite') or c.get('same_site'))
+        if same_site:
+            cookie['sameSite'] = same_site
+        expires = c.get('expires') or c.get('expiry')
+        if isinstance(expires, (int, float)) and expires > 0:
+            cookie['expires'] = int(expires)
+        result.append(cookie)
+    return result
+
+
+def _cookiejar_to_playwright(jar, final_url: str = '') -> list[dict]:
+    """Convert requests-like cookie jars to Playwright cookies."""
+    host = _domain_from_url(final_url)
+    result = []
+    for c in list(jar or []):
+        name = getattr(c, 'name', None)
+        value = getattr(c, 'value', None)
+        if not name or value is None:
+            continue
+        domain = getattr(c, 'domain', '') or host
+        path = getattr(c, 'path', '') or '/'
+        cookie = {'name': name, 'value': str(value), 'domain': domain, 'path': path}
+        secure = getattr(c, 'secure', None)
+        if secure is not None:
+            cookie['secure'] = bool(secure)
+        expires = getattr(c, 'expires', None)
+        if isinstance(expires, (int, float)) and expires > 0:
+            cookie['expires'] = int(expires)
+        result.append(cookie)
+    return result
 
 
 def _cfg(config: dict, path: str, default=None):
@@ -164,13 +267,26 @@ async def _method_cloudscraper(url: str, config: dict, is_biorxiv: bool) -> Bypa
         )
         resp = await asyncio.to_thread(scraper.get, url, timeout=30)
         content = resp.content
+        content_type = resp.headers.get('content-type', '')
+        final_url = getattr(resp, 'url', url)
+        cookies = _extract_cookies([{'name': c.name, 'value': c.value} for c in scraper.cookies])
+        browser_cookies = _cookiejar_to_playwright(scraper.cookies, final_url)
         if resp.status_code == 200 and _is_pdf(content):
-            return BypassResult(success=True, content=content, method="cloudscraper")
+            return BypassResult(success=True, mode="pdf", content=content,
+                                method="cloudscraper", cookies=cookies,
+                                browser_cookies=browser_cookies, final_url=final_url,
+                                status_code=resp.status_code, content_type=content_type)
+        if _looks_like_html_session(content, content_type, final_url):
+            return BypassResult(success=True, mode="session", content=content,
+                                html=_decode_html(content), method="cloudscraper",
+                                cookies=cookies, browser_cookies=browser_cookies,
+                                final_url=final_url, status_code=resp.status_code,
+                                content_type=content_type, needs_browser=True)
         if _is_cf_challenge(content):
             return BypassResult(success=False, method="cloudscraper",
                                 error="Cloudflare interactive challenge detected (needs browser)")
         return BypassResult(success=False, method="cloudscraper",
-                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF")
+                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session")
     except Exception as e:
         return BypassResult(success=False, method="cloudscraper", error=str(e))
 
@@ -186,17 +302,31 @@ async def _method_curl_cffi(url: str, config: dict, is_biorxiv: bool) -> BypassR
 
     print("  [aabots:curl_cffi] Sending request with Chrome TLS fingerprint...", file=sys.stderr)
     try:
+        session = requests.Session()
         resp = await asyncio.to_thread(
-            requests.get, url, impersonate="chrome", timeout=30
+            session.get, url, impersonate="chrome", timeout=30
         )
         content = resp.content
+        content_type = resp.headers.get('content-type', '')
+        final_url = getattr(resp, 'url', url)
+        cookies = {c.name: c.value for c in session.cookies}
+        browser_cookies = _cookiejar_to_playwright(session.cookies, final_url)
         if resp.status_code == 200 and _is_pdf(content):
-            return BypassResult(success=True, content=content, method="curl_cffi")
+            return BypassResult(success=True, mode="pdf", content=content,
+                                method="curl_cffi", cookies=cookies,
+                                browser_cookies=browser_cookies, final_url=final_url,
+                                status_code=resp.status_code, content_type=content_type)
+        if _looks_like_html_session(content, content_type, final_url):
+            return BypassResult(success=True, mode="session", content=content,
+                                html=_decode_html(content), method="curl_cffi",
+                                cookies=cookies, browser_cookies=browser_cookies,
+                                final_url=final_url, status_code=resp.status_code,
+                                content_type=content_type, needs_browser=True)
         if _is_cf_challenge(content):
             return BypassResult(success=False, method="curl_cffi",
                                 error="Cloudflare challenge detected despite TLS impersonation")
         return BypassResult(success=False, method="curl_cffi",
-                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF")
+                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session")
     except Exception as e:
         return BypassResult(success=False, method="curl_cffi", error=str(e))
 
@@ -210,7 +340,7 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
     with the --aabots-stealth flag.
     """
     print("  [aabots:stealth] Signaling caller to use enhanced-stealth browser...", file=sys.stderr)
-    return BypassResult(success=False, method="stealth",
+    return BypassResult(success=False, mode="signal", method="stealth",
                         needs_browser=True, stealth_recommended=True)
 
 
@@ -236,15 +366,26 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
         status = solution.get("status", 0)
 
         if status == 200:
-            content = solution.get("response", "")
-            if isinstance(content, str):
-                content = content.encode()
+            response = solution.get("response", "")
+            content = response.encode() if isinstance(response, str) else response
+            final_url = solution.get("url") or url
+            cookie_list = solution.get("cookies", [])
+            cookies = _extract_cookies(cookie_list)
+            browser_cookies = _flaresolverr_cookies_to_playwright(cookie_list, final_url)
+            content_type = "text/html" if isinstance(response, str) else ""
             if _is_pdf(content):
-                cookies = _extract_cookies(solution.get("cookies", []))
-                return BypassResult(success=True, content=content, method="flaresolverr",
-                                    cookies=cookies)
+                return BypassResult(success=True, mode="pdf", content=content,
+                                    method="flaresolverr", cookies=cookies,
+                                    browser_cookies=browser_cookies, final_url=final_url,
+                                    status_code=status, content_type=content_type)
+            if _looks_like_html_session(content, content_type, final_url):
+                return BypassResult(success=True, mode="session", content=content,
+                                    html=_decode_html(content), method="flaresolverr",
+                                    cookies=cookies, browser_cookies=browser_cookies,
+                                    final_url=final_url, status_code=status,
+                                    content_type=content_type, needs_browser=True)
             return BypassResult(success=False, method="flaresolverr",
-                                error=f"Response is not PDF (got {len(content)} bytes HTML, needs browser to follow links)")
+                                error=f"Response is not PDF or useful HTML session (got {len(content)} bytes)")
         return BypassResult(success=False, method="flaresolverr",
                             error=solution.get("message", f"FlareSolverr returned status {status}"))
     except (urllib.error.URLError, ConnectionRefusedError):
@@ -270,7 +411,7 @@ async def _method_2captcha(url: str, config: dict, is_biorxiv: bool) -> BypassRe
                             error="No 2Captcha API key configured (set TWOCAPTCHA_API_KEY env var or twocaptcha_api_key_env in config)")
 
     print("  [aabots:2captcha] Signaling caller to use browser with 2Captcha...", file=sys.stderr)
-    return BypassResult(success=False, method="2captcha",
+    return BypassResult(success=False, mode="signal", method="2captcha",
                         needs_browser=True, captcha_recommended=True)
 
 
@@ -281,7 +422,7 @@ async def _method_2captcha(url: str, config: dict, is_biorxiv: bool) -> BypassRe
 class BypassChain:
     """Runs a sequence of bypass methods in order, returning the first success."""
 
-    def __init__(self, methods: list[str], config: dict, timeout_per_method: int = 45):
+    def __init__(self, methods: list[str], config: dict, timeout_per_method: int = 120):
         self._methods = methods
         self._config = config
         self._timeout = timeout_per_method
@@ -311,7 +452,7 @@ class BypassChain:
 
             if result.success:
                 elapsed = (time.monotonic() - chain_start) * 1000
-                print(f"  [aabots] Chain succeeded: {method_name} ({elapsed:.0f}ms total)",
+                print(f"  [aabots] Chain succeeded: {method_name} ({result.mode}, {elapsed:.0f}ms total)",
                       file=sys.stderr)
                 return result
 
@@ -343,13 +484,17 @@ class BypassChain:
             result = BypassResult(success=False, method=name, error=str(e))
         result.elapsed_ms = (time.monotonic() - start) * 1000
 
-        if result.success:
-            status = "OK"
+        if result.success and result.mode == "pdf":
+            status = "OK-PDF"
+        elif result.success and result.mode == "session":
+            status = "OK-SESSION"
         elif result.needs_browser:
             status = "BROWSER"
         else:
             status = "FAIL"
         detail = f" : {result.error}" if result.error else ""
+        if result.success and result.mode == "session":
+            detail = f" : html={len(result.html or '')} final_url={result.final_url or url}"
         print(f"  [aabots:{name}] {status} ({result.elapsed_ms:.0f}ms){detail}",
               file=sys.stderr)
         return result
@@ -360,7 +505,7 @@ class BypassChain:
 # ---------------------------------------------------------------------------
 
 def run_aabots_sync(url: str, methods: list[str], config: dict,
-                    is_biorxiv: bool = False, timeout_per_method: int = 45) -> BypassResult:
+                    is_biorxiv: bool = False, timeout_per_method: int = 120) -> BypassResult:
     """Synchronous wrapper for callers in paper_cli.py (which are sync functions)."""
     chain = BypassChain(methods, config, timeout_per_method=timeout_per_method)
     return asyncio.run(chain.run(url, is_biorxiv))
