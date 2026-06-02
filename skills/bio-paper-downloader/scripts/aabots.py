@@ -17,6 +17,7 @@ Usage:
 import asyncio
 import json
 import os
+import shlex
 import sys
 import time
 import urllib.error
@@ -137,6 +138,11 @@ def _is_cf_challenge(data: bytes) -> bool:
 
 def _decode_html(data: bytes) -> str:
     return data.decode('utf-8', errors='replace')
+
+
+def _body_preview(data: bytes, limit: int = 100) -> str:
+    text = _decode_html(data).replace('\r', '\\r').replace('\n', '\\n')
+    return text[:limit]
 
 
 def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str = '') -> bool:
@@ -300,7 +306,7 @@ async def _method_cloudscraper(url: str, config: dict, is_biorxiv: bool) -> Bypa
             return BypassResult(success=False, method="cloudscraper",
                                 error="Cloudflare interactive challenge detected (needs browser)")
         return BypassResult(success=False, method="cloudscraper",
-                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session")
+                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session, preview={_body_preview(content)!r}")
     except Exception as e:
         return BypassResult(success=False, method="cloudscraper", error=str(e))
 
@@ -340,7 +346,7 @@ async def _method_curl_cffi(url: str, config: dict, is_biorxiv: bool) -> BypassR
             return BypassResult(success=False, method="curl_cffi",
                                 error="Cloudflare challenge detected despite TLS impersonation")
         return BypassResult(success=False, method="curl_cffi",
-                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session")
+                            error=f"HTTP {resp.status_code}, got {len(content)} bytes, not PDF/HTML session, preview={_body_preview(content)!r}")
     except Exception as e:
         return BypassResult(success=False, method="curl_cffi", error=str(e))
 
@@ -362,13 +368,21 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
 async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> BypassResult:
     """FlareSolverr Docker service at localhost:8191. Handles interactive CF challenges."""
     fs_url = "http://localhost:8191/v1"
-    payload = json.dumps({
+    payload_obj = {
         "cmd": "request.get",
         "url": url,
         "maxTimeout": 60000,
-    }).encode()
+    }
+    payload_text = json.dumps(payload_obj, ensure_ascii=False)
+    payload = payload_text.encode()
+    curl_command = (
+        f"curl -X POST {shlex.quote(fs_url)} "
+        f"-H {shlex.quote('Content-Type: application/json')} "
+        f"-d {shlex.quote(payload_text)}"
+    )
 
     print("  [aabots:flaresolverr] Sending request to FlareSolverr...", file=sys.stderr)
+    print(f"  [aabots:flaresolverr] Request: {curl_command}", file=sys.stderr)
     try:
         req = urllib.request.Request(
             fs_url, data=payload,
@@ -399,12 +413,27 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
                                     final_url=final_url, status_code=status,
                                     content_type=content_type, needs_browser=True)
             return BypassResult(success=False, method="flaresolverr",
-                                error=f"Response is not PDF or useful HTML session (got {len(content)} bytes)")
+                                error=f"Response is not PDF or useful HTML session (got {len(content)} bytes), preview={_body_preview(content)!r}")
         return BypassResult(success=False, method="flaresolverr",
                             error=solution.get("message", f"FlareSolverr returned status {status}"))
-    except (urllib.error.URLError, ConnectionRefusedError):
+    except urllib.error.HTTPError as e:
+        body = e.read()
         return BypassResult(success=False, method="flaresolverr",
-                            error="FlareSolverr not running (docker not started? Run: docker run -d --name=flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest)")
+                            error=f"FlareSolverr API HTTP {e.code}, preview={_body_preview(body)!r}")
+    except urllib.error.URLError as e:
+        reason = getattr(e, 'reason', None) or e
+        reason_text = str(reason)
+        if isinstance(reason, ConnectionRefusedError) or 'Connection refused' in reason_text:
+            return BypassResult(success=False, method="flaresolverr",
+                                error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
+        return BypassResult(success=False, method="flaresolverr",
+                            error=f"FlareSolverr request failed: {reason_text}")
+    except ConnectionRefusedError:
+        return BypassResult(success=False, method="flaresolverr",
+                            error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
+    except TimeoutError as e:
+        return BypassResult(success=False, method="flaresolverr",
+                            error=f"FlareSolverr request timed out: {e}")
     except Exception as e:
         return BypassResult(success=False, method="flaresolverr", error=str(e))
 
