@@ -371,7 +371,7 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
     payload_obj = {
         "cmd": "request.get",
         "url": url,
-        "maxTimeout": 60000,
+        "maxTimeout": 180000,
     }
     payload_text = json.dumps(payload_obj, ensure_ascii=False)
     payload = payload_text.encode()
@@ -388,7 +388,7 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
             fs_url, data=payload,
             headers={"Content-Type": "application/json"},
         )
-        resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=90)
+        resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=210)
         data = json.loads(resp.read())
         solution = data.get("solution", {})
         status = solution.get("status", 0)
@@ -465,7 +465,7 @@ async def _method_2captcha(url: str, config: dict, is_biorxiv: bool) -> BypassRe
 class BypassChain:
     """Runs a sequence of bypass methods in order, returning the first success."""
 
-    def __init__(self, methods: list[str], config: dict, timeout_per_method: int = 120):
+    def __init__(self, methods: list[str], config: dict, timeout_per_method: int = 210):
         self._methods = methods
         self._config = config
         self._timeout = timeout_per_method
@@ -548,7 +548,7 @@ class BypassChain:
 # ---------------------------------------------------------------------------
 
 def run_aabots_sync(url: str, methods: list[str], config: dict,
-                    is_biorxiv: bool = False, timeout_per_method: int = 120) -> BypassResult:
+                    is_biorxiv: bool = False, timeout_per_method: int = 210) -> BypassResult:
     """Synchronous wrapper for callers in paper_cli.py (which are sync functions)."""
     chain = BypassChain(methods, config, timeout_per_method=timeout_per_method)
     return asyncio.run(chain.run(url, is_biorxiv))
