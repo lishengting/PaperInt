@@ -941,9 +941,9 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         nonlocal result
         print(f"  [publisher] {reason}", file=sys.stderr)
         for attempt in range(2):
-            attempt_stealth = stealth_enabled
+            attempt_stealth = stealth_enabled or (attempt > 0 and _STEALTH_AVAILABLE)
             if attempt > 0:
-                suffix = ' with stealth' if attempt_stealth else ''
+                suffix = ' with stealth' if attempt_stealth and not stealth_enabled else ''
                 print(f"  [publisher] headless retry 2/2{suffix} after 5s...", file=sys.stderr)
                 time.sleep(5)
 
@@ -981,8 +981,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         if status in ('success', 'fatal') or fallback_level < 2:
             return result
 
-    headed_stealth = stealth_enabled
-    suffix = ', stealth' if headed_stealth else ''
+    headed_stealth = stealth_enabled or _STEALTH_AVAILABLE
+    suffix = ', stealth' if headed_stealth and not stealth_enabled else ''
     prefix = 'falling back to' if headless_first else 'trying'
     print(f"  [publisher] {prefix} headed Chrome (Xvfb{suffix})...", file=sys.stderr)
     for attempt in range(3):
