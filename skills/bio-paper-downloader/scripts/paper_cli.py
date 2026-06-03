@@ -413,24 +413,6 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
     if not doi:
         return None
 
-    # Try aabots chain first (HTTP-level methods before direct/browser attempts)
-    stealth_enhanced = stealth_enabled
-    captcha_enhanced = captcha_enabled
-    aabots_handoff = None
-    aabots_next_start = 0
-    if aabots:
-        pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
-        chain_result = _run_aabots_for_download(pdf_url, aabots, config, is_biorxiv=True)
-        if _is_aabots_pdf_result(chain_result):
-            return chain_result.content
-        if _is_aabots_session_result(chain_result):
-            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
-            aabots_next_start = _next_aabots_route_start(chain_result)
-        if chain_result and chain_result.stealth_recommended:
-            stealth_enhanced = True
-        if chain_result and chain_result.captcha_recommended:
-            captcha_enhanced = True
-
     headers = {
         'User-Agent': ua(config),
         'Accept': 'application/pdf,*/*;q=0.9',
@@ -453,13 +435,20 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
         time.sleep(1)
 
     if fallback_level >= 1:
+        stealth_enhanced = stealth_enabled
+        captcha_enhanced = captcha_enabled
+        aabots_handoff = None
+        aabots_next_start = 0
+        aabots_active = False
+        pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
+
         while True:
             print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
             try:
                 data = _browser_download(doi, server, config, fallback_level=fallback_level,
                                          captcha_enabled=captcha_enhanced,
                                          stealth_enabled=stealth_enhanced,
-                                         aabots_stealth=stealth_enhanced and aabots,
+                                         aabots_stealth=stealth_enhanced and aabots_active,
                                          aabots_handoff=aabots_handoff,
                                          headless_first=headless_first)
                 if data:
@@ -473,9 +462,14 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
 
             if not aabots or aabots_next_start >= len(aabots):
                 break
-            chain_result = _run_aabots_for_download(pdf_url, aabots, config,
-                                                    is_biorxiv=True,
-                                                    start_after=aabots_next_start)
+
+            if not aabots_active:
+                aabots_active = True
+                chain_result = _run_aabots_for_download(pdf_url, aabots, config, is_biorxiv=True)
+            else:
+                chain_result = _run_aabots_for_download(pdf_url, aabots, config,
+                                                        is_biorxiv=True,
+                                                        start_after=aabots_next_start)
             if _is_aabots_pdf_result(chain_result):
                 return chain_result.content
             aabots_handoff = None
@@ -756,28 +750,16 @@ def _run_browser_only_download(homepage, article_url, pdf_url,
 
 def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False,
                         stealth_enabled=False, aabots=None, headless_first=False):
-    # Try aabots chain first (HTTP-level methods before subprocess)
-    stealth_enhanced = stealth_enabled
-    captcha_enhanced = captcha_enabled
-    aabots_handoff = None
-    aabots_next_start = 0
-    doi_url = f"https://doi.org/{doi}" if doi else ''
-    if aabots and doi:
-        chain_result = _run_aabots_for_download(doi_url, aabots, config)
-        if _is_aabots_pdf_result(chain_result):
-            return chain_result.content
-        if _is_aabots_session_result(chain_result):
-            aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
-            aabots_next_start = _next_aabots_route_start(chain_result)
-        if chain_result and chain_result.stealth_recommended:
-            stealth_enhanced = True
-        if chain_result and chain_result.captcha_recommended:
-            captcha_enhanced = True
-
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
+    stealth_enhanced = stealth_enabled
+    captcha_enhanced = captcha_enabled
+    aabots_handoff = None
+    aabots_next_start = 0
+    aabots_active = False
+    doi_url = f"https://doi.org/{doi}" if doi else ''
 
     while True:
         base_cmd = [sys.executable, script, '--doi', doi,
@@ -793,7 +775,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
                 base_cmd.extend(['--twocap-api', twocap_api])
         if stealth_enhanced:
             base_cmd.append('--stealth')
-        if aabots and stealth_enhanced:
+        if aabots_active and stealth_enhanced:
             base_cmd.append('--aabots-stealth')
         if aabots_handoff:
             base_cmd.extend(['--aabots-handoff', aabots_handoff])
@@ -823,8 +805,12 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
 
         if not aabots or aabots_next_start >= len(aabots):
             break
-        chain_result = _run_aabots_for_download(doi_url, aabots, config,
-                                                start_after=aabots_next_start)
+        if not aabots_active:
+            aabots_active = True
+            chain_result = _run_aabots_for_download(doi_url, aabots, config)
+        else:
+            chain_result = _run_aabots_for_download(doi_url, aabots, config,
+                                                    start_after=aabots_next_start)
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
@@ -871,23 +857,6 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     if not pdf_url:
         return None
 
-    # Try aabots chain first (HTTP-level methods before direct/browser attempts)
-    stealth_enhanced = stealth_enabled
-    captcha_enhanced = captcha_enabled
-    aabots_handoff = None
-    aabots_next_start = 0
-    if aabots:
-        chain_result = _run_aabots_for_download(pdf_url, aabots, config)
-        if _is_aabots_pdf_result(chain_result):
-            return chain_result.content
-        if _is_aabots_session_result(chain_result):
-            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
-            aabots_next_start = _next_aabots_route_start(chain_result)
-        if chain_result and chain_result.stealth_recommended:
-            stealth_enhanced = True
-        if chain_result and chain_result.captcha_recommended:
-            captcha_enhanced = True
-
     # Direct HTTP attempt
     try:
         req = urllib.request.Request(pdf_url, headers={'User-Agent': ua(config)})
@@ -910,6 +879,12 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                           'download_biorxiv_browser.py')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
+    stealth_enhanced = stealth_enabled
+    captcha_enhanced = captcha_enabled
+    aabots_handoff = None
+    aabots_next_start = 0
+    aabots_active = False
+
     while True:
         base_cmd = [sys.executable, script, pdf_url,
                     '--timeout', '180',
@@ -924,7 +899,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
                 base_cmd.extend(['--twocap-api', twocap_api])
         if stealth_enhanced:
             base_cmd.append('--stealth')
-        if aabots and stealth_enhanced:
+        if aabots_active and stealth_enhanced:
             base_cmd.append('--aabots-stealth')
         if aabots_handoff:
             base_cmd.extend(['--aabots-handoff', aabots_handoff])
@@ -954,8 +929,12 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
 
         if not aabots or aabots_next_start >= len(aabots):
             break
-        chain_result = _run_aabots_for_download(pdf_url, aabots, config,
-                                                start_after=aabots_next_start)
+        if not aabots_active:
+            aabots_active = True
+            chain_result = _run_aabots_for_download(pdf_url, aabots, config)
+        else:
+            chain_result = _run_aabots_for_download(pdf_url, aabots, config,
+                                                    start_after=aabots_next_start)
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
