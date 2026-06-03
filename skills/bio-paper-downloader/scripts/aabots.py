@@ -402,7 +402,7 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
 async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> BypassResult:
     """FlareSolverr Docker service at localhost:8191. Handles interactive CF challenges."""
     fs_url = "http://localhost:8191/v1"
-    attempts = 2
+    attempts = 3
     timeout_seconds = 150
     last_result = None
 
