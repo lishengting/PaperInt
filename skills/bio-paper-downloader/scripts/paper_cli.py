@@ -763,7 +763,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
 
     while True:
         base_cmd = [sys.executable, script, '--doi', doi,
-                    '--timeout', '60',
+                    '--timeout', '90',
                     '--fallback-level', str(fallback_level)]
         if captcha_enhanced:
             base_cmd.append('--captcha')
