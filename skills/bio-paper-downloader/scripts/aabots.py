@@ -45,6 +45,7 @@ class BypassResult:
     method: str = ""
     error: str | None = None
     elapsed_ms: float = 0.0
+    method_index: int = 0
     # Signal fields for the caller — set when a method can't solve the challenge
     # itself but knows a browser-based approach is needed.
     needs_browser: bool = False
@@ -77,8 +78,8 @@ PRESETS: dict[str, list[str]] = {
     "Stealth":       ["stealth"],
     "FlareSolverr":  ["flaresolverr"],
     "2Captcha":      ["2captcha"],
-    "Full":          ["cloudscraper", "curl_cffi", "stealth", "flaresolverr", "2captcha"],
-    "All":           ["cloudscraper", "curl_cffi", "stealth", "flaresolverr", "2captcha"],
+    "Full":          ["cloudscraper", "curl_cffi", "flaresolverr", "2captcha"],
+    "All":           ["cloudscraper", "curl_cffi", "flaresolverr", "2captcha"],
     "Quick":         ["cloudscraper", "curl_cffi"],
     "Browser":       ["stealth", "flaresolverr"],
 }
@@ -541,22 +542,25 @@ class BypassChain:
     def results(self) -> list[BypassResult]:
         return self._results
 
-    async def run(self, url: str, is_biorxiv: bool = False) -> BypassResult:
-        """Try each method in order. Returns first success, or the last signal/error result."""
-        if not self._methods:
+    async def run(self, url: str, is_biorxiv: bool = False, stop_after: int | None = None,
+                  start_after: int = 0) -> BypassResult:
+        """Try methods in order. Returns first success, or the last signal/error result."""
+        methods = self._methods[start_after:stop_after]
+        if not methods:
             print("  [aabots] No methods configured (Default preset), delegating to existing pipeline", file=sys.stderr)
             return BypassResult(success=False, method="chain", needs_browser=True)
 
-        print(f"  [aabots] Chain starting: {', '.join(self._methods)}", file=sys.stderr)
+        print(f"  [aabots] Chain starting: {', '.join(methods)}", file=sys.stderr)
         chain_start = time.monotonic()
 
         last_signal = None
-        for method_name in self._methods:
+        for offset, method_name in enumerate(methods):
             func = METHOD_MAP.get(method_name)
             if func is None:
                 print(f"  [aabots] Unknown method '{method_name}', skipping", file=sys.stderr)
                 continue
             result = await self._try_one(func, method_name, url, is_biorxiv)
+            result.method_index = start_after + offset + 1
             self._results.append(result)
 
             if result.success:
@@ -570,15 +574,17 @@ class BypassChain:
 
         elapsed = (time.monotonic() - chain_start) * 1000
         if last_signal:
-            print(f"  [aabots] Chain complete: {len(self._results)} methods tried, "
+            print(f"  [aabots] Chain complete: {len(methods)} methods tried, "
                   f"delegating to browser ({elapsed:.0f}ms)", file=sys.stderr)
             return last_signal
 
         errors = "; ".join(r.error for r in self._results if r.error)
-        print(f"  [aabots] Chain exhausted: all {len(self._results)} methods failed ({elapsed:.0f}ms)",
+        print(f"  [aabots] Chain exhausted: all {len(methods)} methods failed ({elapsed:.0f}ms)",
               file=sys.stderr)
-        return BypassResult(success=False, method="chain",
-                            error=errors or "All methods failed")
+        result = BypassResult(success=False, method="chain",
+                              error=errors or "All methods failed")
+        result.method_index = start_after + len(methods)
+        return result
 
     async def _try_one(self, func: Callable, name: str, url: str, is_biorxiv: bool) -> BypassResult:
         start = time.monotonic()
@@ -615,7 +621,10 @@ class BypassChain:
 # ---------------------------------------------------------------------------
 
 def run_aabots_sync(url: str, methods: list[str], config: dict,
-                    is_biorxiv: bool = False, timeout_per_method: int = 210) -> BypassResult:
+                    is_biorxiv: bool = False, timeout_per_method: int = 210,
+                    stop_after: int | None = None,
+                    start_after: int = 0) -> BypassResult:
     """Synchronous wrapper for callers in paper_cli.py (which are sync functions)."""
     chain = BypassChain(methods, config, timeout_per_method=timeout_per_method)
-    return asyncio.run(chain.run(url, is_biorxiv))
+    return asyncio.run(chain.run(url, is_biorxiv, stop_after=stop_after,
+                                 start_after=start_after))

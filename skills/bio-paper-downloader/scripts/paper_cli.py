@@ -417,19 +417,18 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
     aabots_handoff = None
+    aabots_next_start = 0
     if aabots:
-        from aabots import run_aabots_sync
         pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
-        chain_result = run_aabots_sync(pdf_url, aabots, config, is_biorxiv=True)
+        chain_result = _run_aabots_for_download(pdf_url, aabots, config, is_biorxiv=True)
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
             aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
-        else:
-            _record_aabots_failure(chain_result, pdf_url)
-        if chain_result.stealth_recommended:
+            aabots_next_start = _next_aabots_route_start(chain_result)
+        if chain_result and chain_result.stealth_recommended:
             stealth_enhanced = True
-        if chain_result.captcha_recommended:
+        if chain_result and chain_result.captcha_recommended:
             captcha_enhanced = True
 
     headers = {
@@ -454,22 +453,44 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
         time.sleep(1)
 
     if fallback_level >= 1:
-        print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
-        try:
-            data = _browser_download(doi, server, config, fallback_level=fallback_level,
+        while True:
+            print(f"  Direct download failed, trying Playwright browser...", file=sys.stderr)
+            try:
+                data = _browser_download(doi, server, config, fallback_level=fallback_level,
                                          captcha_enabled=captcha_enhanced,
                                          stealth_enabled=stealth_enhanced,
                                          aabots_stealth=stealth_enhanced and aabots,
                                          aabots_handoff=aabots_handoff,
                                          no_headless=no_headless)
-            if data:
-                return data
-        except Exception as e:
-            print(f"  Browser fallback error: {e}", file=sys.stderr)
-            _record_download_failure(str(e), category='browser_failure',
-                                     subtype='browser_fallback_failed',
-                                     tags=['browser_fallback'],
-                                     metadata={'source': server})
+                if data:
+                    return data
+            except Exception as e:
+                print(f"  Browser fallback error: {e}", file=sys.stderr)
+                _record_download_failure(str(e), category='browser_failure',
+                                         subtype='browser_fallback_failed',
+                                         tags=['browser_fallback'],
+                                         metadata={'source': server})
+
+            if not aabots or aabots_next_start >= len(aabots):
+                break
+            chain_result = _run_aabots_for_download(pdf_url, aabots, config,
+                                                    is_biorxiv=True,
+                                                    start_after=aabots_next_start)
+            if _is_aabots_pdf_result(chain_result):
+                return chain_result.content
+            aabots_handoff = None
+            if _is_aabots_session_result(chain_result):
+                aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+            if chain_result and chain_result.stealth_recommended:
+                stealth_enhanced = True
+            if chain_result and chain_result.captcha_recommended:
+                captcha_enhanced = True
+            next_start = _next_aabots_route_start(chain_result)
+            if next_start <= aabots_next_start:
+                break
+            aabots_next_start = next_start
+            if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+                continue
 
     return None
 
@@ -739,63 +760,85 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
     aabots_handoff = None
+    aabots_next_start = 0
+    doi_url = f"https://doi.org/{doi}" if doi else ''
     if aabots and doi:
-        from aabots import run_aabots_sync
-        doi_url = f"https://doi.org/{doi}"
-        chain_result = run_aabots_sync(doi_url, aabots, config)
+        chain_result = _run_aabots_for_download(doi_url, aabots, config)
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
             aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
-        else:
-            _record_aabots_failure(chain_result, doi_url)
-        if chain_result.stealth_recommended:
+            aabots_next_start = _next_aabots_route_start(chain_result)
+        if chain_result and chain_result.stealth_recommended:
             stealth_enhanced = True
-        if chain_result.captcha_recommended:
+        if chain_result and chain_result.captcha_recommended:
             captcha_enhanced = True
 
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_publisher_pdf.py')
-    base_cmd = [sys.executable, script, '--doi', doi,
-                '--timeout', '60',
-                '--fallback-level', str(fallback_level)]
-    if captcha_enhanced:
-        base_cmd.append('--captcha')
-        api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
-        twocap_api = os.environ.get(api_key_env, '')
-        if not twocap_api and len(api_key_env) > 20:
-            twocap_api = api_key_env
-        if twocap_api:
-            base_cmd.extend(['--twocap-api', twocap_api])
-    if stealth_enhanced:
-        base_cmd.append('--stealth')
-    if aabots and stealth_enhanced:
-        base_cmd.append('--aabots-stealth')
-    if aabots_handoff:
-        base_cmd.extend(['--aabots-handoff', aabots_handoff])
-    if no_headless:
-        base_cmd.append('--no-headless')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
-    cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
-    try:
-        r = _run_helper_streaming_stderr(cmd, timeout=600)
-    except subprocess.TimeoutExpired:
-        _record_download_failure('publisher browser helper timed out', category='browser_failure',
-                                 subtype='browser_timeout', tags=['browser_timeout'],
-                                 metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
-        return None
-    finally:
-        _cleanup_aabots_handoff(aabots_handoff)
-    if r.returncode == 0:
-        safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
-        pdf_path = os.path.join(tmpdir, safe_name)
-        if os.path.exists(pdf_path):
-            with open(pdf_path, 'rb') as f:
-                data = f.read()
-            os.unlink(pdf_path)
-            return data
-    _print_and_record_subprocess_failure(r, metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
+
+    while True:
+        base_cmd = [sys.executable, script, '--doi', doi,
+                    '--timeout', '60',
+                    '--fallback-level', str(fallback_level)]
+        if captcha_enhanced:
+            base_cmd.append('--captcha')
+            api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+            twocap_api = os.environ.get(api_key_env, '')
+            if not twocap_api and len(api_key_env) > 20:
+                twocap_api = api_key_env
+            if twocap_api:
+                base_cmd.extend(['--twocap-api', twocap_api])
+        if stealth_enhanced:
+            base_cmd.append('--stealth')
+        if aabots and stealth_enhanced:
+            base_cmd.append('--aabots-stealth')
+        if aabots_handoff:
+            base_cmd.extend(['--aabots-handoff', aabots_handoff])
+        if no_headless:
+            base_cmd.append('--no-headless')
+        cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
+        try:
+            r = _run_helper_streaming_stderr(cmd, timeout=600)
+        except subprocess.TimeoutExpired:
+            _record_download_failure('publisher browser helper timed out', category='browser_failure',
+                                     subtype='browser_timeout', tags=['browser_timeout'],
+                                     metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
+            r = None
+        finally:
+            _cleanup_aabots_handoff(aabots_handoff)
+            aabots_handoff = None
+        if r and r.returncode == 0:
+            safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
+            pdf_path = os.path.join(tmpdir, safe_name)
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as f:
+                    data = f.read()
+                os.unlink(pdf_path)
+                return data
+        if r:
+            _print_and_record_subprocess_failure(r, metadata={'doi': doi, 'helper': 'download_publisher_pdf'})
+
+        if not aabots or aabots_next_start >= len(aabots):
+            break
+        chain_result = _run_aabots_for_download(doi_url, aabots, config,
+                                                start_after=aabots_next_start)
+        if _is_aabots_pdf_result(chain_result):
+            return chain_result.content
+        if _is_aabots_session_result(chain_result):
+            aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
+        if chain_result and chain_result.stealth_recommended:
+            stealth_enhanced = True
+        if chain_result and chain_result.captcha_recommended:
+            captcha_enhanced = True
+        next_start = _next_aabots_route_start(chain_result)
+        if next_start <= aabots_next_start:
+            break
+        aabots_next_start = next_start
+        if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+            continue
     return None
 
 
@@ -832,18 +875,17 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
     aabots_handoff = None
+    aabots_next_start = 0
     if aabots:
-        from aabots import run_aabots_sync
-        chain_result = run_aabots_sync(pdf_url, aabots, config)
+        chain_result = _run_aabots_for_download(pdf_url, aabots, config)
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
             aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
-        else:
-            _record_aabots_failure(chain_result, pdf_url)
-        if chain_result.stealth_recommended:
+            aabots_next_start = _next_aabots_route_start(chain_result)
+        if chain_result and chain_result.stealth_recommended:
             stealth_enhanced = True
-        if chain_result.captcha_recommended:
+        if chain_result and chain_result.captcha_recommended:
             captcha_enhanced = True
 
     # Direct HTTP attempt
@@ -866,46 +908,68 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
         return None
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'download_biorxiv_browser.py')
-    base_cmd = [sys.executable, script, pdf_url,
-                '--timeout', '180',
-                '--fallback-level', str(fallback_level)]
-    if captcha_enhanced:
-        base_cmd.append('--captcha')
-        api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
-        twocap_api = os.environ.get(api_key_env, '')
-        if not twocap_api and len(api_key_env) > 20:
-            twocap_api = api_key_env
-        if twocap_api:
-            base_cmd.extend(['--twocap-api', twocap_api])
-    if stealth_enhanced:
-        base_cmd.append('--stealth')
-    if aabots and stealth_enhanced:
-        base_cmd.append('--aabots-stealth')
-    if aabots_handoff:
-        base_cmd.extend(['--aabots-handoff', aabots_handoff])
-    if no_headless:
-        base_cmd.append('--no-headless')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
-    cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
-    try:
-        r = _run_helper_streaming_stderr(cmd, timeout=600)
-    except subprocess.TimeoutExpired:
-        _record_download_failure('direct PDF browser helper timed out', category='browser_failure',
-                                 subtype='browser_timeout', tags=['browser_timeout'],
-                                 metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
-        return None
-    finally:
-        _cleanup_aabots_handoff(aabots_handoff)
-    if r.returncode == 0:
-        for f in os.listdir(tmpdir):
-            if f.endswith('.pdf'):
-                pdf_path = os.path.join(tmpdir, f)
-                with open(pdf_path, 'rb') as fh:
-                    data = fh.read()
-                os.unlink(pdf_path)
-                return data
-    _print_and_record_subprocess_failure(r, metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
+    while True:
+        base_cmd = [sys.executable, script, pdf_url,
+                    '--timeout', '180',
+                    '--fallback-level', str(fallback_level)]
+        if captcha_enhanced:
+            base_cmd.append('--captcha')
+            api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+            twocap_api = os.environ.get(api_key_env, '')
+            if not twocap_api and len(api_key_env) > 20:
+                twocap_api = api_key_env
+            if twocap_api:
+                base_cmd.extend(['--twocap-api', twocap_api])
+        if stealth_enhanced:
+            base_cmd.append('--stealth')
+        if aabots and stealth_enhanced:
+            base_cmd.append('--aabots-stealth')
+        if aabots_handoff:
+            base_cmd.extend(['--aabots-handoff', aabots_handoff])
+        if no_headless:
+            base_cmd.append('--no-headless')
+        cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
+        try:
+            r = _run_helper_streaming_stderr(cmd, timeout=600)
+        except subprocess.TimeoutExpired:
+            _record_download_failure('direct PDF browser helper timed out', category='browser_failure',
+                                     subtype='browser_timeout', tags=['browser_timeout'],
+                                     metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
+            r = None
+        finally:
+            _cleanup_aabots_handoff(aabots_handoff)
+            aabots_handoff = None
+        if r and r.returncode == 0:
+            for f in os.listdir(tmpdir):
+                if f.endswith('.pdf'):
+                    pdf_path = os.path.join(tmpdir, f)
+                    with open(pdf_path, 'rb') as fh:
+                        data = fh.read()
+                    os.unlink(pdf_path)
+                    return data
+        if r:
+            _print_and_record_subprocess_failure(r, metadata={'url': pdf_url, 'helper': 'download_biorxiv_browser'})
+
+        if not aabots or aabots_next_start >= len(aabots):
+            break
+        chain_result = _run_aabots_for_download(pdf_url, aabots, config,
+                                                start_after=aabots_next_start)
+        if _is_aabots_pdf_result(chain_result):
+            return chain_result.content
+        if _is_aabots_session_result(chain_result):
+            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+        if chain_result and chain_result.stealth_recommended:
+            stealth_enhanced = True
+        if chain_result and chain_result.captcha_recommended:
+            captcha_enhanced = True
+        next_start = _next_aabots_route_start(chain_result)
+        if next_start <= aabots_next_start:
+            break
+        aabots_next_start = next_start
+        if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+            continue
     return None
 
 
@@ -1059,6 +1123,25 @@ def _record_download_failure(message, category=None, subtype=None, tags=None, me
     if _LAST_DOWNLOAD_FAILURE is None or next_priority >= current_priority:
         _LAST_DOWNLOAD_FAILURE = failure
     return failure
+
+
+def _run_aabots_for_download(url, methods, config, is_biorxiv=False, start_after=0):
+    if not methods:
+        return None
+    from aabots import run_aabots_sync
+    chain_result = run_aabots_sync(url, methods, config, is_biorxiv=is_biorxiv,
+                                   stop_after=start_after + 1,
+                                   start_after=start_after)
+    if getattr(chain_result, 'success', False):
+        return chain_result
+    if getattr(chain_result, 'needs_browser', False):
+        return chain_result
+    _record_aabots_failure(chain_result, url)
+    return chain_result
+
+
+def _next_aabots_route_start(result):
+    return getattr(result, 'method_index', 0) if result else 0
 
 
 def _record_aabots_failure(result, url=None):
