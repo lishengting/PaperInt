@@ -1056,6 +1056,8 @@ def _record_download_failure(message, category=None, subtype=None, tags=None, me
 def _record_aabots_failure(result, url=None):
     if not result or getattr(result, 'mode', None) == 'session' or not getattr(result, 'error', None):
         return None
+    cookies = getattr(result, 'cookies', None) or {}
+    browser_cookies = getattr(result, 'browser_cookies', None) or []
     metadata = {
         'method': getattr(result, 'method', None),
         'mode': getattr(result, 'mode', None),
@@ -1063,7 +1065,21 @@ def _record_aabots_failure(result, url=None):
         'stealth_recommended': getattr(result, 'stealth_recommended', None),
         'captcha_recommended': getattr(result, 'captcha_recommended', None),
         'url': url,
+        'final_url': getattr(result, 'final_url', None),
+        'status_code': getattr(result, 'status_code', None),
+        'content_type': getattr(result, 'content_type', None),
+        'elapsed_ms': getattr(result, 'elapsed_ms', None),
+        'cookie_count': len(cookies),
+        'browser_cookie_count': len(browser_cookies),
     }
+    print(
+        f"  [aabots] Failure: method={metadata.get('method')} "
+        f"status={metadata.get('status_code')} content_type={metadata.get('content_type') or '-'} "
+        f"final_url={metadata.get('final_url') or url} "
+        f"cookies={metadata.get('cookie_count')}/{metadata.get('browser_cookie_count')} "
+        f"elapsed_ms={metadata.get('elapsed_ms')} error={getattr(result, 'error', 'anti-bot bypass failed')}",
+        file=sys.stderr,
+    )
     return _record_download_failure(
         getattr(result, 'error', 'anti-bot bypass failed'),
         category='anti_bot', metadata={k: v for k, v in metadata.items() if v is not None},
@@ -1097,7 +1113,13 @@ def _write_aabots_handoff(result, config, source_url):
     }
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False)
-    print(f"  [aabots] Session handoff written: method={payload.get('method')} cookies={len(payload.get('browser_cookies') or [])} final_url={payload.get('final_url') or source_url}", file=sys.stderr)
+    print(
+        f"  [aabots] Session handoff written: method={payload.get('method')} "
+        f"status={payload.get('status_code')} content_type={payload.get('content_type') or '-'} "
+        f"cookies={len(payload.get('cookies') or {})}/{len(payload.get('browser_cookies') or [])} "
+        f"html_len={len(payload.get('html') or '')} final_url={payload.get('final_url') or source_url}",
+        file=sys.stderr,
+    )
     return path
 
 

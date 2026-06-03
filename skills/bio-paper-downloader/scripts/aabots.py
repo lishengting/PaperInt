@@ -145,7 +145,38 @@ def _body_preview(data: bytes, limit: int = 100) -> str:
     return text[:limit]
 
 
-def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str = '') -> bool:
+def _header_value(headers, name: str) -> str:
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            if str(key).lower() == name.lower():
+                return str(value)
+    if isinstance(headers, list):
+        for item in headers:
+            if isinstance(item, dict):
+                key = item.get('name') or item.get('key')
+                if key and str(key).lower() == name.lower():
+                    return str(item.get('value') or '')
+    return ''
+
+
+def _publisher_handoff_hint(source_url: str = '', final_url: str = '', html: bytes | str = b'') -> bool:
+    source_host = (urllib.parse.urlparse(source_url or '').hostname or '').lower()
+    final_host = (urllib.parse.urlparse(final_url or '').hostname or '').lower()
+    publisher_hosts = {
+        'doi.org', 'linkinghub.elsevier.com', 'cell.com', 'www.cell.com',
+        'sciencedirect.com', 'www.sciencedirect.com',
+    }
+    if source_host == 'doi.org' or final_host in publisher_hosts:
+        return True
+    lower = (html.encode() if isinstance(html, str) else html or b'')[:200000].lower()
+    markers = (
+        b'location.href', b'meta refresh', b'linkinghub.elsevier', b'cell.com',
+        b'sciencedirect', b'/pdf', b'showpdf'
+    )
+    return any(m in lower for m in markers)
+
+
+def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str = '', source_url: str = '') -> bool:
     """Return True when HTML looks useful enough to hand to browser fallback."""
     lower = data[:200000].lower()
     if not data or _is_cf_challenge(data):
@@ -153,16 +184,18 @@ def _looks_like_html_session(data: bytes, content_type: str = '', final_url: str
     is_html = 'text/html' in (content_type or '').lower() or b'<html' in lower or b'<!doctype html' in lower
     if not is_html:
         return False
-    # Tiny redirect/interstitial pages are not useful handoff sessions; they just
-    # stop the chain before stronger methods like FlareSolverr get a chance.
-    if len(data) < 20000:
+    if len(data) < 20000 and not _publisher_handoff_hint(source_url, final_url, data):
         return False
     markers = (
         b'citation_', b'citation_pdf_url', b'article', b'fulltext', b'.pdf', b'showpdf',
         b'/pdf', b'download', b'publisher', b'journal'
     )
     url_markers = ('cell.com', 'sciencedirect', 'nature.com', 'springer')
-    return any(m in lower for m in markers) or any(m in (final_url or '').lower() for m in url_markers)
+    return (
+        any(m in lower for m in markers)
+        or any(m in (final_url or '').lower() for m in url_markers)
+        or _publisher_handoff_hint(source_url, final_url, data)
+    )
 
 
 def _extract_cookies(cookie_list: list) -> dict:
@@ -396,29 +429,46 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
         data = json.loads(resp.read())
         solution = data.get("solution", {})
         status = solution.get("status", 0)
+        response = solution.get("response", "")
+        content = response.encode() if isinstance(response, str) else response or b''
+        final_url = solution.get("url") or url
+        cookie_list = solution.get("cookies", [])
+        cookies = _extract_cookies(cookie_list)
+        browser_cookies = _flaresolverr_cookies_to_playwright(cookie_list, final_url)
+        headers = solution.get("headers") or {}
+        content_type = _header_value(headers, "content-type")
+        if not content_type and isinstance(response, str):
+            content_type = "text/html"
+        print(
+            f"  [aabots:flaresolverr] Response: top_status={data.get('status')} "
+            f"top_message={data.get('message')!r} solution_status={status} "
+            f"final_url={final_url} content_type={content_type or '-'} "
+            f"cookies={len(cookie_list or [])}/{len(browser_cookies or [])} "
+            f"response_len={len(content)} preview={_body_preview(content, 200)!r}",
+            file=sys.stderr,
+        )
 
         if status == 200:
-            response = solution.get("response", "")
-            content = response.encode() if isinstance(response, str) else response
-            final_url = solution.get("url") or url
-            cookie_list = solution.get("cookies", [])
-            cookies = _extract_cookies(cookie_list)
-            browser_cookies = _flaresolverr_cookies_to_playwright(cookie_list, final_url)
-            content_type = "text/html" if isinstance(response, str) else ""
             if _is_pdf(content):
                 return BypassResult(success=True, mode="pdf", content=content,
                                     method="flaresolverr", cookies=cookies,
                                     browser_cookies=browser_cookies, final_url=final_url,
                                     status_code=status, content_type=content_type)
-            if _looks_like_html_session(content, content_type, final_url):
+            if _looks_like_html_session(content, content_type, final_url, url):
                 return BypassResult(success=True, mode="session", content=content,
                                     html=_decode_html(content), method="flaresolverr",
                                     cookies=cookies, browser_cookies=browser_cookies,
                                     final_url=final_url, status_code=status,
                                     content_type=content_type, needs_browser=True)
             return BypassResult(success=False, method="flaresolverr",
+                                final_url=final_url, status_code=status,
+                                content_type=content_type, cookies=cookies,
+                                browser_cookies=browser_cookies,
                                 error=f"Response is not PDF or useful HTML session (got {len(content)} bytes), preview={_body_preview(content)!r}")
         return BypassResult(success=False, method="flaresolverr",
+                            final_url=final_url, status_code=status,
+                            content_type=content_type, cookies=cookies,
+                            browser_cookies=browser_cookies,
                             error=solution.get("message", f"FlareSolverr returned status {status}"))
     except urllib.error.HTTPError as e:
         body = e.read()

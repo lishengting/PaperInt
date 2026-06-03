@@ -553,7 +553,13 @@ async def _apply_aabots_handoff(ctx, handoff, log_prefix):
         if clean:
             cookies.append(clean)
     final_url = handoff.get('final_url') or handoff.get('source_url')
-    print(f"{log_prefix} AABots handoff: method={handoff.get('method')} cookies={len(cookies)} final_url={final_url}", file=sys.stderr)
+    html_len = len(handoff.get('html') or '')
+    print(
+        f"{log_prefix} AABots handoff: method={handoff.get('method')} "
+        f"status={handoff.get('status_code')} content_type={handoff.get('content_type') or '-'} "
+        f"cookies={len(cookies)} html_len={html_len} final_url={final_url}",
+        file=sys.stderr,
+    )
     if cookies:
         try:
             await ctx.add_cookies(cookies)
