@@ -401,95 +401,107 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
 async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> BypassResult:
     """FlareSolverr Docker service at localhost:8191. Handles interactive CF challenges."""
     fs_url = "http://localhost:8191/v1"
-    session_id = f"aabots_{int(time.time() * 1000)}_{os.getpid()}"
-    payload_obj = {
-        "cmd": "request.get",
-        "url": url,
-        "maxTimeout": 180000,
-        "session": session_id,
-        "session_ttl_minutes": 5,
-    }
-    payload_text = json.dumps(payload_obj, ensure_ascii=False)
-    payload = payload_text.encode()
-    curl_command = (
-        f"curl -X POST {shlex.quote(fs_url)} "
-        f"-H {shlex.quote('Content-Type: application/json')} "
-        f"-d {shlex.quote(payload_text)}"
-    )
+    attempts = 2
+    timeout_seconds = 150
+    last_result = None
 
-    print("  [aabots:flaresolverr] Sending request to FlareSolverr...", file=sys.stderr)
-    print(f"  [aabots:flaresolverr] Request: {curl_command}", file=sys.stderr)
-    try:
-        req = urllib.request.Request(
-            fs_url, data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=210)
-        data = json.loads(resp.read())
-        solution = data.get("solution", {})
-        status = solution.get("status", 0)
-        response = solution.get("response", "")
-        content = response.encode() if isinstance(response, str) else response or b''
-        final_url = solution.get("url") or url
-        cookie_list = solution.get("cookies", [])
-        cookies = _extract_cookies(cookie_list)
-        browser_cookies = _flaresolverr_cookies_to_playwright(cookie_list, final_url)
-        headers = solution.get("headers") or {}
-        content_type = _header_value(headers, "content-type")
-        if not content_type and isinstance(response, str):
-            content_type = "text/html"
-        print(
-            f"  [aabots:flaresolverr] Response: top_status={data.get('status')} "
-            f"top_message={data.get('message')!r} solution_status={status} "
-            f"final_url={final_url} content_type={content_type or '-'} "
-            f"cookies={len(cookie_list or [])}/{len(browser_cookies or [])} "
-            f"response_len={len(content)} preview={_body_preview(content, 200)!r}",
-            file=sys.stderr,
+    for attempt in range(1, attempts + 1):
+        session_id = f"aabots_{int(time.time() * 1000)}_{os.getpid()}_{attempt}"
+        payload_obj = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": timeout_seconds * 1000,
+            "session": session_id,
+            "session_ttl_minutes": 5,
+        }
+        payload_text = json.dumps(payload_obj, ensure_ascii=False)
+        payload = payload_text.encode()
+        curl_command = (
+            f"curl -X POST {shlex.quote(fs_url)} "
+            f"-H {shlex.quote('Content-Type: application/json')} "
+            f"-d {shlex.quote(payload_text)}"
         )
 
-        if status == 200:
-            if _is_pdf(content):
-                return BypassResult(success=True, mode="pdf", content=content,
-                                    method="flaresolverr", cookies=cookies,
-                                    browser_cookies=browser_cookies, final_url=final_url,
-                                    status_code=status, content_type=content_type)
-            if _looks_like_html_session(content, content_type, final_url, url):
-                return BypassResult(success=True, mode="session", content=content,
-                                    html=_decode_html(content), method="flaresolverr",
-                                    cookies=cookies, browser_cookies=browser_cookies,
-                                    final_url=final_url, status_code=status,
-                                    content_type=content_type, needs_browser=True)
-            return BypassResult(success=False, method="flaresolverr",
-                                final_url=final_url, status_code=status,
-                                content_type=content_type, cookies=cookies,
-                                browser_cookies=browser_cookies,
-                                error=f"Response is not PDF or useful HTML session (got {len(content)} bytes), preview={_body_preview(content)!r}")
-        return BypassResult(success=False, method="flaresolverr",
-                            final_url=final_url, status_code=status,
-                            content_type=content_type, cookies=cookies,
-                            browser_cookies=browser_cookies,
-                            error=solution.get("message", f"FlareSolverr returned status {status}"))
-    except urllib.error.HTTPError as e:
-        body = e.read()
-        return BypassResult(success=False, method="flaresolverr",
-                            error=f"FlareSolverr API HTTP {e.code}, preview={_body_preview(body)!r}")
-    except urllib.error.URLError as e:
-        reason = getattr(e, 'reason', None) or e
-        reason_text = str(reason)
-        if isinstance(reason, ConnectionRefusedError) or 'Connection refused' in reason_text:
-            return BypassResult(success=False, method="flaresolverr",
-                                error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
-        return BypassResult(success=False, method="flaresolverr",
-                            error=f"FlareSolverr request failed: {reason_text}")
-    except ConnectionRefusedError:
-        return BypassResult(success=False, method="flaresolverr",
-                            error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
-    except TimeoutError as e:
-        return BypassResult(success=False, method="flaresolverr",
-                            error=f"FlareSolverr request timed out: {e}")
-    except Exception as e:
-        return BypassResult(success=False, method="flaresolverr", error=str(e))
+        print(f"  [aabots:flaresolverr] Sending request to FlareSolverr ({attempt}/{attempts})...", file=sys.stderr)
+        print(f"  [aabots:flaresolverr] Request: {curl_command}", file=sys.stderr)
+        try:
+            req = urllib.request.Request(
+                fs_url, data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=timeout_seconds + 5)
+            data = json.loads(resp.read())
+            solution = data.get("solution", {})
+            status = solution.get("status", 0)
+            response = solution.get("response", "")
+            content = response.encode() if isinstance(response, str) else response or b''
+            final_url = solution.get("url") or url
+            cookie_list = solution.get("cookies", [])
+            cookies = _extract_cookies(cookie_list)
+            browser_cookies = _flaresolverr_cookies_to_playwright(cookie_list, final_url)
+            headers = solution.get("headers") or {}
+            content_type = _header_value(headers, "content-type")
+            if not content_type and isinstance(response, str):
+                content_type = "text/html"
+            print(
+                f"  [aabots:flaresolverr] Response: top_status={data.get('status')} "
+                f"top_message={data.get('message')!r} solution_status={status} "
+                f"final_url={final_url} content_type={content_type or '-'} "
+                f"cookies={len(cookie_list or [])}/{len(browser_cookies or [])} "
+                f"response_len={len(content)} preview={_body_preview(content, 200)!r}",
+                file=sys.stderr,
+            )
+
+            if status == 200:
+                if _is_pdf(content):
+                    return BypassResult(success=True, mode="pdf", content=content,
+                                        method="flaresolverr", cookies=cookies,
+                                        browser_cookies=browser_cookies, final_url=final_url,
+                                        status_code=status, content_type=content_type)
+                if _looks_like_html_session(content, content_type, final_url, url):
+                    return BypassResult(success=True, mode="session", content=content,
+                                        html=_decode_html(content), method="flaresolverr",
+                                        cookies=cookies, browser_cookies=browser_cookies,
+                                        final_url=final_url, status_code=status,
+                                        content_type=content_type, needs_browser=True)
+                last_result = BypassResult(success=False, method="flaresolverr",
+                                           final_url=final_url, status_code=status,
+                                           content_type=content_type, cookies=cookies,
+                                           browser_cookies=browser_cookies,
+                                           error=f"Response is not PDF or useful HTML session (got {len(content)} bytes), preview={_body_preview(content)!r}")
+            else:
+                last_result = BypassResult(success=False, method="flaresolverr",
+                                           final_url=final_url, status_code=status,
+                                           content_type=content_type, cookies=cookies,
+                                           browser_cookies=browser_cookies,
+                                           error=solution.get("message", f"FlareSolverr returned status {status}"))
+        except urllib.error.HTTPError as e:
+            body = e.read()
+            last_result = BypassResult(success=False, method="flaresolverr",
+                                       error=f"FlareSolverr API HTTP {e.code}, preview={_body_preview(body)!r}")
+        except urllib.error.URLError as e:
+            reason = getattr(e, 'reason', None) or e
+            reason_text = str(reason)
+            if isinstance(reason, ConnectionRefusedError) or 'Connection refused' in reason_text:
+                last_result = BypassResult(success=False, method="flaresolverr",
+                                           error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
+            else:
+                last_result = BypassResult(success=False, method="flaresolverr",
+                                           error=f"FlareSolverr request failed: {reason_text}")
+        except ConnectionRefusedError:
+            last_result = BypassResult(success=False, method="flaresolverr",
+                                       error=f"FlareSolverr connection refused at {fs_url} (is the service reachable from this process?)")
+        except TimeoutError as e:
+            last_result = BypassResult(success=False, method="flaresolverr",
+                                       error=f"FlareSolverr request timed out: {e}")
+        except Exception as e:
+            last_result = BypassResult(success=False, method="flaresolverr", error=str(e))
+
+        if attempt < attempts and last_result:
+            print(f"  [aabots:flaresolverr] Attempt {attempt}/{attempts} failed: {last_result.error}", file=sys.stderr)
+
+    return last_result or BypassResult(success=False, method="flaresolverr", error="FlareSolverr failed")
 
 
 @register_method("2captcha")
@@ -571,9 +583,10 @@ class BypassChain:
     async def _try_one(self, func: Callable, name: str, url: str, is_biorxiv: bool) -> BypassResult:
         start = time.monotonic()
         try:
+            timeout = 320 if name == "flaresolverr" else self._timeout
             result = await asyncio.wait_for(
                 func(url, self._config, is_biorxiv),
-                timeout=self._timeout,
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             result = BypassResult(success=False, method=name, error="Timeout")
