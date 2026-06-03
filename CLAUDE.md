@@ -22,8 +22,8 @@ python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -
 python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq"
 
 # Download papers — auto-mode picks up all 'searched' from DB
-python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode
-python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode (browser auto-starts when needed)
+python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode (headed/Xvfb browser by default)
+python3 skills/bio-paper-downloader/scripts/paper_cli.py                    # auto-mode (headed/Xvfb browser by default)
 python3 skills/bio-paper-downloader/scripts/paper_cli.py get -u "https://arxiv.org/abs/2301.00001"
 
 # Interpreter runs within Claude Code or via CLI following reference docs (4-phase pipeline)
@@ -110,6 +110,8 @@ Four phases driven by reference docs in `skills/bio-paper-interpreter/references
 ### Browser-Based Downloads
 
 bioRxiv/medRxiv use Cloudflare protection; PubMed papers link to publisher sites. Chrome auto-starts via Playwright's CDP when needed. Two standalone helper scripts handle this: `download_biorxiv_browser.py` and `download_publisher_pdf.py`.
+
+Default browser fallback order is headed Chrome with Xvfb first (levels 2-3); pass `--headless` to try headless Chrome before headed fallbacks. If Xvfb is unavailable, headed attempts fall back to headless instead of failing.
 
 ### Key Design Rules
 
