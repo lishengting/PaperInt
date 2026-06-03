@@ -372,6 +372,7 @@ class ChromeInstance:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                 except Exception:
                     pass
+        _kill_chrome_for_profile(self.profile_dir)
 
 
 def _find_free_port():

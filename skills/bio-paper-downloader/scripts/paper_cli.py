@@ -57,13 +57,136 @@ def _data_tmp(config):
     return tmp_dir
 
 
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _pid_alive(pid):
+    if not _process_exists(pid):
+        return False
+    try:
+        with open(f'/proc/{pid}/status', 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if line.startswith('State:'):
+                    return not line.split(':', 1)[1].lstrip().startswith('Z')
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return True
+
+
+def _read_proc_ppid(pid):
+    try:
+        with open(f'/proc/{pid}/stat', 'r', encoding='utf-8', errors='replace') as f:
+            rest = f.read().split(') ', 1)[1].split()
+        return int(rest[1])
+    except (FileNotFoundError, PermissionError, OSError, IndexError, ValueError):
+        return None
+
+
+def _read_proc_children(pid):
+    children = set()
+    try:
+        task_dir = f'/proc/{pid}/task'
+        for tid in os.listdir(task_dir):
+            try:
+                with open(f'{task_dir}/{tid}/children', 'r', encoding='utf-8') as f:
+                    children.update(int(p) for p in f.read().split() if p.isdigit())
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    if children:
+        return children
+    try:
+        for pid_str in os.listdir('/proc'):
+            if not pid_str.isdigit():
+                continue
+            child_pid = int(pid_str)
+            if _read_proc_ppid(child_pid) == pid:
+                children.add(child_pid)
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return children
+
+
+def _list_descendant_pids(pid):
+    seen = set()
+    stack = list(_read_proc_children(pid))
+    while stack:
+        child = stack.pop()
+        if child in seen:
+            continue
+        seen.add(child)
+        stack.extend(p for p in _read_proc_children(child) if p not in seen)
+    return seen
+
+
+def _safe_getpgid(pid):
+    try:
+        return os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return None
+
+
+def _terminate_processes(pids, reason, grace_seconds=5.0):
+    main_pid = os.getpid()
+    main_pgid = _safe_getpgid(main_pid)
+    live = {int(pid) for pid in pids if int(pid) != main_pid and _pid_alive(int(pid))}
+    if not live:
+        return
+
+    pgids = {pgid for pgid in (_safe_getpgid(pid) for pid in live)
+             if pgid is not None and pgid != main_pgid}
+    sample = ','.join(str(pid) for pid in sorted(live)[:10])
+    print(f"  [cleanup] terminating processes reason={reason} count={len(live)} pgroups={len(pgids)} pids={sample}", file=sys.stderr)
+
+    def _signal(sig):
+        for pgid in sorted(pgids):
+            try:
+                os.killpg(pgid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        for pid in sorted(live):
+            if _safe_getpgid(pid) in pgids:
+                continue
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+
+    _signal(signal.SIGTERM)
+    deadline = time.monotonic() + grace_seconds
+    while time.monotonic() < deadline:
+        if not any(_pid_alive(pid) for pid in live):
+            return
+        time.sleep(0.1)
+
+    remaining = {pid for pid in live if _pid_alive(pid)}
+    if remaining:
+        _signal(signal.SIGKILL)
+        sample = ','.join(str(pid) for pid in sorted(remaining)[:10])
+        print(f"  [cleanup] killed remaining processes reason={reason} count={len(remaining)} pids={sample}", file=sys.stderr)
+
+
+def _terminate_process_tree(root_pid, reason, grace_seconds=5.0):
+    pids = {root_pid}
+    pids.update(_list_descendant_pids(root_pid))
+    _terminate_processes(pids, reason=reason, grace_seconds=grace_seconds)
+
+
 def _run_helper_streaming_stderr(cmd, timeout=600):
     """Run a helper subprocess while teeing stderr in real time."""
     env = os.environ.copy()
     env['PYTHONUNBUFFERED'] = '1'
     proc = subprocess.Popen(
         cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        bufsize=0, env=env)
+        bufsize=0, env=env, start_new_session=True)
     stderr_chunks = []
     passthrough = getattr(sys.stderr, '_real', sys.stderr)
     selector = selectors.DefaultSelector()
@@ -90,7 +213,7 @@ def _run_helper_streaming_stderr(cmd, timeout=600):
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 and proc.poll() is None:
-                    proc.kill()
+                    _terminate_process_tree(proc.pid, reason='timeout')
                     _, tail = proc.communicate()
                     _tee(tail)
                     raise subprocess.TimeoutExpired(cmd, timeout, stderr=''.join(stderr_chunks))
@@ -108,7 +231,225 @@ def _run_helper_streaming_stderr(cmd, timeout=600):
                 result._stderr_streamed = True
                 return result
     finally:
+        if proc.poll() is None:
+            _terminate_process_tree(proc.pid, reason='cleanup')
         selector.close()
+
+
+def _read_proc_status(pid):
+    status = {}
+    try:
+        with open(f'/proc/{pid}/status', 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    status[key] = value.strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return status
+
+
+def _status_kb(status, key):
+    try:
+        return int(status.get(key, '').split()[0])
+    except (IndexError, ValueError, TypeError):
+        return None
+
+
+def _format_kb(kb):
+    if kb is None:
+        return '-'
+    if kb >= 1024 * 1024:
+        return f'{kb / (1024 * 1024):.1f}GiB'
+    if kb >= 1024:
+        return f'{kb / 1024:.1f}MiB'
+    return f'{kb}KiB'
+
+
+def _read_proc_cmdline(pid):
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            raw = f.read()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ''
+    return raw.replace(b'\x00', b' ').decode('utf-8', errors='replace').strip()
+
+
+def _proc_fd_count(pid):
+    try:
+        return len(os.listdir(f'/proc/{pid}/fd'))
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+
+
+def _iter_proc_cmdlines():
+    try:
+        pid_names = os.listdir('/proc')
+    except (FileNotFoundError, PermissionError, OSError):
+        return
+    for pid_str in pid_names:
+        if not pid_str.isdigit():
+            continue
+        pid = int(pid_str)
+        cmdline = _read_proc_cmdline(pid)
+        if cmdline:
+            yield pid, cmdline
+
+
+def _read_meminfo():
+    info = {}
+    try:
+        with open('/proc/meminfo', 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    info[parts[0].rstrip(':')] = int(parts[1])
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return info
+
+
+def _read_file_nr():
+    try:
+        with open('/proc/sys/fs/file-nr', 'r', encoding='utf-8') as f:
+            parts = f.read().split()
+        if len(parts) >= 3:
+            return int(parts[0]), int(parts[2])
+    except (FileNotFoundError, PermissionError, OSError, ValueError):
+        pass
+    return None, None
+
+
+def _read_loadavg():
+    try:
+        with open('/proc/loadavg', 'r', encoding='utf-8') as f:
+            return ' '.join(f.read().split()[:3])
+    except (FileNotFoundError, PermissionError, OSError):
+        return '-'
+
+
+def _read_pressure_summary():
+    parts = []
+    for name in ('cpu', 'memory', 'io'):
+        try:
+            with open(f'/proc/pressure/{name}', 'r', encoding='utf-8') as f:
+                first = f.readline().strip()
+            if first:
+                parts.append(f'{name}:{first[:90]}')
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+    return ' | '.join(parts)
+
+
+def _is_xvfb_cmdline(cmdline):
+    first = cmdline.split()[0] if cmdline.split() else ''
+    return os.path.basename(first) == 'Xvfb' and any(f':{d}' in cmdline for d in range(99, 111))
+
+
+def _is_downloader_related_cmdline(pid, cmdline, tmpdir=None, for_cleanup=False):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if any(marker in cmdline for marker in (
+        'paper_cli_pub_chrome_', 'paper_cli_chrome_', 'paper_cli_scholar_chrome')):
+        return True
+    if tmpdir:
+        profile = os.path.join(os.path.abspath(os.path.expanduser(tmpdir)), 'chrome_profile')
+        if profile in cmdline:
+            return True
+    elif not for_cleanup and 'chrome_profile' in cmdline and any(
+            name in cmdline.lower() for name in ('chrome', 'chromium')):
+        return True
+    if any(name in cmdline for name in ('download_publisher_pdf.py', 'download_biorxiv_browser.py')):
+        return script_dir in cmdline or (tmpdir and os.path.abspath(os.path.expanduser(tmpdir)) in cmdline)
+    if _is_xvfb_cmdline(cmdline):
+        ppid = _read_proc_ppid(pid)
+        return ppid in (None, 1) or not _pid_alive(ppid)
+    return False
+
+
+def _cleanup_downloader_browser_residue(tmpdir=None, reason='helper'):
+    pids = []
+    for pid, cmdline in _iter_proc_cmdlines() or []:
+        if pid == os.getpid():
+            continue
+        if _is_downloader_related_cmdline(pid, cmdline, tmpdir=tmpdir, for_cleanup=True):
+            pids.append(pid)
+    if pids:
+        _terminate_processes(pids, reason=f'browser_residue:{reason}', grace_seconds=3.0)
+
+
+def _process_summary(pids):
+    total_rss = 0
+    total_fds = 0
+    known_fds = 0
+    details = []
+    for pid in sorted(pids):
+        status = _read_proc_status(pid)
+        rss = _status_kb(status, 'VmRSS') or 0
+        fds = _proc_fd_count(pid)
+        cmdline = _read_proc_cmdline(pid)
+        name = os.path.basename(cmdline.split()[0]) if cmdline.split() else '?'
+        total_rss += rss
+        if fds is not None:
+            total_fds += fds
+            known_fds += 1
+        if len(details) < 8:
+            details.append(f'{pid}:{name}:rss={_format_kb(rss)}:fds={fds if fds is not None else "?"}')
+    fd_text = str(total_fds) if known_fds == len(pids) else f'{total_fds}+unknown'
+    return total_rss, fd_text, ','.join(details) if details else '-'
+
+
+def _paper_resource_label(paper):
+    pid = paper.get('paper_id') or paper.get('doi') or paper.get('pmid') or ''
+    title = ' '.join(str(paper.get('title') or '').split())
+    if pid and title:
+        return f'{pid} {title[:80]}'
+    return pid or title[:100] or '?'
+
+
+def _log_resource_state_after_paper(paper_label):
+    try:
+        label = ' '.join(str(paper_label).split())[:140]
+        mem = _read_meminfo()
+        files_alloc, files_max = _read_file_nr()
+        print(f"  [resources] after paper={label} pid={os.getpid()}", file=sys.stderr)
+        print(
+            "  [resources] system "
+            f"loadavg={_read_loadavg()} "
+            f"mem_available={_format_kb(mem.get('MemAvailable'))}/{_format_kb(mem.get('MemTotal'))} "
+            f"swap_free={_format_kb(mem.get('SwapFree'))}/{_format_kb(mem.get('SwapTotal'))} "
+            f"file_handles={files_alloc if files_alloc is not None else '-'}/{files_max if files_max is not None else '-'}",
+            file=sys.stderr,
+        )
+        self_status = _read_proc_status('self')
+        print(
+            "  [resources] process "
+            f"rss={_format_kb(_status_kb(self_status, 'VmRSS'))} "
+            f"vmsize={_format_kb(_status_kb(self_status, 'VmSize'))} "
+            f"vmpeak={_format_kb(_status_kb(self_status, 'VmPeak'))} "
+            f"threads={self_status.get('Threads', '-')} "
+            f"fds={_proc_fd_count('self') if _proc_fd_count('self') is not None else '-'}",
+            file=sys.stderr,
+        )
+        descendants = _list_descendant_pids(os.getpid())
+        desc_rss, desc_fds, desc_details = _process_summary(descendants)
+        print(
+            "  [resources] descendants "
+            f"count={len(descendants)} rss_total={_format_kb(desc_rss)} fds_total={desc_fds} details={desc_details}",
+            file=sys.stderr,
+        )
+        browser_pids = {pid for pid, cmdline in (_iter_proc_cmdlines() or [])
+                        if pid != os.getpid() and _is_downloader_related_cmdline(pid, cmdline)}
+        browser_rss, browser_fds, browser_details = _process_summary(browser_pids)
+        print(
+            "  [resources] browser_related "
+            f"count={len(browser_pids)} rss_total={_format_kb(browser_rss)} fds_total={browser_fds} details={browser_details}",
+            file=sys.stderr,
+        )
+        pressure = _read_pressure_summary()
+        if pressure:
+            print(f"  [resources] pressure {pressure}", file=sys.stderr)
+    except Exception as e:
+        print(f"  [resources] unavailable: {e}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +870,7 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
         raise
     finally:
         _cleanup_aabots_handoff(aabots_handoff)
+        _cleanup_downloader_browser_residue(tmpdir, reason='biorxiv_helper')
     if r.returncode == 0:
         safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
         pdf_path = os.path.join(tmpdir, safe_name)
@@ -791,6 +1133,7 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
             r = None
         finally:
             _cleanup_aabots_handoff(aabots_handoff)
+            _cleanup_downloader_browser_residue(tmpdir, reason='publisher_helper')
             aabots_handoff = None
         if r and r.returncode == 0:
             safe_name = doi.replace('/', '_').replace('.', '_') + '.pdf'
@@ -915,6 +1258,7 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
             r = None
         finally:
             _cleanup_aabots_handoff(aabots_handoff)
+            _cleanup_downloader_browser_residue(tmpdir, reason='direct_pdf_helper')
             aabots_handoff = None
         if r and r.returncode == 0:
             for f in os.listdir(tmpdir):
@@ -1212,9 +1556,9 @@ def _print_and_record_subprocess_failure(result, category=None, subtype=None, ta
     return None
 
 
-def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
-                   captcha_enabled=False, stealth_enabled=False, aabots=None,
-                   headless_first=False):
+def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_level=2,
+                         captcha_enabled=False, stealth_enabled=False, aabots=None,
+                         headless_first=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     global _LAST_DOWNLOAD_FAILURE
     _LAST_DOWNLOAD_FAILURE = None
@@ -1426,6 +1770,23 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         return False
 
 
+def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
+                   captcha_enabled=False, stealth_enabled=False, aabots=None,
+                   headless_first=False):
+    """Download a paper and log resource state afterward."""
+    label = _paper_resource_label(paper)
+    try:
+        return _download_paper_impl(paper, config, data_dir, conn,
+                                    force=force,
+                                    fallback_level=fallback_level,
+                                    captcha_enabled=captcha_enabled,
+                                    stealth_enabled=stealth_enabled,
+                                    aabots=aabots,
+                                    headless_first=headless_first)
+    finally:
+        _log_resource_state_after_paper(label)
+
+
 # ---------------------------------------------------------------------------
 # URL detection for `get` command
 # ---------------------------------------------------------------------------
@@ -1606,9 +1967,13 @@ def cmd_get(args, config):
             print("Error: --browser-only only supports biorxiv/medrxiv URLs",
                   file=sys.stderr)
             return 1
-        ok = _download_browser_only(paper, config, args.data_dir, conn,
-                                    force=args.force,
-                                    stealth_enabled=args.stealth)
+        label = _paper_resource_label(paper)
+        try:
+            ok = _download_browser_only(paper, config, args.data_dir, conn,
+                                        force=args.force,
+                                        stealth_enabled=args.stealth)
+        finally:
+            _log_resource_state_after_paper(label)
     else:
         from aabots import resolve_methods
         aabots_methods = resolve_methods(args.aabots) if args.aabots else []
