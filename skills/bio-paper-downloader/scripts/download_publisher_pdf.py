@@ -895,21 +895,20 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
                                   stealth_enabled=False, aabots_stealth=False,
-                                  aabots_handoff_path=None, no_headless=False):
+                                  aabots_handoff_path=None, headless_first=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
     fallback_level:
       0 — not applicable (should not be called without browser)
       1 — headless Chrome only (2 attempts)
-      2 — headless → Xvfb headed Chrome (default)
-      3 — headless → Xvfb headed → system display headed
+      2 — Xvfb headed Chrome (default), headless if display unavailable
+      3 — Xvfb headed → system display headed, headless if display unavailable
 
-    With no_headless=True, skip headless attempts and start at headed fallback.
+    With headless_first=True, try headless Chrome before headed fallbacks.
 
     Returns dict: {success, file_path, file_size, message}
     """
-    # Resolve PMID to DOI if needed
     if pmid and not doi:
         doi = doi_from_pmid(pmid)
         if not doi:
@@ -927,21 +926,20 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
     print(f"  [publisher] DOI: {doi}", file=sys.stderr)
     print(f"  [publisher] URL: {doi_url}", file=sys.stderr)
 
-    # Shared profile dir so retries share cookies
     profile_dir = os.path.join(output_dir, 'chrome_profile')
     os.makedirs(profile_dir, exist_ok=True)
-
-    # Save original DISPLAY — _xvfb_start() overwrites it globally
     _orig_display = os.environ.get('DISPLAY')
-
     result = {'success': False, 'file_path': None, 'file_size': 0, 'message': ''}
 
-    def _is_fatal(msg):
-        """Chrome startup failures — retrying won't help."""
-        return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
+    def _is_chrome_fatal(msg):
+        return 'ECONNREFUSED' in msg
 
-    if not no_headless:
-        # Try headless first (up to 2 attempts), retrying with stealth when available
+    def _is_display_unavailable(msg):
+        return 'Xvfb is required' in msg or 'No DISPLAY' in msg
+
+    async def _try_headless(reason):
+        nonlocal result
+        print(f"  [publisher] {reason}", file=sys.stderr)
         for attempt in range(2):
             attempt_stealth = stealth_enabled or (attempt > 0 and _STEALTH_AVAILABLE)
             if attempt > 0:
@@ -960,23 +958,33 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                         aabots_stealth=aabots_stealth,
                                                         aabots_handoff=aabots_handoff)
             if result['success']:
-                # ...
-                return result
-            print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
-            if _is_fatal(result.get('message', '')):
-                return result
-            if 'Anti-bot' in result.get('message', ''):
+                return 'success'
+            msg = result.get('message', '')
+            print(f"  [publisher] headless failed: {msg}", file=sys.stderr)
+            if _is_chrome_fatal(msg):
+                return 'fatal'
+            if 'Anti-bot' in msg:
                 break
-    else:
-        print(f"  [publisher] skipping headless Chrome (--no-headless)", file=sys.stderr)
+        return 'failed'
 
-    if fallback_level < 2:
+    if fallback_level < 1:
+        result['message'] = 'Browser fallback disabled'
         return result
 
-    # Fallback to Xvfb headed (3 attempts)
+    headless_attempted = False
+    display_unavailable = False
+
+    if headless_first or fallback_level == 1:
+        reason = 'trying headless Chrome first (--headless)...' if headless_first else 'trying headless Chrome (fallback level 1)...'
+        status = await _try_headless(reason)
+        headless_attempted = True
+        if status in ('success', 'fatal') or fallback_level < 2:
+            return result
+
     headed_stealth = stealth_enabled or _STEALTH_AVAILABLE
     suffix = ', stealth' if headed_stealth and not stealth_enabled else ''
-    print(f"  [publisher] falling back to headed Chrome (Xvfb{suffix})...", file=sys.stderr)
+    prefix = 'falling back to' if headless_first else 'trying'
+    print(f"  [publisher] {prefix} headed Chrome (Xvfb{suffix})...", file=sys.stderr)
     for attempt in range(3):
         if attempt > 0:
             print(f"  [publisher] headed retry {attempt+1}/3 after 5s...", file=sys.stderr)
@@ -993,47 +1001,52 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                                     aabots_stealth=aabots_stealth,
                                                     aabots_handoff=aabots_handoff)
         if result['success']:
-            # ...
             return result
         msg = result.get('message', '')
         print(f"  [publisher] headed (xvfb) failed: {msg}", file=sys.stderr)
-        if _is_fatal(msg):
+        if _is_display_unavailable(msg):
+            display_unavailable = True
+            break
+        if _is_chrome_fatal(msg):
             return result
 
-    if fallback_level < 3:
-        return result
+    if fallback_level >= 3:
+        if _orig_display:
+            os.environ['DISPLAY'] = _orig_display
+        else:
+            os.environ.pop('DISPLAY', None)
 
-    # Restore original DISPLAY before system display fallback.
-    # _xvfb_start() polluted os.environ with its virtual display (:99).
-    if _orig_display:
-        os.environ['DISPLAY'] = _orig_display
-    else:
-        os.environ.pop('DISPLAY', None)
+        print(f"  [publisher] falling back to headed Chrome (system display{suffix})...", file=sys.stderr)
+        for attempt in range(3):
+            if attempt > 0:
+                print(f"  [publisher] headed (system) retry {attempt+1}/3 after 5s...", file=sys.stderr)
+                time.sleep(5)
 
-    # Fallback to system display headed (3 attempts)
-    print(f"  [publisher] falling back to headed Chrome (system display{suffix})...", file=sys.stderr)
-    for attempt in range(3):
-        if attempt > 0:
-            print(f"  [publisher] headed (system) retry {attempt+1}/3 after 5s...", file=sys.stderr)
-            time.sleep(5)
+            result = await _do_download_via_publisher(doi_url, output_path,
+                                                        chrome_bin, timeout,
+                                                        headless=False,
+                                                        profile_dir=profile_dir,
+                                                        wait=wait, xvfb=False,
+                                                        captcha_enabled=captcha_enabled,
+                                                        captcha_api_key=captcha_api_key,
+                                                        stealth_enabled=headed_stealth,
+                                                        aabots_stealth=aabots_stealth,
+                                                        aabots_handoff=aabots_handoff)
+            if result['success']:
+                return result
+            msg = result.get('message', '')
+            print(f"  [publisher] headed (system) failed: {msg}", file=sys.stderr)
+            if _is_display_unavailable(msg):
+                display_unavailable = True
+                break
+            if _is_chrome_fatal(msg):
+                return result
 
-        result = await _do_download_via_publisher(doi_url, output_path,
-                                                    chrome_bin, timeout,
-                                                    headless=False,
-                                                    profile_dir=profile_dir,
-                                                    wait=wait, xvfb=False,
-                                                    captcha_enabled=captcha_enabled,
-                                                    captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=headed_stealth,
-                                                    aabots_stealth=aabots_stealth,
-                                                    aabots_handoff=aabots_handoff)
-        if result['success']:
-            # ...
+    if display_unavailable and not headless_attempted:
+        status = await _try_headless('Xvfb/display unavailable; falling back to headless Chrome...')
+        if status in ('success', 'fatal', 'failed'):
             return result
-        msg = result.get('message', '')
-        print(f"  [publisher] headed (system) failed: {msg}", file=sys.stderr)
-        if _is_fatal(msg):
-            return result
+
     return result
 
 
@@ -1055,7 +1068,7 @@ def main():
     p.add_argument('--wait', type=int, default=10,
                    help='Post-navigation wait in seconds (default: 10)')
     p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
-                   help='Browser fallback level (0=no-browser, 1=headless, 2=+xvfb, 3=+system-display)')
+                   help='Browser fallback level (0=no-browser, 1=headless-only, 2=Xvfb headed default, 3=+system-display)')
     p.add_argument('--captcha', action='store_true', default=False,
                    help='Enable 2Captcha solving for anti-bot challenges (default: off)')
     p.add_argument('--twocap-api', default='',
@@ -1065,8 +1078,8 @@ def main():
     p.add_argument('--aabots-stealth', action='store_true', default=False,
                    help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
     p.add_argument('--aabots-handoff', default=None, help=argparse.SUPPRESS)
-    p.add_argument('--no-headless', action='store_true', default=False,
-                   help='Skip all headless attempts and start with headed fallback')
+    p.add_argument('--headless', action='store_true', default=False,
+                   help='Try headless Chrome before headed fallbacks (default: headed/Xvfb first)')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -1081,7 +1094,7 @@ def main():
         stealth_enabled=args.stealth,
         aabots_stealth=args.aabots_stealth,
         aabots_handoff_path=args.aabots_handoff,
-        no_headless=args.no_headless))
+        headless_first=args.headless))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
