@@ -912,7 +912,7 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
                                fallback_level=2, wait=10, captcha_enabled=False,
                                captcha_api_key='', stealth_enabled=False,
                                aabots_stealth=False, aabots_handoff_path=None,
-                               cookie_dir=None):
+                               cookie_dir=None, no_headless=False):
     """
     Download a PDF from bioRxiv/medRxiv via a real Chrome browser, or any URL directly.
 
@@ -921,6 +921,8 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
       1 — headless Chrome only (2 attempts)
       2 — headless → Xvfb headed Chrome (default)
       3 — headless → Xvfb headed → system display headed
+
+    With no_headless=True, skip headless attempts and start at headed fallback.
 
     Shares a single Chrome profile across retries so cookies persist.
 
@@ -940,31 +942,34 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         """Chrome startup failures — retrying won't help."""
         return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
 
-    # Try headless first (up to 2 attempts), break immediately on Cloudflare
-    for attempt in range(2):
-        if attempt > 0:
-            print(f"  [browser] headless retry 2/2 after 5s...", file=sys.stderr)
-            time.sleep(5)
+    if not no_headless:
+        # Try headless first (up to 2 attempts), break immediately on Cloudflare
+        for attempt in range(2):
+            if attempt > 0:
+                print(f"  [browser] headless retry 2/2 after 5s...", file=sys.stderr)
+                time.sleep(5)
 
-        result = await _do_download_via_browser(url_or_doi, output_dir,
-                                                chrome_bin, timeout,
-                                                headless=True,
-                                                profile_dir=profile_dir,
-                                                wait=wait,
-                                                captcha_enabled=captcha_enabled,
-                                                captcha_api_key=captcha_api_key,
-                                                stealth_enabled=stealth_enabled,
-                                                aabots_stealth=aabots_stealth,
-                                                aabots_handoff=aabots_handoff)
-        if result['success']:
-            # ... (headless success)
-            return result
-        msg = result.get('message', '')
-        print(f"  [browser] headless failed: {msg}", file=sys.stderr)
-        if _is_fatal(msg):
-            return result
-        if 'Cloudflare' in msg:
-            break
+            result = await _do_download_via_browser(url_or_doi, output_dir,
+                                                    chrome_bin, timeout,
+                                                    headless=True,
+                                                    profile_dir=profile_dir,
+                                                    wait=wait,
+                                                    captcha_enabled=captcha_enabled,
+                                                    captcha_api_key=captcha_api_key,
+                                                    stealth_enabled=stealth_enabled,
+                                                    aabots_stealth=aabots_stealth,
+                                                    aabots_handoff=aabots_handoff)
+            if result['success']:
+                # ... (headless success)
+                return result
+            msg = result.get('message', '')
+            print(f"  [browser] headless failed: {msg}", file=sys.stderr)
+            if _is_fatal(msg):
+                return result
+            if 'Cloudflare' in msg:
+                break
+    else:
+        print(f"  [browser] skipping headless Chrome (--no-headless)", file=sys.stderr)
 
     if fallback_level < 2:
         return result
@@ -1060,6 +1065,8 @@ def main():
     p.add_argument('--aabots-handoff', default=None, help=argparse.SUPPRESS)
     p.add_argument('--cookie-dir', default=None,
                    help='Directory for persistent browser profile/cookies (default: <output-dir>/chrome_profile)')
+    p.add_argument('--no-headless', action='store_true', default=False,
+                   help='Skip all headless attempts and start with headed fallback')
     args = p.parse_args()
 
     result = asyncio.run(download_via_browser(
@@ -1070,7 +1077,8 @@ def main():
         stealth_enabled=args.stealth,
         aabots_stealth=args.aabots_stealth,
         aabots_handoff_path=args.aabots_handoff,
-        cookie_dir=args.cookie_dir))
+        cookie_dir=args.cookie_dir,
+        no_headless=args.no_headless))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")

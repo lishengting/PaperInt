@@ -409,7 +409,7 @@ def download_arxiv(arxiv_id, config):
 
 
 def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False, aabots=None):
+                      stealth_enabled=False, aabots=None, no_headless=False):
     if not doi:
         return None
 
@@ -460,7 +460,8 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
                                          captcha_enabled=captcha_enhanced,
                                          stealth_enabled=stealth_enhanced,
                                          aabots_stealth=stealth_enhanced and aabots,
-                                         aabots_handoff=aabots_handoff)
+                                         aabots_handoff=aabots_handoff,
+                                         no_headless=no_headless)
             if data:
                 return data
         except Exception as e:
@@ -474,7 +475,8 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
 
 
 def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=False,
-                      stealth_enabled=False, aabots_stealth=False, aabots_handoff=None):
+                      stealth_enabled=False, aabots_stealth=False, aabots_handoff=None,
+                      no_headless=False):
     if not doi:
         return None
     if _shared_chrome_port:
@@ -501,6 +503,8 @@ def _browser_download(doi, server, config, fallback_level=2, captcha_enabled=Fal
         cmd.append('--aabots-stealth')
     if aabots_handoff:
         cmd.extend(['--aabots-handoff', aabots_handoff])
+    if no_headless:
+        cmd.append('--no-headless')
     try:
         r = _run_helper_streaming_stderr(cmd, timeout=600)
     except subprocess.TimeoutExpired:
@@ -730,7 +734,7 @@ def _run_browser_only_download(homepage, article_url, pdf_url,
 
 
 def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=False,
-                        stealth_enabled=False, aabots=None):
+                        stealth_enabled=False, aabots=None, no_headless=False):
     # Try aabots chain first (HTTP-level methods before subprocess)
     stealth_enhanced = stealth_enabled
     captcha_enhanced = captcha_enabled
@@ -769,6 +773,8 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
         base_cmd.append('--aabots-stealth')
     if aabots_handoff:
         base_cmd.extend(['--aabots-handoff', aabots_handoff])
+    if no_headless:
+        base_cmd.append('--no-headless')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -818,7 +824,7 @@ def _validate_pdf(data: bytes) -> bool:
 
 
 def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=False,
-                         stealth_enabled=False, aabots=None):
+                         stealth_enabled=False, aabots=None, no_headless=False):
     if not pdf_url:
         return None
 
@@ -877,6 +883,8 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
         base_cmd.append('--aabots-stealth')
     if aabots_handoff:
         base_cmd.extend(['--aabots-handoff', aabots_handoff])
+    if no_headless:
+        base_cmd.append('--no-headless')
     tmpdir = _data_tmp(config)
     browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
     cmd = base_cmd + ['-o', tmpdir, '--wait', str(browser_wait)]
@@ -1143,7 +1151,8 @@ def _print_and_record_subprocess_failure(result, category=None, subtype=None, ta
 
 
 def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
-                   captcha_enabled=False, stealth_enabled=False, aabots=None):
+                   captcha_enabled=False, stealth_enabled=False, aabots=None,
+                   no_headless=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     global _LAST_DOWNLOAD_FAILURE
     _LAST_DOWNLOAD_FAILURE = None
@@ -1185,22 +1194,22 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
     elif src in ('biorxiv', 'medrxiv'):
         pdf_data = download_preprint(paper.get('doi') or pid, src, config,
                                      fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
     elif src == 'scholar':
         pdf_url = paper.get('pdf_url', '')
         doi = paper.get('doi', '')
         if pdf_url and fallback_level >= 1:
             pdf_data = _download_direct_pdf(pdf_url, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
         if not pdf_data and doi and fallback_level >= 1:
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
         if not pdf_data and paper.get('arxiv_id'):
             pdf_data = download_arxiv(paper.get('arxiv_id'), config)
     elif src == 'pubmed':
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
         if not pdf_data:
             # Try PMC download (with Europe PMC fallback) even if API
             # says has_pdf=False — the API may be wrong, and Europe PMC often
@@ -1224,7 +1233,8 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                                            fallback_level=fallback_level,
                                            captcha_enabled=captcha_enabled,
                                            stealth_enabled=stealth_enabled,
-                                           aabots=aabots)
+                                           aabots=aabots,
+                                           no_headless=no_headless)
         if not pdf_data:
             pmc_id = paper.get('pmc_id')
             if not pmc_id and paper.get('pmid'):
@@ -1233,7 +1243,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                 pdf_data = _download_pmc_pdf(pmc_id, config)
     elif src == 'generic':
         pdf_data = _download_direct_pdf(paper.get('pdf_url', ''), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
     elif src in ('nature', 'science', 'cell', 'plos'):
         doi = paper.get('doi', '')
         if doi and src == 'nature' and not doi.startswith('10.'):
@@ -1263,7 +1273,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         # Step 1: try direct PDF URL (browser fallback handles retries internally)
         if not pdf_data and paper.get('pdf_url'):
             pdf_data = _download_direct_pdf(paper['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
             if pdf_data and not _is_pdf(pdf_data):
                 print(f"  [cnsp] direct download returned HTML, not PDF (paywall/blocked)", file=sys.stderr)
                 _record_download_failure('direct download returned HTML, not PDF (paywall/blocked)',
@@ -1276,7 +1286,7 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
         if not pdf_data and doi:
             print(f"  [cnsp] scanning article page for PDF via DOI: {doi}", file=sys.stderr)
             pdf_data = _publisher_download(doi, paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots)
+                                  stealth_enabled=stealth_enabled, aabots=aabots, no_headless=no_headless)
 
     # Validate PDF before accepting (catch corrupt/truncated files early)
     if pdf_data and not _validate_pdf(pdf_data):
@@ -1302,18 +1312,18 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
             elif alt_src in ('biorxiv', 'medrxiv'):
                 adoi = alt.get('doi') or paper.get('doi') or pid
                 pdf_data = download_preprint(adoi, alt_src, config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, no_headless=no_headless)
             elif alt_src == 'scholar':
                 if alt.get("pdf_url") and fallback_level >= 1:
                     pdf_data = _download_direct_pdf(alt['pdf_url'], config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, no_headless=no_headless)
                 if not pdf_data and alt.get("doi") and fallback_level >= 1:
                     pdf_data = _publisher_download(alt['doi'], paper.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, no_headless=no_headless)
             elif alt_src == 'pubmed':
                 if fallback_level >= 1 and alt.get('doi'):
                     pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled)
+                                  stealth_enabled=stealth_enabled, no_headless=no_headless)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
                     pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
                     if pmc_id:
@@ -1480,7 +1490,7 @@ def cmd_pdf(args, config):
 
     print(f"Downloading: {url}")
 
-    pdf_data = _download_direct_pdf(url, config)
+    pdf_data = _download_direct_pdf(url, config, no_headless=args.no_headless)
     if not pdf_data:
         print("Failed to download PDF.", file=sys.stderr)
         return 1
@@ -1544,7 +1554,7 @@ def cmd_get(args, config):
                             force=args.force, fallback_level=args.fallback_level,
                             captcha_enabled=args.captcha,
                             stealth_enabled=args.stealth,
-                            aabots=aabots_methods)
+                            aabots=aabots_methods, no_headless=args.no_headless)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -1556,7 +1566,7 @@ def cmd_get(args, config):
 
 def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
              cns_only=False, fallback_level=2, captcha_enabled=False, stealth_enabled=False,
-             aabots=None):
+             aabots=None, no_headless=False):
     """Auto-mode: download all papers with status='searched' from the database."""
     from aabots import resolve_methods
     aabots_methods = resolve_methods(aabots) if aabots else []
@@ -1596,7 +1606,7 @@ def cmd_auto(config, data_dir, limit=None, retry_failed=False, cnsp_only=False,
         print(f"[{i}/{len(papers)}] {p['paper_id']} — {p.get('title', '?')[:80]}")
         result = download_paper(p, config, data_dir, conn,
                                fallback_level=fallback_level, captcha_enabled=captcha_enabled,
-                                  stealth_enabled=stealth_enabled, aabots=aabots_methods)
+                                  stealth_enabled=stealth_enabled, aabots=aabots_methods, no_headless=no_headless)
         if result is True:
             ok += 1
         elif result is False:
@@ -1658,6 +1668,8 @@ def main():
                    help='Directory for paper data (default: data)')
     p.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                    help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
+    p.add_argument('--no-headless', action='store_true', default=False,
+                   help='Skip all headless browser attempts and start with headed fallback')
     p.add_argument('--captcha', action='store_true', default=False,
                    help='Enable 2Captcha solving for Cloudflare/reCAPTCHA (default: off, costs money). '
                         'Deprecated: use --aabots 2Captcha instead.')
@@ -1700,6 +1712,8 @@ def main():
                     help='Force re-download even if already downloaded')
     gp.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                     help='Browser fallback level: 0=direct-HTTP, 1=headless, 2=+xvfb (default), 3=+system-display')
+    gp.add_argument('--no-headless', action='store_true', default=False,
+                    help='Skip all headless browser attempts and start with headed fallback')
     gp.add_argument('--captcha', action='store_true', default=False,
                     help='Enable 2Captcha solving (default: off). Deprecated: use --aabots 2Captcha')
     gp.add_argument('--browser-only', action='store_true',
@@ -1723,6 +1737,8 @@ def main():
                     help='PDF URL to download')
     pp.add_argument('-o', '--output', default=None,
                     help='Output file path (default: derived from URL)')
+    pp.add_argument('--no-headless', action='store_true', default=False,
+                    help='Skip all headless browser attempts and start with headed fallback')
 
     args = p.parse_args()
 
@@ -1761,7 +1777,8 @@ def main():
                         fallback_level=args.fallback_level,
                         captcha_enabled=args.captcha,
                         stealth_enabled=args.stealth,
-                        aabots=args.aabots)
+                        aabots=args.aabots,
+                        no_headless=args.no_headless)
     return 1
 
 

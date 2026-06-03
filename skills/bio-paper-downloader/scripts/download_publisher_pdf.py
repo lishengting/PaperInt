@@ -895,7 +895,7 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   fallback_level=2, wait=10,
                                   captcha_enabled=False, captcha_api_key='',
                                   stealth_enabled=False, aabots_stealth=False,
-                                  aabots_handoff_path=None):
+                                  aabots_handoff_path=None, no_headless=False):
     """
     Download a paper PDF via DOI → publisher page → PDF link.
 
@@ -904,6 +904,8 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
       1 — headless Chrome only (2 attempts)
       2 — headless → Xvfb headed Chrome (default)
       3 — headless → Xvfb headed → system display headed
+
+    With no_headless=True, skip headless attempts and start at headed fallback.
 
     Returns dict: {success, file_path, file_size, message}
     """
@@ -938,32 +940,35 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         """Chrome startup failures — retrying won't help."""
         return 'ECONNREFUSED' in msg or 'Xvfb is required' in msg or 'No DISPLAY' in msg
 
-    # Try headless first (up to 2 attempts), retrying with stealth when available
-    for attempt in range(2):
-        attempt_stealth = stealth_enabled or (attempt > 0 and _STEALTH_AVAILABLE)
-        if attempt > 0:
-            suffix = ' with stealth' if attempt_stealth and not stealth_enabled else ''
-            print(f"  [publisher] headless retry 2/2{suffix} after 5s...", file=sys.stderr)
-            time.sleep(5)
+    if not no_headless:
+        # Try headless first (up to 2 attempts), retrying with stealth when available
+        for attempt in range(2):
+            attempt_stealth = stealth_enabled or (attempt > 0 and _STEALTH_AVAILABLE)
+            if attempt > 0:
+                suffix = ' with stealth' if attempt_stealth and not stealth_enabled else ''
+                print(f"  [publisher] headless retry 2/2{suffix} after 5s...", file=sys.stderr)
+                time.sleep(5)
 
-        result = await _do_download_via_publisher(doi_url, output_path,
-                                                    chrome_bin, timeout,
-                                                    headless=True,
-                                                    profile_dir=profile_dir,
-                                                    wait=wait,
-                                                    captcha_enabled=captcha_enabled,
-                                                    captcha_api_key=captcha_api_key,
-                                                    stealth_enabled=attempt_stealth,
-                                                    aabots_stealth=aabots_stealth,
-                                                    aabots_handoff=aabots_handoff)
-        if result['success']:
-            # ...
-            return result
-        print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
-        if _is_fatal(result.get('message', '')):
-            return result
-        if 'Anti-bot' in result.get('message', ''):
-            break
+            result = await _do_download_via_publisher(doi_url, output_path,
+                                                        chrome_bin, timeout,
+                                                        headless=True,
+                                                        profile_dir=profile_dir,
+                                                        wait=wait,
+                                                        captcha_enabled=captcha_enabled,
+                                                        captcha_api_key=captcha_api_key,
+                                                        stealth_enabled=attempt_stealth,
+                                                        aabots_stealth=aabots_stealth,
+                                                        aabots_handoff=aabots_handoff)
+            if result['success']:
+                # ...
+                return result
+            print(f"  [publisher] headless failed: {result['message']}", file=sys.stderr)
+            if _is_fatal(result.get('message', '')):
+                return result
+            if 'Anti-bot' in result.get('message', ''):
+                break
+    else:
+        print(f"  [publisher] skipping headless Chrome (--no-headless)", file=sys.stderr)
 
     if fallback_level < 2:
         return result
@@ -1060,6 +1065,8 @@ def main():
     p.add_argument('--aabots-stealth', action='store_true', default=False,
                    help='Enable enhanced anti-bot stealth (fingerprint randomization + human behavior simulation)')
     p.add_argument('--aabots-handoff', default=None, help=argparse.SUPPRESS)
+    p.add_argument('--no-headless', action='store_true', default=False,
+                   help='Skip all headless attempts and start with headed fallback')
     args = p.parse_args()
 
     if not args.doi and not args.pmid:
@@ -1073,7 +1080,8 @@ def main():
         captcha_api_key=args.twocap_api,
         stealth_enabled=args.stealth,
         aabots_stealth=args.aabots_stealth,
-        aabots_handoff_path=args.aabots_handoff))
+        aabots_handoff_path=args.aabots_handoff,
+        no_headless=args.no_headless))
 
     if result['success']:
         print(f"OK: {result['file_size']} bytes -> {result['file_path']}")
