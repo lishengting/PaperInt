@@ -134,6 +134,42 @@ def _safe_getpgid(pid):
         return None
 
 
+def _list_pids_in_pgids(pgids):
+    pgids = {pgid for pgid in pgids if pgid is not None}
+    if not pgids:
+        return set()
+    pids = set()
+    try:
+        pid_names = os.listdir('/proc')
+    except (FileNotFoundError, PermissionError, OSError):
+        return pids
+    for pid_str in pid_names:
+        if not pid_str.isdigit():
+            continue
+        pid = int(pid_str)
+        if _safe_getpgid(pid) in pgids:
+            pids.add(pid)
+    return pids
+
+
+def _expand_owned_process_roots(root_pids):
+    main_pid = os.getpid()
+    main_pgid = _safe_getpgid(main_pid)
+    roots = {int(pid) for pid in root_pids if int(pid) != main_pid and _pid_alive(int(pid))}
+    owned = set(roots)
+    root_pgids = set()
+    for pid in roots:
+        owned.update(_list_descendant_pids(pid))
+        pgid = _safe_getpgid(pid)
+        if pgid is not None and pgid != main_pgid:
+            root_pgids.add(pgid)
+    owned.update(_list_pids_in_pgids(root_pgids))
+    owned.discard(main_pid)
+    if main_pgid is not None:
+        owned = {pid for pid in owned if _safe_getpgid(pid) != main_pgid}
+    return {pid for pid in owned if _pid_alive(pid)}
+
+
 def _terminate_processes(pids, reason, grace_seconds=5.0):
     main_pid = os.getpid()
     main_pgid = _safe_getpgid(main_pid)
@@ -143,6 +179,13 @@ def _terminate_processes(pids, reason, grace_seconds=5.0):
 
     pgids = {pgid for pgid in (_safe_getpgid(pid) for pid in live)
              if pgid is not None and pgid != main_pgid}
+    live.update(pid for pid in _list_pids_in_pgids(pgids)
+                if pid != main_pid and _pid_alive(pid))
+    if main_pgid is not None:
+        live = {pid for pid in live if _safe_getpgid(pid) != main_pgid}
+    if not live:
+        return
+
     sample = ','.join(str(pid) for pid in sorted(live)[:10])
     print(f"  [cleanup] terminating processes reason={reason} count={len(live)} pgroups={len(pgids)} pids={sample}", file=sys.stderr)
 
@@ -175,8 +218,10 @@ def _terminate_processes(pids, reason, grace_seconds=5.0):
 
 
 def _terminate_process_tree(root_pid, reason, grace_seconds=5.0):
-    pids = {root_pid}
-    pids.update(_list_descendant_pids(root_pid))
+    pids = _expand_owned_process_roots({root_pid})
+    if not pids:
+        pids = {root_pid}
+        pids.update(_list_descendant_pids(root_pid))
     _terminate_processes(pids, reason=reason, grace_seconds=grace_seconds)
 
 
@@ -367,13 +412,14 @@ def _is_downloader_related_cmdline(pid, cmdline, tmpdir=None, for_cleanup=False)
 
 
 def _cleanup_downloader_browser_residue(tmpdir=None, reason='helper'):
-    pids = []
+    root_pids = []
     for pid, cmdline in _iter_proc_cmdlines() or []:
         if pid == os.getpid():
             continue
         if _is_downloader_related_cmdline(pid, cmdline, tmpdir=tmpdir, for_cleanup=True):
-            pids.append(pid)
-    if pids:
+            root_pids.append(pid)
+    if root_pids:
+        pids = _expand_owned_process_roots(root_pids)
         _terminate_processes(pids, reason=f'browser_residue:{reason}', grace_seconds=3.0)
 
 
@@ -437,8 +483,9 @@ def _log_resource_state_after_paper(paper_label):
             f"count={len(descendants)} rss_total={_format_kb(desc_rss)} fds_total={desc_fds} details={desc_details}",
             file=sys.stderr,
         )
-        browser_pids = {pid for pid, cmdline in (_iter_proc_cmdlines() or [])
-                        if pid != os.getpid() and _is_downloader_related_cmdline(pid, cmdline)}
+        browser_root_pids = {pid for pid, cmdline in (_iter_proc_cmdlines() or [])
+                             if pid != os.getpid() and _is_downloader_related_cmdline(pid, cmdline)}
+        browser_pids = _expand_owned_process_roots(browser_root_pids)
         browser_rss, browser_fds, browser_details = _process_summary(browser_pids)
         print(
             "  [resources] browser_related "

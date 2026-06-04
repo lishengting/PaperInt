@@ -191,11 +191,126 @@ def _process_exists(pid):
         return False
 
 
+def _pid_alive(pid):
+    if not _process_exists(pid):
+        return False
+    try:
+        with open(f'/proc/{pid}/status', 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if line.startswith('State:'):
+                    return not line.split(':', 1)[1].lstrip().startswith('Z')
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return True
+
+
+def _safe_getpgid(pid):
+    try:
+        return os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return None
+
+
+def _read_proc_ppid(pid):
+    try:
+        with open(f'/proc/{pid}/stat', 'r', encoding='utf-8', errors='replace') as f:
+            rest = f.read().split(') ', 1)[1].split()
+        return int(rest[1])
+    except (FileNotFoundError, PermissionError, OSError, IndexError, ValueError):
+        return None
+
+
+def _read_proc_children(pid):
+    children = set()
+    try:
+        task_dir = f'/proc/{pid}/task'
+        for tid in os.listdir(task_dir):
+            try:
+                with open(f'{task_dir}/{tid}/children', 'r', encoding='utf-8') as f:
+                    children.update(int(p) for p in f.read().split() if p.isdigit())
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    if children:
+        return children
+    try:
+        for pid_str in os.listdir('/proc'):
+            if pid_str.isdigit():
+                child_pid = int(pid_str)
+                if _read_proc_ppid(child_pid) == pid:
+                    children.add(child_pid)
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return children
+
+
+def _list_descendant_pids(pid):
+    seen = set()
+    stack = list(_read_proc_children(pid))
+    while stack:
+        child = stack.pop()
+        if child in seen:
+            continue
+        seen.add(child)
+        stack.extend(p for p in _read_proc_children(child) if p not in seen)
+    return seen
+
+
+def _list_pids_in_pgids(pgids):
+    pgids = {pgid for pgid in pgids if pgid is not None}
+    pids = set()
+    if not pgids:
+        return pids
+    try:
+        pid_names = os.listdir('/proc')
+    except (FileNotFoundError, PermissionError, OSError):
+        return pids
+    for pid_str in pid_names:
+        if not pid_str.isdigit():
+            continue
+        pid = int(pid_str)
+        if _safe_getpgid(pid) in pgids:
+            pids.add(pid)
+    return pids
+
+
+def _expand_owned_process_roots(root_pids):
+    current_pid = os.getpid()
+    current_pgid = _safe_getpgid(current_pid)
+    roots = {int(pid) for pid in root_pids if int(pid) != current_pid and _pid_alive(int(pid))}
+    owned = set(roots)
+    pgids = set()
+    for pid in roots:
+        owned.update(_list_descendant_pids(pid))
+        pgid = _safe_getpgid(pid)
+        if pgid is not None and pgid != current_pgid:
+            pgids.add(pgid)
+    owned.update(_list_pids_in_pgids(pgids))
+    owned.discard(current_pid)
+    if current_pgid is not None:
+        owned = {pid for pid in owned if _safe_getpgid(pid) != current_pgid}
+    return {pid for pid in owned if _pid_alive(pid)}
+
+
 def _terminate_pids(pids, timeout=5):
-    pids = sorted(set(pids))
+    current_pid = os.getpid()
+    current_pgid = _safe_getpgid(current_pid)
+    live = {int(pid) for pid in pids if int(pid) != current_pid and _pid_alive(int(pid))}
+    pgids = {pgid for pgid in (_safe_getpgid(pid) for pid in live)
+             if pgid is not None and pgid != current_pgid}
+    live.update(pid for pid in _list_pids_in_pgids(pgids)
+                if pid != current_pid and _pid_alive(pid))
+    if current_pgid is not None:
+        live = {pid for pid in live if _safe_getpgid(pid) != current_pgid}
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        for pid in pids:
-            if pid == os.getpid():
+        for pgid in sorted(pgids):
+            try:
+                os.killpg(pgid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        for pid in sorted(live):
+            if _safe_getpgid(pid) in pgids:
                 continue
             try:
                 os.kill(pid, sig)
@@ -203,13 +318,13 @@ def _terminate_pids(pids, timeout=5):
                 pass
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if not any(_process_exists(pid) for pid in pids):
+            if not any(_pid_alive(pid) for pid in live):
                 return
             time.sleep(0.1)
 
 
 def _kill_chrome_for_profile(profile_dir):
-    pids = []
+    root_pids = []
     try:
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
@@ -223,10 +338,10 @@ def _kill_chrome_for_profile(profile_dir):
             except (FileNotFoundError, PermissionError):
                 continue
             if _same_profile_dir(cmdline, profile_dir):
-                pids.append(pid)
+                root_pids.append(pid)
     except (FileNotFoundError, PermissionError):
         return
-    _terminate_pids(pids)
+    _terminate_pids(_expand_owned_process_roots(root_pids))
 
 
 def _remove_profile_singletons(profile_dir):
@@ -282,10 +397,7 @@ def _cleanup_orphan_chrome_and_xvfb():
             except (FileNotFoundError, PermissionError, OSError, ValueError):
                 pass  # Parent gone, kill the orphan
 
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _terminate_pids(_expand_owned_process_roots({pid}), timeout=1)
     except (FileNotFoundError, PermissionError):
         pass  # /proc not available, skip cleanup
 
@@ -361,18 +473,13 @@ class ChromeInstance:
 
     def stop(self):
         if self.process:
-            try:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                except Exception:
-                    pass
+            pgid = _safe_getpgid(self.process.pid)
+            if pgid is not None:
+                _terminate_pids(_list_pids_in_pgids({pgid}) | {self.process.pid})
+            else:
+                _terminate_pids({self.process.pid})
         _kill_chrome_for_profile(self.profile_dir)
+        self.process = None
 
 
 def _find_free_port():
