@@ -320,6 +320,34 @@ INDEX_HTML = """<!doctype html>
     .status-interpreted { color: var(--success); border-color: rgba(15, 159, 110, 0.24); }
     .status-download_failed, .status-interpret_failed { color: var(--danger); border-color: rgba(214, 69, 69, 0.24); }
     .status-searched, .status-downloaded { color: var(--warn); border-color: rgba(183, 121, 31, 0.24); }
+    .failure-panel {
+      margin-top: 12px;
+      border: 1px solid rgba(214, 69, 69, 0.22);
+      border-radius: 16px;
+      background: #fff7f7;
+      color: #6f1d1d;
+      padding: 12px;
+    }
+    .failure-title {
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .failure-row {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 8px;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    .failure-label {
+      color: var(--danger);
+      font-weight: 800;
+    }
+    .failure-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
     .link-btn {
       display: inline-flex;
       align-items: center;
@@ -495,11 +523,19 @@ INDEX_HTML = """<!doctype html>
     async function loadStats() {
       try {
         const stats = await fetchJson('/api/stats');
-        const order = ['searched', 'downloaded', 'interpreted', 'download_failed', 'interpret_failed'];
-        $('statsGrid').innerHTML = order.map((key) => `
+        const total = Object.values(stats).reduce((sum, value) => sum + Number(value || 0), 0);
+        const items = [
+          ['总数', total],
+          ['未下载', stats.searched || 0],
+          ['未解读', stats.downloaded || 0],
+          ['已解读', stats.interpreted || 0],
+          ['下载失败', stats.download_failed || 0],
+          ['解读失败', stats.interpret_failed || 0],
+        ];
+        $('statsGrid').innerHTML = items.map(([label, value]) => `
           <div class="stat">
-            <div class="stat-value">${escapeHtml(stats[key] || 0)}</div>
-            <div class="stat-label">${escapeHtml(key)}</div>
+            <div class="stat-value">${escapeHtml(value)}</div>
+            <div class="stat-label">${escapeHtml(label)}</div>
           </div>
         `).join('');
       } catch (error) {
@@ -617,6 +653,46 @@ INDEX_HTML = """<!doctype html>
       `;
     }
 
+    function formatFailureValue(value) {
+      if (value === null || value === undefined || value === '') return '';
+      if (Array.isArray(value)) return value.map(formatFailureValue).filter(Boolean).join('、');
+      if (typeof value === 'object') {
+        return Object.entries(value)
+          .map(([key, item]) => [key, formatFailureValue(item)])
+          .filter(([, item]) => item)
+          .map(([key, item]) => `${key}: ${item}`)
+          .join('；');
+      }
+      return String(value).trim();
+    }
+
+    function renderFailureDetails(paper) {
+      const status = String(paper.status || '');
+      if (status !== 'download_failed' && status !== 'interpret_failed') return '';
+      const rows = [
+        ['阶段', paper.failure_phase],
+        ['分类', paper.failure_category],
+        ['子类', paper.failure_subtype],
+        ['标签', paper.failure_tags],
+        ['详情', paper.failure_metadata],
+        ['错误', paper.error_message],
+      ].map(([label, value]) => [label, formatFailureValue(value)])
+        .filter(([, value]) => value);
+      if (!rows.length) return '';
+      const title = status === 'download_failed' ? '下载失败原因' : '解读失败原因';
+      return `
+        <div class="failure-panel">
+          <div class="failure-title">${escapeHtml(title)}</div>
+          ${rows.map(([label, value]) => `
+            <div class="failure-row">
+              <span class="failure-label">${escapeHtml(label)}</span>
+              <span class="failure-value">${escapeHtml(value)}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
     function renderPaper(paper) {
       const links = paper.links || {};
       const statusClass = `status-${String(paper.status || '').replace(/[^a-z_]/g, '')}`;
@@ -662,12 +738,14 @@ INDEX_HTML = """<!doctype html>
         '暂无摘要。',
         'paper-abstract'
       );
+      const failureHtml = renderFailureDetails(paper);
       return `
         <article class="paper-card">
           ${titleHtml}
           ${authorsHtml}
           ${abstractHtml}
           <div class="meta-row">${meta}</div>
+          ${failureHtml}
           <div class="tag-row">${renderTags(paper.matched_tags)}</div>
           <div class="links-row">${localLinks || '<span class="meta">暂无本地 HTML/PDF 链接</span>'}</div>
         </article>
