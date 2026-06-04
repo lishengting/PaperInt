@@ -415,12 +415,12 @@ INDEX_HTML = """<!doctype html>
           <div class="field">
             <label for="statusSelect">状态</label>
             <select id="statusSelect">
-              <option value="ALL">ALL</option>
-              <option value="searched">searched</option>
-              <option value="downloaded">downloaded</option>
-              <option value="download_failed">download_failed</option>
-              <option value="interpreted" selected>interpreted</option>
-              <option value="interpret_failed">interpret_failed</option>
+              <option value="ALL">全部</option>
+              <option value="searched">未下载</option>
+              <option value="downloaded">未解读</option>
+              <option value="interpreted" selected>已解读</option>
+              <option value="download_failed">下载失败</option>
+              <option value="interpret_failed">解读失败</option>
             </select>
           </div>
           <div class="field">
@@ -496,6 +496,17 @@ INDEX_HTML = """<!doctype html>
 
     function selectedIds() {
       return Array.from(selectedJournals).sort();
+    }
+
+    function statusLabel(value) {
+      return {
+        ALL: '全部',
+        searched: '未下载',
+        downloaded: '未解读',
+        interpreted: '已解读',
+        download_failed: '下载失败',
+        interpret_failed: '解读失败',
+      }[value] || value;
     }
 
     function setDefaultsFromUrl() {
@@ -601,7 +612,7 @@ INDEX_HTML = """<!doctype html>
       const journalText = selectedLabels.length ? `${selectedLabels.join(' / ')}${extra ? ` +${extra}` : ''}` : '未选择期刊';
       $('activeChips').innerHTML = [
         `关键词：${params.get('k')}`,
-        `状态：${params.get('status')}`,
+        `状态：${statusLabel(params.get('status'))}`,
         `每页：${params.get('limit')}`,
         `期刊：${journalText}`,
       ].map((text) => `<span class="chip">${escapeHtml(text)}</span>`).join('');
