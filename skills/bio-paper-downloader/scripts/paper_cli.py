@@ -666,18 +666,45 @@ def make_paper(source, paper_id, title, authors, abstract, date, category,
 PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
 
+def _pubmed_email(config):
+    user_agent = cfg(config, 'download.user_agent', '')
+    m = re.search(r'mailto:([^\s)>]+)', user_agent)
+    if m:
+        return m.group(1)
+    if '@' in user_agent and not re.search(r'[\s()]', user_agent):
+        return user_agent
+    return ''
+
+
 def pubmed_api(endpoint, params, config):
+    params = dict(params)
     params.setdefault('retmode', 'json')
     params.setdefault('tool', 'PaperInt')
-    params.setdefault('email', cfg(config, 'download.user_agent', ''))
+    email = _pubmed_email(config)
+    if email:
+        params.setdefault('email', email)
     url = f"{PUBMED_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
     print(f"  PubMed URL: {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
         with _urlopen_with_retry(req, config, attempts=3) as r:
-            return json.loads(r.read().decode('utf-8'))
+            text = r.read().decode('utf-8', errors='replace')
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            preview = ' '.join(text[:300].split())
+            print(f"  PubMed JSON parse error: {e}; preview={preview!r} (url: {url})", file=sys.stderr)
+            return None
     except Exception as e:
-        print(f"  PubMed error: {e} (url: {url})", file=sys.stderr)
+        preview = ''
+        if isinstance(e, urllib.error.HTTPError):
+            try:
+                body = e.read()
+                if body:
+                    preview = f"; preview={' '.join(body[:300].decode('utf-8', errors='replace').split())!r}"
+            except Exception:
+                pass
+        print(f"  PubMed error: {e}{preview} (url: {url})", file=sys.stderr)
         return None
 
 
