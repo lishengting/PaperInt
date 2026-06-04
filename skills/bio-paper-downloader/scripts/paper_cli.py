@@ -2190,7 +2190,7 @@ def main():
                    help='Enable playwright-stealth for browser downloads (default: off). '
                         'Deprecated: use --aabots Stealth instead.')
     p.add_argument('--aabots', type=str, default='Default',
-                   help='Anti-anti-bot bypass chain. Presets: Default, Quick, Full, CloudScraper, '
+                   help='Anti-anti-bot bypass chain. Presets: Default, Standard, Quick, Full, CloudScraper, '
                         'Stealth, FlareSolverr, 2Captcha, Browser. '
                         'Or comma-separated methods: cloudscraper,curl_cffi,stealth,flaresolverr,2captcha. '
                         'Default preserves existing behavior. Example: --aabots Default,FlareSolverr '
@@ -2235,7 +2235,7 @@ def main():
     gp.add_argument('--stealth', action='store_true', default=False,
                     help='Enable playwright-stealth (default: off). Deprecated: use --aabots Stealth')
     gp.add_argument('--aabots', type=str, default='Default',
-                    help='Anti-anti-bot bypass chain. Presets: Default, Quick, Full, CloudScraper, '
+                    help='Anti-anti-bot bypass chain. Presets: Default, Standard, Quick, Full, CloudScraper, '
                          'Stealth, FlareSolverr, 2Captcha, Browser. '
                          'Or comma-separated methods. Overrides top-level --aabots for this download.')
 
