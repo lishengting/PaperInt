@@ -671,12 +671,13 @@ def pubmed_api(endpoint, params, config):
     params.setdefault('tool', 'PaperInt')
     params.setdefault('email', cfg(config, 'download.user_agent', ''))
     url = f"{PUBMED_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
+    print(f"  PubMed URL: {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
     try:
         with _urlopen_with_retry(req, config, attempts=3) as r:
             return json.loads(r.read().decode('utf-8'))
     except Exception as e:
-        print(f"  PubMed error: {e}", file=sys.stderr)
+        print(f"  PubMed error: {e} (url: {url})", file=sys.stderr)
         return None
 
 
