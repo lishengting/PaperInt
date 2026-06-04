@@ -391,6 +391,16 @@ def _is_xvfb_cmdline(cmdline):
     return os.path.basename(first) == 'Xvfb' and any(f':{d}' in cmdline for d in range(99, 111))
 
 
+def _is_flaresolverr_cmdline(cmdline):
+    return 'flaresolverr.py' in cmdline
+
+
+def _flaresolverr_related_pids():
+    root_pids = {pid for pid, cmdline in (_iter_proc_cmdlines() or [])
+                 if pid != os.getpid() and _is_flaresolverr_cmdline(cmdline)}
+    return _expand_owned_process_roots(root_pids)
+
+
 def _is_downloader_related_cmdline(pid, cmdline, tmpdir=None, for_cleanup=False):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if any(marker in cmdline for marker in (
@@ -490,6 +500,14 @@ def _log_resource_state_after_paper(paper_label):
         print(
             "  [resources] browser_related "
             f"count={len(browser_pids)} rss_total={_format_kb(browser_rss)} fds_total={browser_fds} details={browser_details}",
+            file=sys.stderr,
+        )
+        flaresolverr_pids = _flaresolverr_related_pids()
+        flaresolverr_rss, flaresolverr_fds, flaresolverr_details = _process_summary(flaresolverr_pids)
+        print(
+            "  [resources] flaresolverr_related "
+            f"count={len(flaresolverr_pids)} rss_total={_format_kb(flaresolverr_rss)} "
+            f"fds_total={flaresolverr_fds} details={flaresolverr_details}",
             file=sys.stderr,
         )
         pressure = _read_pressure_summary()

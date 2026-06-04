@@ -398,6 +398,25 @@ async def _method_stealth(url: str, config: dict, is_biorxiv: bool) -> BypassRes
                         needs_browser=True, stealth_recommended=True)
 
 
+def _destroy_flaresolverr_session(fs_url: str, session_id: str):
+    payload = json.dumps({"cmd": "sessions.destroy", "session": session_id}).encode()
+    try:
+        req = urllib.request.Request(
+            fs_url, data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        print(
+            f"  [aabots:flaresolverr] Destroyed session {session_id}: "
+            f"status={data.get('status')} message={data.get('message')!r}",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"  [aabots:flaresolverr] Session destroy failed for {session_id}: {e}", file=sys.stderr)
+
+
 @register_method("flaresolverr")
 async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> BypassResult:
     """FlareSolverr Docker service at localhost:8191. Handles interactive CF challenges."""
@@ -498,6 +517,8 @@ async def _method_flaresolverr(url: str, config: dict, is_biorxiv: bool) -> Bypa
                                        error=f"FlareSolverr request timed out: {e}")
         except Exception as e:
             last_result = BypassResult(success=False, method="flaresolverr", error=str(e))
+        finally:
+            _destroy_flaresolverr_session(fs_url, session_id)
 
         if attempt < attempts and last_result:
             print(f"  [aabots:flaresolverr] Attempt {attempt}/{attempts} failed: {last_result.error}", file=sys.stderr)
