@@ -274,6 +274,19 @@ INDEX_HTML = """<!doctype html>
       font-weight: 600;
       letter-spacing: 0;
     }
+    .paper-authors {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      color: var(--muted);
+      margin: -4px 0 12px;
+      font-size: 13px;
+    }
+    .paper-authors-label {
+      color: #5f6389;
+      font-weight: 700;
+    }
     .paper-abstract {
       color: #353966;
       margin: 0 0 14px;
@@ -623,6 +636,10 @@ INDEX_HTML = """<!doctype html>
         sourceHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourceHref)}">来源</a>` : '',
         sourcePdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourcePdfHref)}">原始 PDF URL</a>` : '',
       ].filter(Boolean).join('');
+      const authors = String(paper.authors || '').trim();
+      const authorsHtml = authors
+        ? `<div class="paper-authors"><span class="paper-authors-label">作者：</span>${escapeHtml(authors)}</div>`
+        : '';
       const meta = [
         paper.journal || paper.issn ? `期刊：${paper.journal || paper.issn}` : '期刊：未记录',
         paper.source ? `来源：${paper.source}` : '',
@@ -648,6 +665,7 @@ INDEX_HTML = """<!doctype html>
       return `
         <article class="paper-card">
           ${titleHtml}
+          ${authorsHtml}
           ${abstractHtml}
           <div class="meta-row">${meta}</div>
           <div class="tag-row">${renderTags(paper.matched_tags)}</div>
