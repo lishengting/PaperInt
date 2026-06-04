@@ -730,7 +730,7 @@ INDEX_HTML = """<!doctype html>
       const meta = [
         paper.journal || paper.issn ? `期刊：${paper.journal || paper.issn}` : '期刊：未记录',
         paper.source ? `来源：${paper.source}` : '',
-        paper.status ? `状态：${paper.status}` : '',
+        paper.status ? `状态：${statusLabel(paper.status)}` : '',
         paper.search_date ? `检索：${formatDate(paper.search_date)}` : '',
         paper.interpret_date ? `解读：${formatDate(paper.interpret_date)}` : '',
         paper.doi ? `DOI：${paper.doi}` : '',
