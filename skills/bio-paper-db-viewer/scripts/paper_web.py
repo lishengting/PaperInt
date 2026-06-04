@@ -398,22 +398,22 @@ INDEX_HTML = """<!doctype html>
         <div class="brand-mark"></div>
         <div>
           <div class="brand-title">PaperInt</div>
-          <div class="brand-subtitle">文献数据库浏览器</div>
+          <div class="brand-subtitle" data-i18n="appSubtitle">文献数据库浏览器</div>
         </div>
       </div>
       <div class="side-card">
-        <h3>数据库状态</h3>
+        <h3 data-i18n="dbStatus">数据库状态</h3>
         <div class="stats-grid" id="statsGrid"></div>
       </div>
       <div class="side-card">
-        <h3>基础筛选</h3>
+        <h3 data-i18n="basicFilters">基础筛选</h3>
         <div class="controls">
           <div class="field">
-            <label for="keywordInput">关键词</label>
+            <label for="keywordInput" data-i18n="keywordLabel">关键词</label>
             <input id="keywordInput" class="input" value="microbiome" placeholder="microbiome">
           </div>
           <div class="field">
-            <label for="statusSelect">状态</label>
+            <label for="statusSelect" data-i18n="statusLabelText">状态</label>
             <select id="statusSelect">
               <option value="ALL">全部</option>
               <option value="searched">未下载</option>
@@ -424,7 +424,7 @@ INDEX_HTML = """<!doctype html>
             </select>
           </div>
           <div class="field">
-            <label for="limitSelect">每页数量</label>
+            <label for="limitSelect" data-i18n="limitLabel">每页数量</label>
             <select id="limitSelect">
               <option>5</option>
               <option selected>10</option>
@@ -433,45 +433,46 @@ INDEX_HTML = """<!doctype html>
               <option>100</option>
             </select>
           </div>
-          <button class="primary-btn" id="searchBtn">搜索</button>
+          <button class="primary-btn" id="searchBtn" data-i18n="searchButton">搜索</button>
         </div>
       </div>
       <div class="side-card journal-panel">
-        <h3>期刊 / ISSN</h3>
-        <p class="filter-note">默认选中 Nature、Science、Cell 及其子刊配置中匹配到的数据库期刊。没有 ISSN 的条目统一归入预印版。</p>
+        <h3 data-i18n="journalsTitle">期刊 / ISSN</h3>
+        <p class="filter-note" data-i18n="journalNote">默认选中 Nature、Science、Cell 及其子刊配置中匹配到的数据库期刊。没有 ISSN 的条目统一归入预印版。</p>
         <div class="journal-head">
-          <div class="journal-summary" id="journalSummary">正在载入期刊列表...</div>
+          <div class="journal-summary" id="journalSummary" data-i18n="loadingJournals">正在载入期刊列表...</div>
           <div class="journal-actions">
-            <button class="small-btn" id="defaultJournalBtn">默认 CNS</button>
-            <button class="small-btn" id="allJournalBtn">全选</button>
-            <button class="small-btn" id="clearJournalBtn">清空</button>
+            <button class="small-btn" id="defaultJournalBtn" data-i18n="defaultCnsButton">默认 CNS</button>
+            <button class="small-btn" id="allJournalBtn" data-i18n="selectAllButton">全选</button>
+            <button class="small-btn" id="clearJournalBtn" data-i18n="clearButton">清空</button>
           </div>
         </div>
-        <input id="journalSearch" class="input journal-search" placeholder="搜索期刊名、ISSN 或别名">
+        <input id="journalSearch" class="input journal-search" placeholder="搜索期刊名、ISSN 或别名" data-i18n-placeholder="journalSearchPlaceholder">
         <div class="journal-list" id="journalList"></div>
       </div>
     </aside>
     <main class="main">
       <div class="topbar">
-        <span>本地 SQLite</span>
-        <span>安全文件 API</span>
-        <span>动态分页</span>
+        <span data-i18n="topbarDb">本地 SQLite</span>
+        <span data-i18n="topbarApi">安全文件 API</span>
+        <span data-i18n="topbarPagination">动态分页</span>
+        <a href="#" id="langSwitch">English</a>
       </div>
       <section class="hero">
-        <h1>探索已检索和解读的生物医学文献</h1>
-        <p>按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 interpret/brief HTML 与 PDF。</p>
+        <h1 data-i18n="heroTitle">探索已检索和解读的生物医学文献</h1>
+        <p data-i18n="heroSubtitle">按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 interpret/brief HTML 与 PDF。</p>
       </section>
       <div class="chips" id="activeChips"></div>
       <section class="results">
         <div class="result-head">
-          <div id="resultSummary">准备加载结果</div>
-          <button class="ghost-btn" id="refreshBtn">刷新</button>
+          <div id="resultSummary" data-i18n="readyToLoad">准备加载结果</div>
+          <button class="ghost-btn" id="refreshBtn" data-i18n="refreshButton">刷新</button>
         </div>
         <div id="papersList"></div>
         <div class="pagination">
-          <button class="ghost-btn" id="prevBtn">上一页</button>
+          <button class="ghost-btn" id="prevBtn" data-i18n="prevButton">上一页</button>
           <span id="pageInfo">1 / 1</span>
-          <button class="ghost-btn" id="nextBtn">下一页</button>
+          <button class="ghost-btn" id="nextBtn" data-i18n="nextButton">下一页</button>
         </div>
       </section>
     </main>
@@ -482,8 +483,153 @@ INDEX_HTML = """<!doctype html>
     let selectedJournals = new Set();
     let currentPage = 1;
     let lastTotal = 0;
+    let currentLang = 'zh';
 
     const $ = (id) => document.getElementById(id);
+    const I18N = {
+      zh: {
+        htmlLang: 'zh-CN',
+        title: 'PaperInt 文献浏览器',
+        appSubtitle: '文献数据库浏览器',
+        dbStatus: '数据库状态',
+        basicFilters: '基础筛选',
+        keywordLabel: '关键词',
+        statusLabelText: '状态',
+        limitLabel: '每页数量',
+        searchButton: '搜索',
+        journalsTitle: '期刊 / ISSN',
+        journalNote: '默认选中 Nature、Science、Cell 及其子刊配置中匹配到的数据库期刊。没有 ISSN 的条目统一归入预印版。',
+        loadingJournals: '正在载入期刊列表...',
+        defaultCnsButton: '默认 CNS',
+        selectAllButton: '全选',
+        clearButton: '清空',
+        journalSearchPlaceholder: '搜索期刊名、ISSN 或别名',
+        topbarDb: '本地 SQLite',
+        topbarApi: '安全文件 API',
+        topbarPagination: '动态分页',
+        heroTitle: '探索已检索和解读的生物医学文献',
+        heroSubtitle: '按关键词、状态、期刊和 ISSN 组合筛选论文，并通过 HTTP API 打开本地生成的 interpret/brief HTML 与 PDF。',
+        readyToLoad: '准备加载结果',
+        refreshButton: '刷新',
+        prevButton: '上一页',
+        nextButton: '下一页',
+        langSwitch: 'English',
+        total: '总数',
+        selectedJournals: (selected, total) => `已选 ${selected} / ${total} 个期刊选项`,
+        noIssn: '无 ISSN',
+        paperUnit: '篇',
+        noMatchingJournals: '没有匹配的期刊选项。',
+        noJournalsSelected: '未选择期刊',
+        chipKeyword: '关键词',
+        chipStatus: '状态',
+        chipPerPage: '每页',
+        chipJournals: '期刊',
+        loadingPapers: '正在加载文献...',
+        noMatchingPapersSummary: '没有匹配的文献',
+        noMatchingPapersBody: '没有找到匹配的文献，请调整关键词、状态或期刊选择。',
+        resultSummary: (start, end, total) => `显示 ${start}-${end}，共 ${total} 篇`,
+        authors: '作者',
+        journal: '期刊',
+        notRecorded: '未记录',
+        source: '来源',
+        status: '状态',
+        searched: '检索',
+        interpreted: '解读',
+        noAbstract: '暂无摘要。',
+        sourceLink: '来源',
+        originalPdfUrl: '原始 PDF URL',
+        noLocalLinks: '暂无本地 HTML/PDF 链接',
+        briefChinese: 'Brief 中文',
+        interpretChinese: 'Interpret 中文',
+        downloadFailureReason: '下载失败原因',
+        interpretFailureReason: '解读失败原因',
+        failurePhase: '阶段',
+        failureCategory: '分类',
+        failureSubtype: '子类',
+        failureTags: '标签',
+        failureDetails: '详情',
+        failureError: '错误',
+        statuses: {
+          ALL: '全部',
+          searched: '未下载',
+          downloaded: '未解读',
+          interpreted: '已解读',
+          download_failed: '下载失败',
+          interpret_failed: '解读失败',
+        },
+      },
+      en: {
+        htmlLang: 'en',
+        title: 'PaperInt Literature Viewer',
+        appSubtitle: 'Literature database viewer',
+        dbStatus: 'Database status',
+        basicFilters: 'Basic filters',
+        keywordLabel: 'Keyword',
+        statusLabelText: 'Status',
+        limitLabel: 'Per page',
+        searchButton: 'Search',
+        journalsTitle: 'Journals / ISSN',
+        journalNote: 'Default selection includes database journals matching Nature, Science, Cell, and configured sub-journals. Items without ISSN are grouped as preprints.',
+        loadingJournals: 'Loading journal list...',
+        defaultCnsButton: 'Default CNS',
+        selectAllButton: 'Select all',
+        clearButton: 'Clear',
+        journalSearchPlaceholder: 'Search journal name, ISSN, or alias',
+        topbarDb: 'Local SQLite',
+        topbarApi: 'Safe file API',
+        topbarPagination: 'Dynamic pagination',
+        heroTitle: 'Explore searched and interpreted biomedical papers',
+        heroSubtitle: 'Filter papers by keyword, status, journal, and ISSN, then open locally generated interpret/brief HTML and PDFs through the HTTP API.',
+        readyToLoad: 'Ready to load results',
+        refreshButton: 'Refresh',
+        prevButton: 'Previous',
+        nextButton: 'Next',
+        langSwitch: '中文',
+        total: 'Total',
+        selectedJournals: (selected, total) => `Selected ${selected} / ${total} journal options`,
+        noIssn: 'No ISSN',
+        paperUnit: 'papers',
+        noMatchingJournals: 'No matching journal options.',
+        noJournalsSelected: 'No journals selected',
+        chipKeyword: 'Keyword',
+        chipStatus: 'Status',
+        chipPerPage: 'Per page',
+        chipJournals: 'Journals',
+        loadingPapers: 'Loading papers...',
+        noMatchingPapersSummary: 'No matching papers',
+        noMatchingPapersBody: 'No matching papers found. Adjust keyword, status, or journal selection.',
+        resultSummary: (start, end, total) => `Showing ${start}-${end} of ${total} papers`,
+        authors: 'Authors',
+        journal: 'Journal',
+        notRecorded: 'Not recorded',
+        source: 'Source',
+        status: 'Status',
+        searched: 'Searched',
+        interpreted: 'Interpreted',
+        noAbstract: 'No abstract available.',
+        sourceLink: 'Source',
+        originalPdfUrl: 'Original PDF URL',
+        noLocalLinks: 'No local HTML/PDF links',
+        briefChinese: 'Brief Chinese',
+        interpretChinese: 'Interpret Chinese',
+        downloadFailureReason: 'Download failure reason',
+        interpretFailureReason: 'Interpretation failure reason',
+        failurePhase: 'Phase',
+        failureCategory: 'Category',
+        failureSubtype: 'Subtype',
+        failureTags: 'Tags',
+        failureDetails: 'Details',
+        failureError: 'Error',
+        statuses: {
+          ALL: 'All',
+          searched: 'Not downloaded',
+          downloaded: 'Not interpreted',
+          interpreted: 'Interpreted',
+          download_failed: 'Download failed',
+          interpret_failed: 'Interpret failed',
+        },
+      },
+    };
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
@@ -498,19 +644,50 @@ INDEX_HTML = """<!doctype html>
       return Array.from(selectedJournals).sort();
     }
 
+    function normalizeLang(value) {
+      return value === 'en' ? 'en' : 'zh';
+    }
+
+    function isEn() {
+      return currentLang === 'en';
+    }
+
+    function t(key) {
+      const langData = I18N[currentLang] || I18N.zh;
+      return langData[key] || I18N.zh[key] || key;
+    }
+
     function statusLabel(value) {
-      return {
-        ALL: '全部',
-        searched: '未下载',
-        downloaded: '未解读',
-        interpreted: '已解读',
-        download_failed: '下载失败',
-        interpret_failed: '解读失败',
-      }[value] || value;
+      const langData = I18N[currentLang] || I18N.zh;
+      return (langData.statuses || {})[value] || value;
+    }
+
+    function labeled(label, value) {
+      return isEn() ? `${label}: ${value}` : `${label}：${value}`;
+    }
+
+    function updateStatusOptions() {
+      Array.from($('statusSelect').options).forEach((option) => {
+        option.textContent = statusLabel(option.value);
+      });
+    }
+
+    function applyI18n() {
+      document.documentElement.lang = t('htmlLang');
+      document.title = t('title');
+      document.querySelectorAll('[data-i18n]').forEach((node) => {
+        node.textContent = t(node.dataset.i18n);
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach((node) => {
+        node.placeholder = t(node.dataset.i18nPlaceholder);
+      });
+      updateStatusOptions();
+      $('langSwitch').textContent = t('langSwitch');
     }
 
     function setDefaultsFromUrl() {
       const params = new URLSearchParams(window.location.search);
+      currentLang = normalizeLang(params.get('lang'));
       $('keywordInput').value = paramValue(params, 'k', 'microbiome');
       $('statusSelect').value = paramValue(params, 'status', 'interpreted');
       $('limitSelect').value = paramValue(params, 'limit', '10');
@@ -536,12 +713,12 @@ INDEX_HTML = """<!doctype html>
         const stats = await fetchJson('/api/stats');
         const total = Object.values(stats).reduce((sum, value) => sum + Number(value || 0), 0);
         const items = [
-          ['总数', total],
-          ['未下载', stats.searched || 0],
-          ['未解读', stats.downloaded || 0],
-          ['已解读', stats.interpreted || 0],
-          ['下载失败', stats.download_failed || 0],
-          ['解读失败', stats.interpret_failed || 0],
+          [t('total'), total],
+          [statusLabel('searched'), stats.searched || 0],
+          [statusLabel('downloaded'), stats.downloaded || 0],
+          [statusLabel('interpreted'), stats.interpreted || 0],
+          [statusLabel('download_failed'), stats.download_failed || 0],
+          [statusLabel('interpret_failed'), stats.interpret_failed || 0],
         ];
         $('statsGrid').innerHTML = items.map(([label, value]) => `
           <div class="stat">
@@ -570,10 +747,11 @@ INDEX_HTML = """<!doctype html>
         const haystack = [item.label, item.journal, item.issn, ...(item.aliases || [])].join(' ').toLowerCase();
         return haystack.includes(needle);
       });
-      $('journalSummary').textContent = `已选 ${selectedJournals.size} / ${journals.length} 个期刊选项`;
+      $('journalSummary').textContent = t('selectedJournals')(selectedJournals.size, journals.length);
       $('journalList').innerHTML = visible.map((item) => {
         const checked = selectedJournals.has(item.id) ? 'checked' : '';
-        const meta = item.is_preprint ? `无 ISSN · ${item.count} 篇` : `${item.issn || ''} · ${item.count} 篇`;
+        const paperCount = isEn() ? `${item.count} ${item.count === 1 ? 'paper' : 'papers'}` : `${item.count} ${t('paperUnit')}`;
+        const meta = item.is_preprint ? `${t('noIssn')} · ${paperCount}` : `${item.issn || ''} · ${paperCount}`;
         return `
           <label class="journal-item">
             <input type="checkbox" data-id="${escapeHtml(item.id)}" ${checked}>
@@ -581,7 +759,7 @@ INDEX_HTML = """<!doctype html>
             <span class="journal-meta">${escapeHtml(meta)}</span>
           </label>
         `;
-      }).join('') || '<div class="empty">没有匹配的期刊选项。</div>';
+      }).join('') || `<div class="empty">${escapeHtml(t('noMatchingJournals'))}</div>`;
       document.querySelectorAll('#journalList input[type="checkbox"]').forEach((box) => {
         box.addEventListener('change', () => {
           if (box.checked) selectedJournals.add(box.dataset.id);
@@ -598,6 +776,7 @@ INDEX_HTML = """<!doctype html>
       params.set('limit', $('limitSelect').value || '10');
       params.set('page', String(page));
       params.set('journals', selectedIds().join(','));
+      if (isEn()) params.set('lang', 'en');
       return params;
     }
 
@@ -609,12 +788,12 @@ INDEX_HTML = """<!doctype html>
     function renderChips(params) {
       const selectedLabels = journals.filter((item) => selectedJournals.has(item.id)).slice(0, 3).map((item) => item.journal);
       const extra = Math.max(0, selectedJournals.size - selectedLabels.length);
-      const journalText = selectedLabels.length ? `${selectedLabels.join(' / ')}${extra ? ` +${extra}` : ''}` : '未选择期刊';
+      const journalText = selectedLabels.length ? `${selectedLabels.join(' / ')}${extra ? ` +${extra}` : ''}` : t('noJournalsSelected');
       $('activeChips').innerHTML = [
-        `关键词：${params.get('k')}`,
-        `状态：${statusLabel(params.get('status'))}`,
-        `每页：${params.get('limit')}`,
-        `期刊：${journalText}`,
+        labeled(t('chipKeyword'), params.get('k')),
+        labeled(t('chipStatus'), statusLabel(params.get('status'))),
+        labeled(t('chipPerPage'), params.get('limit')),
+        labeled(t('chipJournals'), journalText),
       ].map((text) => `<span class="chip">${escapeHtml(text)}</span>`).join('');
     }
 
@@ -649,6 +828,13 @@ INDEX_HTML = """<!doctype html>
       const enText = String(en || '').trim();
       const zhText = String(zh || '').trim();
       const mainText = enText || fallback;
+      if (isEn()) {
+        return `
+          <div class="${className}">
+            <div class="text-main">${escapeHtml(mainText)}</div>
+          </div>
+        `;
+      }
       if (zhText && enText) {
         return `
           <div class="${className} bilingual">
@@ -666,13 +852,13 @@ INDEX_HTML = """<!doctype html>
 
     function formatFailureValue(value) {
       if (value === null || value === undefined || value === '') return '';
-      if (Array.isArray(value)) return value.map(formatFailureValue).filter(Boolean).join('、');
+      if (Array.isArray(value)) return value.map(formatFailureValue).filter(Boolean).join(isEn() ? ', ' : '、');
       if (typeof value === 'object') {
         return Object.entries(value)
           .map(([key, item]) => [key, formatFailureValue(item)])
           .filter(([, item]) => item)
           .map(([key, item]) => `${key}: ${item}`)
-          .join('；');
+          .join(isEn() ? '; ' : '；');
       }
       return String(value).trim();
     }
@@ -681,16 +867,16 @@ INDEX_HTML = """<!doctype html>
       const status = String(paper.status || '');
       if (status !== 'download_failed' && status !== 'interpret_failed') return '';
       const rows = [
-        ['阶段', paper.failure_phase],
-        ['分类', paper.failure_category],
-        ['子类', paper.failure_subtype],
-        ['标签', paper.failure_tags],
-        ['详情', paper.failure_metadata],
-        ['错误', paper.error_message],
+        [t('failurePhase'), paper.failure_phase],
+        [t('failureCategory'), paper.failure_category],
+        [t('failureSubtype'), paper.failure_subtype],
+        [t('failureTags'), paper.failure_tags],
+        [t('failureDetails'), paper.failure_metadata],
+        [t('failureError'), paper.error_message],
       ].map(([label, value]) => [label, formatFailureValue(value)])
         .filter(([, value]) => value);
       if (!rows.length) return '';
-      const title = status === 'download_failed' ? '下载失败原因' : '解读失败原因';
+      const title = status === 'download_failed' ? t('downloadFailureReason') : t('interpretFailureReason');
       return `
         <div class="failure-panel">
           <div class="failure-title">${escapeHtml(title)}</div>
@@ -716,27 +902,28 @@ INDEX_HTML = """<!doctype html>
       const sourcePdfHref = safeHref(paper.pdf_url);
       const localLinks = [
         briefEnHref ? `<a class="link-btn primary" target="_blank" rel="noopener" href="${escapeHtml(briefEnHref)}">Brief EN</a>` : '',
-        briefZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefZhHref)}">Brief 中文</a>` : '',
+        briefZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(briefZhHref)}">${escapeHtml(t('briefChinese'))}</a>` : '',
         interpretEnHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretEnHref)}">Interpret EN</a>` : '',
-        interpretZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretZhHref)}">Interpret 中文</a>` : '',
+        interpretZhHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(interpretZhHref)}">${escapeHtml(t('interpretChinese'))}</a>` : '',
         localPdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(localPdfHref)}">PDF</a>` : '',
-        sourceHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourceHref)}">来源</a>` : '',
-        sourcePdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourcePdfHref)}">原始 PDF URL</a>` : '',
+        sourceHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourceHref)}">${escapeHtml(t('sourceLink'))}</a>` : '',
+        sourcePdfHref ? `<a class="link-btn" target="_blank" rel="noopener" href="${escapeHtml(sourcePdfHref)}">${escapeHtml(t('originalPdfUrl'))}</a>` : '',
       ].filter(Boolean).join('');
       const authors = String(paper.authors || '').trim();
       const authorsHtml = authors
-        ? `<div class="paper-authors"><span class="paper-authors-label">作者：</span>${escapeHtml(authors)}</div>`
+        ? `<div class="paper-authors"><span class="paper-authors-label">${escapeHtml(labeled(t('authors'), ''))}</span>${escapeHtml(authors)}</div>`
         : '';
-      const meta = [
-        paper.journal || paper.issn ? `期刊：${paper.journal || paper.issn}` : '期刊：未记录',
-        paper.source ? `来源：${paper.source}` : '',
-        paper.status ? `状态：${statusLabel(paper.status)}` : '',
-        paper.search_date ? `检索：${formatDate(paper.search_date)}` : '',
-        paper.interpret_date ? `解读：${formatDate(paper.interpret_date)}` : '',
-        paper.doi ? `DOI：${paper.doi}` : '',
-        paper.pmid ? `PMID：${paper.pmid}` : '',
-        paper.arxiv_id ? `arXiv：${paper.arxiv_id}` : '',
-      ].filter(Boolean).map((item) => `<span class="meta ${item.includes('状态：') ? statusClass : ''}">${escapeHtml(item)}</span>`).join('');
+      const metaItems = [
+        { text: paper.journal || paper.issn ? labeled(t('journal'), paper.journal || paper.issn) : labeled(t('journal'), t('notRecorded')) },
+        { text: paper.source ? labeled(t('source'), paper.source) : '' },
+        { text: paper.status ? labeled(t('status'), statusLabel(paper.status)) : '', className: statusClass },
+        { text: paper.search_date ? labeled(t('searched'), formatDate(paper.search_date)) : '' },
+        { text: paper.interpret_date ? labeled(t('interpreted'), formatDate(paper.interpret_date)) : '' },
+        { text: paper.doi ? labeled('DOI', paper.doi) : '' },
+        { text: paper.pmid ? labeled('PMID', paper.pmid) : '' },
+        { text: paper.arxiv_id ? labeled('arXiv', paper.arxiv_id) : '' },
+      ].filter((item) => item.text);
+      const meta = metaItems.map((item) => `<span class="meta ${item.className || ''}">${escapeHtml(item.text)}</span>`).join('');
       const titleHtml = renderBilingualText(
         paper.title || paper.paper_id || '',
         paper.title_zh,
@@ -746,7 +933,7 @@ INDEX_HTML = """<!doctype html>
       const abstractHtml = renderBilingualText(
         paper.abstract || '',
         paper.abstract_zh,
-        '暂无摘要。',
+        t('noAbstract'),
         'paper-abstract'
       );
       const failureHtml = renderFailureDetails(paper);
@@ -758,7 +945,7 @@ INDEX_HTML = """<!doctype html>
           <div class="meta-row">${meta}</div>
           ${failureHtml}
           <div class="tag-row">${renderTags(paper.matched_tags)}</div>
-          <div class="links-row">${localLinks || '<span class="meta">暂无本地 HTML/PDF 链接</span>'}</div>
+          <div class="links-row">${localLinks || `<span class="meta">${escapeHtml(t('noLocalLinks'))}</span>`}</div>
         </article>
       `;
     }
@@ -768,26 +955,34 @@ INDEX_HTML = """<!doctype html>
       const params = buildParams(currentPage);
       if (pushUrl) updateUrl(params);
       renderChips(params);
-      $('papersList').innerHTML = '<div class="empty">正在加载文献...</div>';
+      $('papersList').innerHTML = `<div class="empty">${escapeHtml(t('loadingPapers'))}</div>`;
       try {
         const data = await fetchJson(`/api/papers?${params.toString()}`);
         lastTotal = data.total || 0;
         const totalPages = Math.max(1, Math.ceil(lastTotal / data.page_size));
         $('resultSummary').textContent = lastTotal
-          ? `显示 ${data.offset + 1}-${Math.min(data.offset + data.items.length, lastTotal)}，共 ${lastTotal} 篇`
-          : '没有匹配的文献';
+          ? t('resultSummary')(data.offset + 1, Math.min(data.offset + data.items.length, lastTotal), lastTotal)
+          : t('noMatchingPapersSummary');
         $('pageInfo').textContent = `${data.page} / ${totalPages}`;
         $('prevBtn').disabled = !data.has_prev;
         $('nextBtn').disabled = !data.has_next;
         $('papersList').innerHTML = data.items.length
           ? data.items.map(renderPaper).join('')
-          : '<div class="empty">没有找到匹配的文献，请调整关键词、状态或期刊选择。</div>';
+          : `<div class="empty">${escapeHtml(t('noMatchingPapersBody'))}</div>`;
       } catch (error) {
         $('papersList').innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
       }
     }
 
     function bindEvents() {
+      $('langSwitch').addEventListener('click', (event) => {
+        event.preventDefault();
+        currentLang = isEn() ? 'zh' : 'en';
+        applyI18n();
+        loadStats();
+        renderJournals();
+        loadPapers(currentPage);
+      });
       $('searchBtn').addEventListener('click', () => loadPapers(1));
       $('refreshBtn').addEventListener('click', () => loadPapers(currentPage));
       $('prevBtn').addEventListener('click', () => loadPapers(currentPage - 1));
@@ -815,17 +1010,20 @@ INDEX_HTML = """<!doctype html>
       });
       window.addEventListener('popstate', async () => {
         const usedUrlSelection = setDefaultsFromUrl();
+        applyI18n();
         if (!usedUrlSelection) {
           selectedJournals = new Set(journals.filter((item) => item.default_selected).map((item) => item.id));
         }
         renderJournals();
+        await loadStats();
         await loadPapers(currentPage, false);
       });
     }
 
     async function init() {
-      bindEvents();
       const usedUrlSelection = setDefaultsFromUrl();
+      applyI18n();
+      bindEvents();
       await Promise.all([loadStats(), loadJournals(usedUrlSelection)]);
       await loadPapers(currentPage, !usedUrlSelection);
     }
