@@ -676,7 +676,7 @@ def _pubmed_email(config):
     return ''
 
 
-def pubmed_api(endpoint, params, config):
+def pubmed_api(endpoint, params, config, return_status=False):
     params = dict(params)
     params.setdefault('retmode', 'json')
     params.setdefault('tool', 'PaperInt')
@@ -690,10 +690,16 @@ def pubmed_api(endpoint, params, config):
         with _urlopen_with_retry(req, config, attempts=3) as r:
             text = r.read().decode('utf-8', errors='replace')
         try:
-            return json.loads(text)
+            data = json.loads(text)
+            if return_status:
+                return {'ok': True, 'data': data, 'error': None, 'url': url}
+            return data
         except json.JSONDecodeError as e:
             preview = ' '.join(text[:300].split())
-            print(f"  PubMed JSON parse error: {e}; preview={preview!r} (url: {url})", file=sys.stderr)
+            error = f"{e}; preview={preview!r}"
+            print(f"  PubMed JSON parse error: {error} (url: {url})", file=sys.stderr)
+            if return_status:
+                return {'ok': False, 'data': None, 'error': error, 'url': url}
             return None
     except Exception as e:
         preview = ''
@@ -704,7 +710,10 @@ def pubmed_api(endpoint, params, config):
                     preview = f"; preview={' '.join(body[:300].decode('utf-8', errors='replace').split())!r}"
             except Exception:
                 pass
-        print(f"  PubMed error: {e}{preview} (url: {url})", file=sys.stderr)
+        error = f"{e}{preview}"
+        print(f"  PubMed error: {error} (url: {url})", file=sys.stderr)
+        if return_status:
+            return {'ok': False, 'data': None, 'error': error, 'url': url}
         return None
 
 
@@ -1404,16 +1413,38 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
     return None
 
 
-def _pubmed_lookup_pmc(pmid, config):
-    sr = pubmed_api('elink.fcgi', {
+def _pubmed_lookup_pmc_result(pmid, config):
+    result = pubmed_api('elink.fcgi', {
         'dbfrom': 'pubmed', 'db': 'pmc', 'id': pmid,
         'linkname': 'pubmed_pmc',
-    }, config)
-    if sr:
-        links = sr.get('linksets', [{}])[0].get('linksetdbs', [{}])[0].get('links', [])
-        if links:
-            return links[0]
-    return None
+    }, config, return_status=True)
+    if not result or not result.get('ok'):
+        return {
+            'pmc_id': None,
+            'failed': True,
+            'source': 'pubmed_elink',
+            'error': (result or {}).get('error') or 'PubMed ELink failed',
+        }
+    data = result.get('data') or {}
+    links = []
+    try:
+        linksets = data.get('linksets') or []
+        if linksets:
+            linksetdbs = linksets[0].get('linksetdbs') or []
+            if linksetdbs:
+                links = linksetdbs[0].get('links') or []
+    except (AttributeError, IndexError, TypeError):
+        links = []
+    return {
+        'pmc_id': links[0] if links else None,
+        'failed': False,
+        'source': 'pubmed_elink',
+        'error': None,
+    }
+
+
+def _pubmed_lookup_pmc(pmid, config):
+    return _pubmed_lookup_pmc_result(pmid, config).get('pmc_id')
 
 
 def _download_pmc_pdf(pmc_id, config):
@@ -1449,6 +1480,52 @@ def _download_pmc_pdf(pmc_id, config):
                              subtype='pmc_no_pdf', tags=['pmc_no_pdf'],
                              metadata={'pmc_id': pmc_id})
     return None
+
+
+def _europepmc_lookup_oa_by_pmid(pmid, config):
+    base_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+    params = urllib.parse.urlencode({
+        "query": f"EXT_ID:{pmid} AND SRC:MED",
+        "format": "json",
+        "pageSize": 1,
+        "resultType": "core",
+    })
+    url = f"{base_url}?{params}"
+    print(f"  Europe PMC PMID URL: {url}", file=sys.stderr)
+    req = urllib.request.Request(url, headers={'User-Agent': ua(config)})
+    try:
+        with _urlopen_with_retry(req, config, attempts=2) as r:
+            text = r.read().decode('utf-8', errors='replace')
+        data = json.loads(text)
+        results = data.get("resultList", {}).get("result", [])
+        if results:
+            result = results[0]
+            return {
+                "ok": True,
+                "found": True,
+                "pmcid": result.get("pmcid"),
+                "has_pdf": result.get("hasPDF") == "Y",
+                "is_open_access": result.get("isOpenAccess") == "Y",
+                "error": None,
+            }
+        return {
+            "ok": True,
+            "found": False,
+            "pmcid": None,
+            "has_pdf": False,
+            "is_open_access": False,
+            "error": None,
+        }
+    except Exception as e:
+        print(f"  Europe PMC PMID lookup error: {e} (url: {url})", file=sys.stderr)
+        return {
+            "ok": False,
+            "found": False,
+            "pmcid": None,
+            "has_pdf": False,
+            "is_open_access": False,
+            "error": str(e),
+        }
 
 
 def _europepmc_lookup_oa_by_doi(doi, config):
@@ -1735,18 +1812,38 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
             # says has_pdf=False — the API may be wrong, and Europe PMC often
             # has PDFs that NCBI's PMC gates behind PoW challenges.
             pmc_id = paper.get('pmc_id')
+            pmid = paper.get('pmid', pid)
+            pubmed_lookup = None
+            epmc_lookup = None
             if not pmc_id:
-                print(f"  [pmc] checking PubMed PMC link for PMID {paper.get('pmid', pid)}...", file=sys.stderr)
-                pmc_id = _pubmed_lookup_pmc(paper.get('pmid', pid), config)
+                print(f"  [pmc] checking PubMed PMC link for PMID {pmid}...", file=sys.stderr)
+                pubmed_lookup = _pubmed_lookup_pmc_result(pmid, config)
+                pmc_id = pubmed_lookup.get('pmc_id')
+            if not pmc_id and pmid:
+                print(f"  [pmc] checking Europe PMC by PMID {pmid}...", file=sys.stderr)
+                epmc_lookup = _europepmc_lookup_oa_by_pmid(pmid, config)
+                pmc_id = epmc_lookup.get('pmcid') if epmc_lookup else None
             if pmc_id:
                 pdf_data = _download_pmc_pdf(pmc_id, config)
             pmc_has_pdf = oa_info.get('has_pdf') if oa_info else False
+            if epmc_lookup and epmc_lookup.get('has_pdf'):
+                pmc_has_pdf = True
+            lookup_failed = bool(pubmed_lookup and pubmed_lookup.get('failed')) and bool(epmc_lookup and not epmc_lookup.get('ok'))
             if not pdf_data and not pmc_has_pdf:
-                print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
-                _record_download_failure('not OA via PMC, PDF unavailable',
-                                         category='paywalled', subtype='not_open_access',
-                                         tags=['not_oa', 'pmc_no_pdf'],
-                                         metadata={'source': src, 'pmid': paper.get('pmid', pid)})
+                if lookup_failed:
+                    print(f"  [pmc] PMC lookup failed; cannot confirm PMC OA", file=sys.stderr)
+                    _record_download_failure('PMC lookup failed, PDF unavailable',
+                                             category='no_download_link', subtype='pmc_lookup_failed',
+                                             tags=['pmc_lookup_failed'],
+                                             metadata={'source': src, 'pmid': pmid,
+                                                       'pubmed_error': pubmed_lookup.get('error') if pubmed_lookup else None,
+                                                       'europepmc_error': epmc_lookup.get('error') if epmc_lookup else None})
+                else:
+                    print(f"  [info] not OA via PMC, PDF unavailable", file=sys.stderr)
+                    _record_download_failure('not OA via PMC, PDF unavailable',
+                                             category='paywalled', subtype='not_open_access',
+                                             tags=['not_oa', 'pmc_no_pdf'],
+                                             metadata={'source': src, 'pmid': pmid})
     elif src in ('crossref', 'europepmc'):
         if fallback_level >= 1 and paper.get('doi'):
             pdf_data = _publisher_download(paper.get('doi'), paper.get('pmid'), config,
@@ -1758,7 +1855,11 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
         if not pdf_data:
             pmc_id = paper.get('pmc_id')
             if not pmc_id and paper.get('pmid'):
-                pmc_id = _pubmed_lookup_pmc(paper.get('pmid'), config)
+                pubmed_lookup = _pubmed_lookup_pmc_result(paper.get('pmid'), config)
+                pmc_id = pubmed_lookup.get('pmc_id')
+                if not pmc_id:
+                    epmc_lookup = _europepmc_lookup_oa_by_pmid(paper.get('pmid'), config)
+                    pmc_id = epmc_lookup.get('pmcid') if epmc_lookup else None
             if pmc_id:
                 pdf_data = _download_pmc_pdf(pmc_id, config)
     elif src == 'generic':
@@ -1845,7 +1946,11 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
                     pdf_data = _publisher_download(alt['doi'], alt.get('pmid'), config, fallback_level=fallback_level, captcha_enabled=captcha_enabled,
                                   stealth_enabled=stealth_enabled, headless_first=headless_first)
                 if not pdf_data and alt.get('pmid') and oa_info and oa_info.get('has_pdf'):
-                    pmc_id = _pubmed_lookup_pmc(alt['pmid'], config)
+                    pubmed_lookup = _pubmed_lookup_pmc_result(alt['pmid'], config)
+                    pmc_id = pubmed_lookup.get('pmc_id')
+                    if not pmc_id:
+                        epmc_lookup = _europepmc_lookup_oa_by_pmid(alt['pmid'], config)
+                        pmc_id = epmc_lookup.get('pmcid') if epmc_lookup else None
                     if pmc_id:
                         pdf_data = _download_pmc_pdf(pmc_id, config)
             if pdf_data:
