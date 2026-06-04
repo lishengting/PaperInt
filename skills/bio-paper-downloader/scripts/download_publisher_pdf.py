@@ -1115,6 +1115,9 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
         if _is_display_unavailable(msg):
             display_unavailable = True
             break
+        if 'Not a valid PDF' in msg:
+            print(f"  [publisher] paywall/HTML response, skipping retries", file=sys.stderr)
+            break
         if _is_chrome_fatal(msg):
             return result
 
@@ -1146,6 +1149,9 @@ async def download_via_publisher(doi=None, pmid=None, output_dir='.',
             print(f"  [publisher] headed (system) failed: {msg}", file=sys.stderr)
             if _is_display_unavailable(msg):
                 display_unavailable = True
+                break
+            if 'Not a valid PDF' in msg:
+                print(f"  [publisher] paywall/HTML response, skipping retries", file=sys.stderr)
                 break
             if _is_chrome_fatal(msg):
                 return result

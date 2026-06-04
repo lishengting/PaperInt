@@ -862,7 +862,10 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
                 return chain_result.content
             aabots_handoff = None
             if _is_aabots_session_result(chain_result):
-                aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+                if _is_weak_aabots_handoff(chain_result):
+                    print(f"  [aabots] Skipping weak handoff (html_len={len(getattr(chain_result, 'html', '') or '')}), trying next method", file=sys.stderr)
+                else:
+                    aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
             if chain_result and chain_result.stealth_recommended:
                 stealth_enhanced = True
             if chain_result and chain_result.captcha_recommended:
@@ -872,6 +875,8 @@ def download_preprint(doi, server, config, fallback_level=2, captcha_enabled=Fal
                 break
             aabots_next_start = next_start
             if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+                continue
+            if not aabots_handoff:
                 continue
 
     return None
@@ -1204,7 +1209,10 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
-            aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
+            if _is_weak_aabots_handoff(chain_result):
+                print(f"  [aabots] Skipping weak handoff (html_len={len(getattr(chain_result, 'html', '') or '')}), trying next method", file=sys.stderr)
+            else:
+                aabots_handoff = _write_aabots_handoff(chain_result, config, doi_url)
         if chain_result and chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result and chain_result.captcha_recommended:
@@ -1214,6 +1222,8 @@ def _publisher_download(doi, pmid, config, fallback_level=2, captcha_enabled=Fal
             break
         aabots_next_start = next_start
         if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+            continue
+        if not aabots_handoff:
             continue
     return None
 
@@ -1329,7 +1339,10 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
         if _is_aabots_pdf_result(chain_result):
             return chain_result.content
         if _is_aabots_session_result(chain_result):
-            aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
+            if _is_weak_aabots_handoff(chain_result):
+                print(f"  [aabots] Skipping weak handoff (html_len={len(getattr(chain_result, 'html', '') or '')}), trying next method", file=sys.stderr)
+            else:
+                aabots_handoff = _write_aabots_handoff(chain_result, config, pdf_url)
         if chain_result and chain_result.stealth_recommended:
             stealth_enhanced = True
         if chain_result and chain_result.captcha_recommended:
@@ -1339,6 +1352,8 @@ def _download_direct_pdf(pdf_url, config, fallback_level=2, captcha_enabled=Fals
             break
         aabots_next_start = next_start
         if not (_is_aabots_session_result(chain_result) or getattr(chain_result, 'needs_browser', False)):
+            continue
+        if not aabots_handoff:
             continue
     return None
 
@@ -1553,6 +1568,12 @@ def _is_aabots_pdf_result(result):
 
 def _is_aabots_session_result(result):
     return bool(result and getattr(result, 'success', False) and getattr(result, 'mode', None) == 'session')
+
+
+def _is_weak_aabots_handoff(result):
+    """Return True if the handoff HTML is too small to be useful (< 5000 bytes)."""
+    html = getattr(result, 'html', None) or ''
+    return len(html) < 5000
 
 
 def _write_aabots_handoff(result, config, source_url):

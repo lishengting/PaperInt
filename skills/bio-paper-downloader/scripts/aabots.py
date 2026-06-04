@@ -78,9 +78,9 @@ PRESETS: dict[str, list[str]] = {
     "Stealth":       ["stealth"],
     "FlareSolverr":  ["flaresolverr"],
     "2Captcha":      ["2captcha"],
-    "Full":          ["cloudscraper", "curl_cffi", "flaresolverr", "2captcha"],
+    "Full":          ["curl_cffi", "flaresolverr"],
     "All":           ["cloudscraper", "curl_cffi", "flaresolverr", "2captcha"],
-    "Quick":         ["cloudscraper", "curl_cffi"],
+    "Quick":         ["curl_cffi"],
     "Browser":       ["stealth", "flaresolverr"],
 }
 

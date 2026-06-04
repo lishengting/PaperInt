@@ -1117,6 +1117,9 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
         if _is_display_unavailable(msg):
             display_unavailable = True
             break
+        if 'Not a valid PDF' in msg:
+            print(f"  [browser] paywall/HTML response, skipping retries", file=sys.stderr)
+            break
         if _is_chrome_fatal(msg):
             return result
 
@@ -1148,6 +1151,9 @@ async def download_via_browser(url_or_doi, output_dir, chrome_bin=None, timeout=
             print(f"  [browser] headed (system) failed: {msg}", file=sys.stderr)
             if _is_display_unavailable(msg):
                 display_unavailable = True
+                break
+            if 'Not a valid PDF' in msg:
+                print(f"  [browser] paywall/HTML response, skipping retries", file=sys.stderr)
                 break
             if _is_chrome_fatal(msg):
                 return result
