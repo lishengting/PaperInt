@@ -1561,6 +1561,63 @@ def _save_to_db_upsert(papers, config, search_context=None):
     return n
 
 
+def _normalize_find_doi(value):
+    doi = (value or '').strip()
+    for prefix in ('https://doi.org/', 'http://doi.org/', 'https://dx.doi.org/', 'http://dx.doi.org/', 'doi:'):
+        if doi.lower().startswith(prefix):
+            doi = doi[len(prefix):]
+            break
+    return doi.strip()
+
+
+def _normalize_find_title(value):
+    return ' '.join((value or '').split()).casefold()
+
+
+def _db_row_to_paper(row):
+    paper = dict(row)
+    metadata = {}
+    if paper.get('metadata_json'):
+        try:
+            metadata = json.loads(paper['metadata_json'])
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+    title = paper.get('title') or metadata.get('title') or ''
+    return {
+        **metadata,
+        **paper,
+        'title': title,
+        'date': metadata.get('date') or paper.get('search_date') or '',
+        'abs_url': paper.get('source_url') or metadata.get('abs_url') or metadata.get('source_url') or '',
+    }
+
+
+def _find_existing_paper(config, *, title=None, doi=None):
+    conn = get_conn(config)
+    if doi:
+        normalized_doi = _normalize_find_doi(doi)
+        row = conn.execute(
+            """SELECT * FROM papers
+               WHERE LOWER(doi) = LOWER(?) OR LOWER(paper_id) = LOWER(?)
+               ORDER BY id LIMIT 1""",
+            (normalized_doi, normalized_doi),
+        ).fetchone()
+        if row:
+            return _db_row_to_paper(row)
+
+    normalized_title = _normalize_find_title(title)
+    if normalized_title:
+        rows = conn.execute(
+            """SELECT * FROM papers
+               WHERE title IS NOT NULL AND title != ''
+               ORDER BY id"""
+        ).fetchall()
+        for row in rows:
+            if _normalize_find_title(row['title']) == normalized_title:
+                return _db_row_to_paper(row)
+    return None
+
+
 def _resolve_start_date(args, config, source):
     """Resolve start date for date-range-aware sources (--start-date or --incremental).
 
@@ -1779,13 +1836,14 @@ def cmd_find(args, config):
         print("Error: either --title or --doi is required", file=sys.stderr)
         return 1
 
-    # DOI lookup path
+    existing = _find_existing_paper(config, title=args.title, doi=args.doi)
+    if existing:
+        print(f"{_ts()} Found existing paper in database.")
+        _show_results([existing])
+        return 0
+
     if args.doi:
-        doi = args.doi.strip()
-        for prefix in ('https://doi.org/', 'http://doi.org/', 'doi:'):
-            if doi.lower().startswith(prefix):
-                doi = doi[len(prefix):]
-                break
+        doi = _normalize_find_doi(args.doi)
         try:
             papers = _crossref_lookup(doi, config)
         except Exception as e:
