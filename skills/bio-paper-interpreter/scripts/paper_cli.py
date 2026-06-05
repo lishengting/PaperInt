@@ -169,11 +169,12 @@ def extract_pdf_hints(pdf_path):
 
     doc = fitz.open(pdf_path)
     try:
-        if doc.page_count < 1:
+        page_count = doc.page_count
+        if page_count < 1:
             raise RuntimeError('PDF has no pages')
         metadata = dict(doc.metadata or {})
         text_parts = []
-        for i in range(min(2, doc.page_count)):
+        for i in range(min(2, page_count)):
             text_parts.append(doc.load_page(i).get_text('text')[:5000])
     finally:
         doc.close()
@@ -195,6 +196,7 @@ def extract_pdf_hints(pdf_path):
         'first_pages_text': first_pages_text[:10000],
         'doi_candidates': doi_candidates,
         'title_candidates': title_candidates,
+        'page_count': page_count,
     }
 
 
@@ -323,27 +325,48 @@ def _fallback_pdf_paper(args, hints, pdf_sha256, resolver_error='', existing_loc
     }
 
 
-def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
+def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None, log=None):
     doi_candidates = _dedupe_strings([_normalize_doi_value(getattr(args, 'doi', '')), *hints.get('doi_candidates', [])])
     title_candidates = _dedupe_strings([getattr(args, 'title', ''), *hints.get('title_candidates', [])])
     paper_id_override = getattr(args, 'paper_id', None)
     last_error = ''
 
     try:
+        start = time.monotonic()
+        if log:
+            log('resolver: loading paper_info modules')
         resolver, _info_md = _load_paper_info_modules()
+        if log:
+            log(f'resolver: modules loaded ({_elapsed(start)})')
     except Exception as e:
+        if log:
+            log(f'resolver: module load failed: {e}')
         paper = _fallback_pdf_paper(args, hints, pdf_sha256, str(e), existing_local=existing_local)
         return paper, None, {'status': 'fallback', 'error': str(e), 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
 
+    if log:
+        log(f'resolver: DOI candidates={len(doi_candidates)}, title candidates={len(title_candidates)}')
+
     for doi in doi_candidates:
+        start = time.monotonic()
+        if log:
+            log(f'resolver: DOI lookup start: {doi}')
         try:
             record = resolver.get_paper(doi, depth='full', timeout=8.0)
             paper = _paper_from_record(record, paper_id_override=paper_id_override)
+            if log:
+                log(f'resolver: DOI lookup resolved: {doi} ({_elapsed(start)})')
             return paper, record, {'status': 'resolved', 'identifier': doi, 'method': 'doi', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
         except Exception as e:
             last_error = str(e)
+            if log:
+                log(f'resolver: DOI lookup failed: {doi} ({_elapsed(start)}): {last_error}')
 
     for title in title_candidates:
+        start = time.monotonic()
+        shown_title = title[:100]
+        if log:
+            log(f'resolver: title search start: {shown_title}')
         try:
             candidates = resolver.find_papers(title, limit=5, domain='auto', timeout=8.0)
             best = None
@@ -353,10 +376,17 @@ def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
                 if score > best_score:
                     best = candidate
                     best_score = score
+            if log:
+                log(f'resolver: title search candidates={len(candidates)}, best_score={best_score:.2f} ({_elapsed(start)})')
             if best and best_score >= 0.75:
                 identifier = _candidate_identifier(best)
+                start = time.monotonic()
+                if log:
+                    log(f'resolver: best title lookup start: {identifier}')
                 record = resolver.get_paper(identifier, depth='full', timeout=8.0)
                 paper = _paper_from_record(record, paper_id_override=paper_id_override)
+                if log:
+                    log(f'resolver: best title lookup resolved: {identifier} ({_elapsed(start)})')
                 return paper, record, {
                     'status': 'resolved',
                     'identifier': identifier,
@@ -367,7 +397,11 @@ def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
                 }
         except Exception as e:
             last_error = str(e)
+            if log:
+                log(f'resolver: title search failed: {shown_title} ({_elapsed(start)}): {last_error}')
 
+    if log:
+        log(f'resolver: fallback metadata used; last_error={last_error or "none"}')
     paper = _fallback_pdf_paper(args, hints, pdf_sha256, last_error, existing_local=existing_local)
     return paper, None, {'status': 'fallback', 'error': last_error, 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
 
@@ -442,23 +476,40 @@ def _fallback_info_md(paper, metadata):
     return '\n'.join(lines) + '\n'
 
 
-def _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record):
+def _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record, log=None):
     os.makedirs(paper_dir, exist_ok=True)
     dest_pdf = os.path.join(paper_dir, f'{safe_pid}.pdf')
     if not _same_file(pdf_path, dest_pdf):
+        start = time.monotonic()
+        if log:
+            log(f'write: copying PDF to {dest_pdf}')
         shutil.copy2(pdf_path, dest_pdf)
+        if log:
+            log(f'write: copied PDF ({_elapsed(start)})')
+    elif log:
+        log(f'write: PDF already in target path: {dest_pdf}')
 
     metadata_path = os.path.join(paper_dir, f'{safe_pid}.metadata.json')
+    start = time.monotonic()
+    if log:
+        log(f'write: metadata JSON to {metadata_path}')
     with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2, default=str)
+    if log:
+        log(f'write: metadata JSON done ({_elapsed(start)})')
 
     info_path = os.path.join(paper_dir, f'{safe_pid}.info.md')
+    start = time.monotonic()
+    if log:
+        log(f'write: info markdown to {info_path}')
     try:
         _resolver, info_md = _load_paper_info_modules()
         content = info_md.generate(record) if record else _fallback_info_md(metadata, metadata)
     except Exception:
         content = _fallback_info_md(metadata, metadata)
     _write_text(info_path, content)
+    if log:
+        log(f'write: info markdown done ({_elapsed(start)})')
     return dest_pdf
 
 
@@ -513,6 +564,22 @@ def ts_print(*args, file=None, end='\n', flush=False):
     """Print with [HH:MM:SS] timestamp prefix."""
     ts = datetime.now().strftime('[%H:%M:%S]')
     print(ts, *args, file=file, end=end, flush=flush)
+
+
+def _pdf_progress(message):
+    ts_print(f"  [pdf] {message}", flush=True)
+
+
+def _elapsed(start):
+    return f'{time.monotonic() - start:.1f}s'
+
+
+def _format_bytes(num):
+    value = float(num or 0)
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if value < 1024 or unit == 'GB':
+            return f'{value:.1f}{unit}' if unit != 'B' else f'{int(value)}B'
+        value /= 1024
 
 
 def _log_llm_result(label, usage, elapsed):
@@ -1287,25 +1354,53 @@ def cmd_pdf(args, config):
         ts_print(f"PDF not found: {pdf_path}", file=sys.stderr)
         return 1
 
+    total_start = time.monotonic()
+    ts_print(f"PDF import preprocessing start: {pdf_path}", flush=True)
     try:
+        _pdf_progress(f'input file size={_format_bytes(os.path.getsize(pdf_path))}')
+        start = time.monotonic()
+        _pdf_progress('hash: computing SHA-256')
         pdf_sha256 = _sha256_file(pdf_path)
+        _pdf_progress(f'hash: done ({_elapsed(start)}), sha256={pdf_sha256[:16]}...')
+
+        start = time.monotonic()
+        _pdf_progress('hints: opening PDF and reading first pages')
         hints = extract_pdf_hints(pdf_path)
+        _pdf_progress(
+            f"hints: done ({_elapsed(start)}), pages={hints.get('page_count', '?')}, "
+            f"doi_candidates={len(hints.get('doi_candidates', []))}, "
+            f"title_candidates={len(hints.get('title_candidates', []))}"
+        )
     except Exception as e:
-        ts_print(f"Invalid PDF: {e}", file=sys.stderr)
+        ts_print(f"Invalid PDF: {e}", file=sys.stderr, flush=True)
         return 1
 
+    start = time.monotonic()
+    _pdf_progress('db: opening connection')
     conn = get_conn(config)
+    _pdf_progress(f'db: connection ready ({_elapsed(start)})')
     local_pdf_id = f'local_pdf_{pdf_sha256[:16]}'
     existing_local = get_paper(conn, getattr(args, 'paper_id', None) or local_pdf_id)
+    _pdf_progress(
+        f"db: local_pdf_id={local_pdf_id}, existing_status={(existing_local or {}).get('status', 'new')}"
+    )
     cn = getattr(args, 'cn', False) or getattr(args, 'trans', False)
     if existing_local and existing_local.get('status') == 'interpreted' and not args.force and not getattr(args, 'doi', None):
+        _pdf_progress('existing: interpreted record found before resolver')
         if not cn:
             return _print_existing_results(existing_local, config)
         if _try_incremental_cn(existing_local, conn, args, config):
             return 0
         return _print_existing_results(existing_local, config)
 
-    paper, record, resolver_info = resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=existing_local)
+    start = time.monotonic()
+    _pdf_progress('resolver: resolving PDF metadata')
+    paper, record, resolver_info = resolve_pdf_metadata(
+        args, hints, pdf_sha256, existing_local=existing_local, log=_pdf_progress)
+    _pdf_progress(
+        f"resolver: done ({_elapsed(start)}), status={resolver_info.get('status', '')}, "
+        f"method={resolver_info.get('method', '')}, identifier={resolver_info.get('identifier', '')}"
+    )
     resolved = resolver_info.get('status') == 'resolved'
     paper_id_for_lookup = paper.get('paper_id') or local_pdf_id
     if not paper.get('paper_id'):
@@ -1331,18 +1426,24 @@ def cmd_pdf(args, config):
             paper['issn'] = _raw_metadata_value(raw_metadata, ('issn', 'ISSN', 'issns'))
         if paper.get('issn') == LOCAL_UNRESOLVED_ISSN:
             paper['issn'] = ''
+    start = time.monotonic()
+    _pdf_progress('metadata: building local PDF import metadata')
     metadata = _build_pdf_import_metadata(paper, hints, pdf_path, pdf_sha256, resolver_info)
     if resolved:
         metadata['local_unresolved'] = False
         metadata['issn_is_virtual'] = False
         metadata['doi_is_virtual'] = False
     paper_id_for_lookup = paper.get('paper_id') or local_pdf_id
+    _pdf_progress(f"metadata: done ({_elapsed(start)}), paper_id={metadata.get('paper_id', '')}")
 
     if getattr(args, 'dry_run', False):
+        start = time.monotonic()
+        _pdf_progress('dry-run: checking existing canonical record and target path')
         existing = existing_local or _get_paper_by_doi(conn, metadata.get('doi'))
         display_paper = _merge_canonical_metadata(metadata, existing)
         safe_pid = sanitize(display_paper.get('paper_id', ''))
         dirname, paper_dir = _target_dir_for_paper(display_paper, safe_pid)
+        _pdf_progress(f'dry-run: target resolved ({_elapsed(start)})')
         ts_print("Would import local PDF:")
         ts_print(f"  paper_id: {display_paper.get('paper_id', '')}")
         ts_print(f"  title: {(display_paper.get('title', '') or '')[:120]}")
@@ -1350,14 +1451,20 @@ def cmd_pdf(args, config):
         ts_print(f"  status: {(existing or {}).get('status', 'new')}")
         ts_print(f"  resolver: {resolver_info.get('status', '')}")
         ts_print(f"  target: {os.path.join(paper_dir, f'{safe_pid}.pdf')}")
+        _pdf_progress(f'dry-run: preprocessing complete ({_elapsed(total_start)})')
         return 0
 
+    start = time.monotonic()
+    _pdf_progress('db: upserting paper metadata')
     canonical_id = upsert_single_paper(conn, metadata, by_doi=bool(metadata.get('doi')))
+    _pdf_progress(f'db: upsert done ({_elapsed(start)}), canonical_id={canonical_id or ""}')
     if not canonical_id:
         ts_print("Failed to create database row for local PDF", file=sys.stderr)
         return 1
 
     if resolved and paper_id_for_lookup != local_pdf_id and paper_id_for_lookup != canonical_id:
+        start = time.monotonic()
+        _pdf_progress(f'db: aligning canonical paper_id to resolver id {paper_id_for_lookup}')
         existing_resolved = get_paper(conn, paper_id_for_lookup)
         if existing_resolved:
             canonical_id = existing_resolved.get('paper_id')
@@ -1366,24 +1473,35 @@ def cmd_pdf(args, config):
                          [paper_id_for_lookup, canonical_id])
             conn.commit()
             canonical_id = paper_id_for_lookup
+        _pdf_progress(f'db: canonical paper_id ready ({_elapsed(start)}), canonical_id={canonical_id}')
 
+    start = time.monotonic()
+    _pdf_progress('db: loading canonical record')
     canonical = get_paper(conn, canonical_id)
+    _pdf_progress(f"db: canonical record loaded ({_elapsed(start)}), status={(canonical or {}).get('status', 'new')}")
     if canonical and canonical.get('status') == 'interpreted' and not args.force:
+        _pdf_progress('existing: interpreted canonical record found after resolver')
         if not cn:
             return _print_existing_results(canonical, config)
         if _try_incremental_cn(canonical, conn, args, config):
             return 0
         return _print_existing_results(canonical, config)
 
+    start = time.monotonic()
+    _pdf_progress('metadata: merging canonical metadata and resolving target directory')
     metadata = _merge_canonical_metadata(metadata, canonical)
     metadata['paper_id'] = canonical_id
     safe_pid = sanitize(canonical_id)
     dirname, paper_dir = _target_dir_for_paper(metadata if metadata.get('dir_name') else (canonical or metadata), safe_pid)
     metadata['dir_name'] = dirname
+    _pdf_progress(f'metadata: target directory ready ({_elapsed(start)}), dir={dirname}')
 
-    dest_pdf = _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record)
+    dest_pdf = _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record, log=_pdf_progress)
     prev_status = (canonical or {}).get('status')
+    start = time.monotonic()
+    _pdf_progress('db: marking paper as downloaded')
     mark_downloaded(conn, canonical_id, dirname, metadata_updates=metadata)
+    _pdf_progress(f'db: marked downloaded ({_elapsed(start)})')
     if resolver_info.get('status') == 'resolved':
         resolver_fields = {}
         for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'arxiv_id'):
@@ -1400,6 +1518,7 @@ def cmd_pdf(args, config):
         conn.commit()
     paper = get_paper(conn, canonical_id) or metadata
     paper['dir_name'] = dirname
+    _pdf_progress(f'preprocessing complete ({_elapsed(total_start)}), starting interpretation phases')
 
     phases = _parse_phases(args)
     log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
