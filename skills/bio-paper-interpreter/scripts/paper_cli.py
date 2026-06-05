@@ -772,7 +772,8 @@ def run_phase1(paper_path, paper, config, log_file):
     return True, f'{n_tags} tags: {labels}'
 
 
-def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
+def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False,
+               skip_existing_en=False):
     paper_id = paper['paper_id']
     safe_pid = sanitize(paper_id)
     title = paper.get('title', '')
@@ -924,37 +925,49 @@ def run_phase2(paper_path, paper, config, log_file, cn=False, trans=False):
     interpret_content = None
     interpret_ok = False
     interpret_usage = None
-    try:
-        interpret_prompt = build_full_text_prompt(
-            paper_data, config, pdf_text, extract_meta,
-            prompt_name='interpret_en', language='en')
-        interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
-                                                        interpret_prompt['user_prompt'],
-                                                        label='interpret_en')
-        md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
-        _write_text(md_path, interpret_content)
-        save_interpret_json(os.path.join(paper_path, f'{safe_pid}.interpret.json'),
-                            interpret_content, 'en')
+    md_path = os.path.join(paper_path, f'{safe_pid}.interpret.md')
+    interpret_json_path = os.path.join(paper_path, f'{safe_pid}.interpret.json')
+    if skip_existing_en and os.path.exists(md_path):
+        with open(md_path, encoding='utf-8') as f:
+            interpret_content = f.read()
         interpret_ok = True
-    except Exception as e:
-        ts_print(f"  LLM call failed (interpret_en): {e}", file=sys.stderr)
+        ts_print(f"  Reusing existing: {os.path.basename(md_path)}")
+    else:
+        try:
+            interpret_prompt = build_full_text_prompt(
+                paper_data, config, pdf_text, extract_meta,
+                prompt_name='interpret_en', language='en')
+            interpret_content, interpret_usage = _call_llm(config, interpret_prompt['system_prompt'],
+                                                            interpret_prompt['user_prompt'],
+                                                            label='interpret_en')
+            _write_text(md_path, interpret_content)
+            save_interpret_json(interpret_json_path, interpret_content, 'en')
+            interpret_ok = True
+        except Exception as e:
+            ts_print(f"  LLM call failed (interpret_en): {e}", file=sys.stderr)
     usage_entries.append(('interpret_en', interpret_usage))
 
     brief_content = None
     brief_ok = False
     brief_usage = None
-    try:
-        brief_prompt = build_brief_prompt(
-            paper_data, config, pdf_text, extract_meta,
-            prompt_name='brief_en', language='en')
-        brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
-                                                brief_prompt['user_prompt'],
-                                                label='brief_en')
-        brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
-        _write_text(brief_path, brief_content)
+    brief_path = os.path.join(paper_path, f'{safe_pid}.brief.md')
+    if skip_existing_en and os.path.exists(brief_path):
+        with open(brief_path, encoding='utf-8') as f:
+            brief_content = f.read()
         brief_ok = True
-    except Exception as e:
-        ts_print(f"  LLM call failed (brief_en): {e}", file=sys.stderr)
+        ts_print(f"  Reusing existing: {os.path.basename(brief_path)}")
+    else:
+        try:
+            brief_prompt = build_brief_prompt(
+                paper_data, config, pdf_text, extract_meta,
+                prompt_name='brief_en', language='en')
+            brief_content, brief_usage = _call_llm(config, brief_prompt['system_prompt'],
+                                                    brief_prompt['user_prompt'],
+                                                    label='brief_en')
+            _write_text(brief_path, brief_content)
+            brief_ok = True
+        except Exception as e:
+            ts_print(f"  LLM call failed (brief_en): {e}", file=sys.stderr)
     usage_entries.append(('brief_en', brief_usage))
 
     if not interpret_ok and not brief_ok:
@@ -1158,7 +1171,8 @@ def run_phase4(paper_path, paper, config, log_file, cn=False, trans=False):
     return True, f'{n} {mode}'
 
 
-def process_paper(paper, config, phases, log_file, cn=False, trans=False):
+def process_paper(paper, config, phases, log_file, cn=False, trans=False,
+                  skip_existing_en=False):
     paper_id = paper['paper_id']
     paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
     if not paper_dir:
@@ -1182,7 +1196,8 @@ def process_paper(paper, config, phases, log_file, cn=False, trans=False):
         if phase == 1:
             ok, msg = run_phase1(paper_path, paper, config, log_file)
         elif phase == 2:
-            ok, msg = run_phase2(paper_path, paper, config, log_file, cn=cn, trans=trans)
+            ok, msg = run_phase2(paper_path, paper, config, log_file, cn=cn, trans=trans,
+                                   skip_existing_en=skip_existing_en)
         elif phase == 3:
             ok, msg = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
@@ -1259,7 +1274,8 @@ def cmd_pdf(args, config):
         ts_print(f"Incremental: adding Chinese outputs for {existing_local.get('paper_id')}")
         ts_print(f"Phases: {sorted(phases)}")
         ts_print(f"Languages: English + Chinese" + (' (translated)' if trans else ''))
-        process_paper(existing_local, config, phases, log_file, cn=True, trans=trans)
+        process_paper(existing_local, config, phases, log_file, cn=True, trans=trans,
+                      skip_existing_en=True)
         return 0
 
     paper, record, resolver_info = resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=existing_local)
