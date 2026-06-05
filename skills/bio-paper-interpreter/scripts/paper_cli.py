@@ -1121,7 +1121,8 @@ def run_phase3(paper_path, paper, config, log_file):
     return False, last_error or 'unknown error'
 
 
-def run_phase4(paper_path, paper, config, log_file, cn=False, trans=False):
+def run_phase4(paper_path, paper, config, log_file, cn=False, trans=False,
+               skip_existing_en=False):
     """Generate posters: English by default, bilingual with --cn/--trans."""
     paper_id = paper['paper_id']
 
@@ -1140,7 +1141,10 @@ def run_phase4(paper_path, paper, config, log_file, cn=False, trans=False):
     meth_base = af_config.get('methodology_base_url') or cfg(config, 'llm.api_base_url', '')
     enh_model = af_config.get('enhancement_model', 'qwen-image-2.0-pro')
 
-    lang = 'both' if (cn or trans) else 'en'
+    if skip_existing_en and (cn or trans):
+        lang = 'zh'
+    else:
+        lang = 'both' if (cn or trans) else 'en'
     cmd = [sys.executable, script,
            '--paper-dir', paper_path,
            '--paper-id', paper_id,
@@ -1201,7 +1205,8 @@ def process_paper(paper, config, phases, log_file, cn=False, trans=False,
         elif phase == 3:
             ok, msg = run_phase3(paper_path, paper, config, log_file)
         elif phase == 4:
-            ok, msg = run_phase4(paper_path, paper, config, log_file, cn=cn, trans=trans)
+            ok, msg = run_phase4(paper_path, paper, config, log_file, cn=cn, trans=trans,
+                                   skip_existing_en=skip_existing_en)
             if ok:
                 run_phase3(paper_path, paper, config, log_file)  # re-embed with posters
 
