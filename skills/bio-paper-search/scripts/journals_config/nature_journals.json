@@ -16,6 +16,14 @@
     "issn_electronic": "2041-4889"
   },
   {
+    "name": "Cell Research",
+    "link": "https://www.nature.com/cr/",
+    "enabled": true,
+    "abbrev": "Cell Res",
+    "issn_print": "1001-0602",
+    "issn_electronic": "1748-7838"
+  },
+  {
     "name": "Communications Earth & Environment",
     "link": "https://www.nature.com/commsenv/",
     "enabled": false,

@@ -48,6 +48,14 @@
     "issn_electronic": null
   },
   {
+    "name": "Cell Discovery",
+    "link": "https://www.nature.com/celldisc/",
+    "enabled": true,
+    "abbrev": "Cell Discov",
+    "issn_print": null,
+    "issn_electronic": "2056-5968"
+  },
+  {
     "name": "Cell Genomics",
     "link": "https://www.cell.com/cell-genomics/home",
     "enabled": false,
