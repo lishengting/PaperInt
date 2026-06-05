@@ -146,6 +146,7 @@ def _merge_metadata(target: PaperMetadata, source: PaperMetadata) -> None:
         "preprint_version",
         "pmid",
         "pmcid",
+        "issn",
     ):
         if _should_replace_field(target, source, field_name):
             setattr(target, field_name, getattr(source, field_name))

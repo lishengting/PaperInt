@@ -273,7 +273,7 @@ def _paper_from_record(record, paper_id_override=None):
         'paper_info_match_type': identity.match_type or '',
         'paper_info_confidence': identity.confidence,
     }
-    issn = _raw_metadata_value(identity.raw, ('issn', 'ISSN', 'issns'))
+    issn = identity.issn or _raw_metadata_value(identity.raw, ('issn', 'ISSN', 'issns'))
     if issn:
         paper['issn'] = issn
     if identity.raw:

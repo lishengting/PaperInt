@@ -55,6 +55,7 @@ def _europepmc_result_to_metadata(result: dict[str, Any], source: str) -> PaperM
     meta.doi = (result.get("doi") or "").lower() or None
     meta.pmid = result.get("pmid")
     meta.pmcid = result.get("pmcid")
+    meta.issn = _extract_issn(result)
     meta.abstract = result.get("abstractText")
     meta.data_availability = result.get("dataAvailability") or None
     for link in _europepmc_links(result):
@@ -62,6 +63,14 @@ def _europepmc_result_to_metadata(result: dict[str, Any], source: str) -> PaperM
     _store_pmc_oa(result, meta)
     meta.add_source(source)
     return meta
+
+
+def _extract_issn(result: dict[str, Any]) -> str | None:
+    """Extract ISSN from Europe PMC result's journalInfo."""
+    journal_info = result.get("journalInfo", {})
+    journal = journal_info.get("journal", {}) if isinstance(journal_info, dict) else {}
+    issn = journal.get("issn") or journal.get("essn")
+    return issn or None
 
 
 def _store_pmc_oa(result: dict[str, Any], meta: PaperMetadata) -> None:

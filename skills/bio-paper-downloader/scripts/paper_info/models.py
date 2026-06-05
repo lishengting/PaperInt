@@ -29,6 +29,7 @@ class PaperMetadata:
     preprint_version: str | None = None
     pmid: str | None = None
     pmcid: str | None = None
+    issn: str | None = None
     abstract: str | None = None
     data_availability: str | None = None
     full_text_links: list[dict[str, str]] = field(default_factory=list)
