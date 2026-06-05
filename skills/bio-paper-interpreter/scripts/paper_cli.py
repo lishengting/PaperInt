@@ -1326,6 +1326,7 @@ def cmd_pdf(args, config):
     metadata['dir_name'] = dirname
 
     dest_pdf = _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record)
+    prev_status = (canonical or {}).get('status')
     mark_downloaded(conn, canonical_id, dirname, metadata_updates=metadata)
     if resolver_info.get('status') == 'resolved':
         resolver_fields = {}
@@ -1335,6 +1336,10 @@ def cmd_pdf(args, config):
         if resolver_fields:
             _update_paper_fields(conn, canonical_id, resolver_fields)
             ts_print(f"  Updated {len(resolver_fields)} field(s) from resolver: {', '.join(resolver_fields)}")
+    if prev_status == 'interpreted':
+        conn.execute("UPDATE papers SET status = 'interpreted', interpret_date = ?, updated_at = ? WHERE paper_id = ?",
+                     [datetime.now().isoformat(), datetime.now().isoformat(), canonical_id])
+        conn.commit()
     paper = get_paper(conn, canonical_id) or metadata
     paper['dir_name'] = dirname
 
