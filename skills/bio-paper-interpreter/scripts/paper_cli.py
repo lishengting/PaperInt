@@ -1252,7 +1252,9 @@ def _merge_canonical_metadata(metadata, canonical):
     merged = dict(metadata)
     if not canonical:
         return merged
-    for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'arxiv_id', 'source', 'source_url', 'pdf_url'):
+    for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'pmcid', 'arxiv_id',
+                'source', 'source_url', 'pdf_url', 'journal', 'category', 'issn',
+                'source_terms_text'):
         if canonical.get(key) and not merged.get(key):
             merged[key] = canonical[key]
     merged['paper_id'] = canonical.get('paper_id') or merged.get('paper_id')
@@ -1315,8 +1317,18 @@ def cmd_pdf(args, config):
         paper.pop('virtual_doi', None)
         paper.pop('local_pdf_id', None)
         paper.pop('resolver_error', None)
+        raw_metadata = record.identity.raw if record else {}
+        if not paper.get('journal'):
+            journal = _raw_metadata_value(
+                raw_metadata,
+                ('journal', 'journalTitle', 'container-title', 'fullJournalName', 'publicationName'),
+            )
+            if journal:
+                paper['journal'] = journal
+                if not paper.get('category'):
+                    paper['category'] = journal
         if not paper.get('issn'):
-            paper['issn'] = _raw_metadata_value((record.identity.raw if record else {}), ('issn', 'ISSN', 'issns'))
+            paper['issn'] = _raw_metadata_value(raw_metadata, ('issn', 'ISSN', 'issns'))
         if paper.get('issn') == LOCAL_UNRESOLVED_ISSN:
             paper['issn'] = ''
     metadata = _build_pdf_import_metadata(paper, hints, pdf_path, pdf_sha256, resolver_info)

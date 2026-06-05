@@ -254,12 +254,35 @@ def _label_values(value) -> list[str]:
     return labels
 
 
+def _journal_from_source_terms(source_terms_text, issn='') -> str:
+    terms = [' '.join(term.split()) for term in str(source_terms_text or '').split('|')]
+    terms = [term for term in terms if term]
+    if not terms:
+        return ''
+    known_issns = normalize_issn_values(issn)
+    term_issns = set()
+    for term in terms:
+        term_issns.update(normalize_issn_values(term))
+    if known_issns and not known_issns.intersection(term_issns):
+        return ''
+    if not known_issns and not term_issns:
+        return ''
+    for term in terms:
+        if not normalize_issn_values(term):
+            return term
+    return ''
+
+
 def _paper_journal_labels(paper: dict) -> list[str]:
     labels = []
     metadata = _metadata_from_viewer_paper(paper)
     for key in JOURNAL_LABEL_KEYS:
         labels.extend(_label_values(paper.get(key)))
         labels.extend(_label_values(metadata.get(key)))
+    fallback = _journal_from_source_terms(
+        paper.get('source_terms_text'), paper.get('issn') or metadata.get('issn'))
+    if fallback:
+        labels.append(fallback)
     return labels
 
 
@@ -491,7 +514,7 @@ def cmd_list(args, config):
         print(json.dumps(results, indent=2, ensure_ascii=False, default=str))
         return 0
 
-    sql = 'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json FROM papers WHERE 1=1'
+    sql = 'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json, source_terms_text FROM papers WHERE 1=1'
     params: list = []
 
     if args.status:
@@ -547,7 +570,7 @@ def cmd_list(args, config):
         rows = papers[args.offset:args.offset + args.limit]
     else:
         count_sql = sql.replace(
-            'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json',
+            'SELECT paper_id, doi, title, source, status, search_date, path_prefix, metadata_json, source_terms_text',
             'SELECT COUNT(*) as cnt', 1
         )
         total = conn.execute(count_sql, params).fetchone()['cnt']
@@ -589,9 +612,9 @@ def cmd_list(args, config):
         status = paper.get('status') or ''
         pp = paper.get('path_prefix') or ''
         date_str = paper.get('search_date') or ''
-        journal = paper.get('journal') or ''
-        cnsp = _get_cnsp(journal)
         issn = paper.get('issn') or ''
+        journal = paper.get('journal') or _journal_from_source_terms(paper.get('source_terms_text'), issn) or ''
+        cnsp = _get_cnsp(journal)
 
         if not args.no_truncate:
             if len(doi) > doi_w - 2:
