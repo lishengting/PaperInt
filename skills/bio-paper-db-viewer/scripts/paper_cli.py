@@ -273,14 +273,48 @@ def _journal_from_source_terms(source_terms_text, issn='') -> str:
     return ''
 
 
+def _paper_journal_fallback(paper: dict) -> str:
+    metadata = _metadata_from_viewer_paper(paper)
+    return _journal_from_source_terms(
+        paper.get('source_terms_text') or metadata.get('source_terms_text'),
+        paper.get('issn') or metadata.get('issn'),
+    )
+
+
+def _apply_journal_fallback(paper: dict) -> dict:
+    fallback = _paper_journal_fallback(paper)
+    if fallback and not paper.get('journal'):
+        paper['journal'] = fallback
+    if fallback and not paper.get('category'):
+        paper['category'] = fallback
+    return paper
+
+
+def _apply_resolved_pdf_fallback(paper: dict) -> dict:
+    pdf_import = paper.get('_pdf_import')
+    if not isinstance(pdf_import, dict) or pdf_import.get('resolver_status') != 'resolved':
+        return paper
+    for key in ('local_pdf_id', 'virtual_doi', 'virtual_issn', 'resolver_error'):
+        paper.pop(key, None)
+    paper['local_unresolved'] = False
+    paper['issn_is_virtual'] = False
+    paper['doi_is_virtual'] = False
+    return paper
+
+
+def _normalize_viewer_paper(paper: dict) -> dict:
+    _apply_journal_fallback(paper)
+    _apply_resolved_pdf_fallback(paper)
+    return paper
+
+
 def _paper_journal_labels(paper: dict) -> list[str]:
     labels = []
     metadata = _metadata_from_viewer_paper(paper)
     for key in JOURNAL_LABEL_KEYS:
         labels.extend(_label_values(paper.get(key)))
         labels.extend(_label_values(metadata.get(key)))
-    fallback = _journal_from_source_terms(
-        paper.get('source_terms_text'), paper.get('issn') or metadata.get('issn'))
+    fallback = _paper_journal_fallback(paper)
     if fallback:
         labels.append(fallback)
     return labels
@@ -375,6 +409,7 @@ def query_papers_for_viewer(config: dict, *, config_path: str = 'config.yaml',
 
     items = []
     for paper in page:
+        _normalize_viewer_paper(paper)
         paper.pop('metadata_json', None)
         items.append(paper)
     return {'items': items, 'total': total}
@@ -508,6 +543,7 @@ def cmd_list(args, config):
 
         results = []
         for paper in page:
+            _normalize_viewer_paper(paper)
             paper.pop('metadata_json', None)
             results.append(paper)
 
@@ -605,6 +641,7 @@ def cmd_list(args, config):
     print(sep)
 
     for paper in rows:
+        _normalize_viewer_paper(paper)
         doi = paper.get('doi') or ''
         pid = paper.get('paper_id') or ''
         title = paper.get('title') or ''
@@ -613,7 +650,7 @@ def cmd_list(args, config):
         pp = paper.get('path_prefix') or ''
         date_str = paper.get('search_date') or ''
         issn = paper.get('issn') or ''
-        journal = paper.get('journal') or _journal_from_source_terms(paper.get('source_terms_text'), issn) or ''
+        journal = paper.get('journal') or ''
         cnsp = _get_cnsp(journal)
 
         if not args.no_truncate:
