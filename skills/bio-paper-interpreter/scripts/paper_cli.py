@@ -1247,6 +1247,14 @@ def _parse_phases(args):
     return set(phase_str.split(',')) if phase_str else {'1', '2', '3', '4'}
 
 
+def _update_paper_fields(conn, paper_id, updates):
+    """Update specific paper fields in the DB, overwriting existing values."""
+    set_clause = ', '.join(f'{k} = ?' for k in updates)
+    values = list(updates.values()) + [datetime.now().isoformat(), paper_id]
+    conn.execute(f"UPDATE papers SET {set_clause}, updated_at = ? WHERE paper_id = ?", values)
+    conn.commit()
+
+
 def cmd_pdf(args, config):
     pdf_path = os.path.abspath(args.pdf_path)
     if not os.path.isfile(pdf_path):
@@ -1319,6 +1327,14 @@ def cmd_pdf(args, config):
 
     dest_pdf = _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record)
     mark_downloaded(conn, canonical_id, dirname, metadata_updates=metadata)
+    if resolver_info.get('status') == 'resolved':
+        resolver_fields = {}
+        for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'arxiv_id'):
+            if metadata.get(key) and metadata.get(key) != (canonical or {}).get(key, ''):
+                resolver_fields[key] = metadata[key]
+        if resolver_fields:
+            _update_paper_fields(conn, canonical_id, resolver_fields)
+            ts_print(f"  Updated {len(resolver_fields)} field(s) from resolver: {', '.join(resolver_fields)}")
     paper = get_paper(conn, canonical_id) or metadata
     paper['dir_name'] = dirname
 
