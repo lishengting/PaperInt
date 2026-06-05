@@ -17,9 +17,11 @@ Four-phase pipeline:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -34,6 +36,7 @@ Examples:
   paper_cli.py run s41467-026-70776-7   # Interpret a single paper (all phases)
   paper_cli.py run s41467-026-70776-7 --force    # Force re-interpret
   paper_cli.py run s41467-026-70776-7 --phase 1,2  # Only run phases 1 and 2
+  paper_cli.py pdf ./paper.pdf --phase 1,2          # Import a local PDF and interpret it
   paper_cli.py --cn                     # Generate English + Chinese outputs
   paper_cli.py --trans                  # Generate Chinese outputs from English + PDF context
   paper_cli.py --dry-run                # List papers without processing
@@ -45,9 +48,10 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'scripts'))
 sys.path.insert(0, SKILL_DIR)
 
 from paper_db import (get_conn, get_papers_by_status, get_paper_dir, get_paper,
-                      mark_interpreted, mark_interpret_failed, update_tags,
-                      update_translations, load_cnsp_journal_set,
-                      filter_cnsp_papers, load_cns_journal_set)
+                      mark_downloaded, mark_interpreted, mark_interpret_failed,
+                      update_tags, update_translations, load_cnsp_journal_set,
+                      filter_cnsp_papers, load_cns_journal_set,
+                      upsert_single_paper)
 
 from match_tags import match_tags
 from build_prompt import (build_full_text_prompt, build_brief_prompt,
@@ -68,6 +72,407 @@ def cfg(config, path, default=None):
 
 def sanitize(name):
     return re.sub(r'[/\\:*?"<>|]', '_', str(name))[:200]
+
+
+DOWNLOADER_SCRIPTS = os.path.join(REPO_ROOT, 'skills', 'bio-paper-downloader', 'scripts')
+DOI_PATTERN = re.compile(r'\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)\b', re.IGNORECASE)
+LOCAL_UNRESOLVED_ISSN = '0000-0000'
+
+
+def title_to_dirname(title):
+    if not title:
+        return 'unknown'
+    safe = re.sub(r'[()]+', '-', str(title))
+    safe = re.sub(r'[/\\:*?"<>|\s;]+', '_', safe).strip('_')
+    return safe[:256] or 'unknown'
+
+
+def _dedupe_strings(values):
+    result = []
+    seen = set()
+    for value in values:
+        text = str(value or '').strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _normalize_doi_value(value):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    text = re.sub(r'^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)', '', text, flags=re.IGNORECASE)
+    match = DOI_PATTERN.search(text)
+    doi = match.group(1) if match else text
+    doi = doi.strip().rstrip('.,;)').lower()
+    return doi if DOI_PATTERN.fullmatch(doi) else ''
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _clean_embedded_title(title):
+    text = ' '.join(str(title or '').split())
+    if not text:
+        return ''
+    lower = text.lower()
+    generic = {'untitled', 'unknown', 'none', 'pdf', 'document'}
+    if lower in generic or lower.endswith('.doc') or lower.endswith('.docx'):
+        return ''
+    if lower.startswith(('microsoft word -', 'untitled document')):
+        return ''
+    return text[:300]
+
+
+def _title_candidates_from_text(text):
+    lines = []
+    for raw in (text or '').splitlines()[:40]:
+        line = ' '.join(raw.split())
+        if not 15 <= len(line) <= 240:
+            continue
+        lower = line.lower()
+        if lower in {'abstract', 'keywords', 'introduction'}:
+            continue
+        if lower.startswith(('doi:', 'http', 'www.', 'arxiv:', 'pmid:', 'issn')):
+            continue
+        if re.search(r'\b(journal|volume|issue|copyright|license|published)\b', lower) and len(line) < 80:
+            continue
+        lines.append(line)
+        if len(lines) >= 5:
+            break
+    candidates = []
+    if lines:
+        candidates.append(lines[0])
+    if len(lines) >= 2 and len(lines[0]) < 120:
+        joined = f'{lines[0]} {lines[1]}'
+        if len(joined) <= 240:
+            candidates.append(joined)
+    candidates.extend(lines[1:3])
+    return _dedupe_strings(candidates)
+
+
+def extract_pdf_hints(pdf_path):
+    try:
+        import fitz
+    except ImportError as e:
+        raise RuntimeError('PyMuPDF is required to inspect local PDFs') from e
+
+    doc = fitz.open(pdf_path)
+    try:
+        if doc.page_count < 1:
+            raise RuntimeError('PDF has no pages')
+        metadata = dict(doc.metadata or {})
+        text_parts = []
+        for i in range(min(2, doc.page_count)):
+            text_parts.append(doc.load_page(i).get_text('text')[:5000])
+    finally:
+        doc.close()
+
+    first_pages_text = '\n'.join(text_parts)
+    metadata_text = ' '.join(str(v or '') for v in metadata.values())
+    doi_candidates = _dedupe_strings(
+        _normalize_doi_value(m.group(1))
+        for m in DOI_PATTERN.finditer(f'{metadata_text}\n{first_pages_text}')
+    )
+    title_candidates = _dedupe_strings([
+        _clean_embedded_title(metadata.get('title')),
+        *_title_candidates_from_text(first_pages_text),
+    ])
+    return {
+        'embedded_metadata': metadata,
+        'embedded_title': _clean_embedded_title(metadata.get('title')),
+        'embedded_authors': ' '.join(str(metadata.get('author') or '').split()),
+        'first_pages_text': first_pages_text[:10000],
+        'doi_candidates': doi_candidates,
+        'title_candidates': title_candidates,
+    }
+
+
+def _load_paper_info_modules():
+    if DOWNLOADER_SCRIPTS not in sys.path:
+        sys.path.insert(0, DOWNLOADER_SCRIPTS)
+    from paper_info import info_md, resolver
+    return resolver, info_md
+
+
+def _normalize_title_for_match(title):
+    text = re.sub(r'[^a-z0-9]+', ' ', str(title or '').lower())
+    return ' '.join(text.split())
+
+
+def _title_similarity(a, b):
+    a_tokens = set(_normalize_title_for_match(a).split())
+    b_tokens = set(_normalize_title_for_match(b).split())
+    if not a_tokens or not b_tokens:
+        return 0.0
+    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+
+
+def _raw_metadata_value(raw, keys):
+    sources = []
+    if isinstance(raw, dict):
+        sources.append(raw)
+        for nested_key in ('message', 'record', 'result'):
+            nested = raw.get(nested_key)
+            if isinstance(nested, dict):
+                sources.append(nested)
+    for source in sources:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, list):
+                value = '; '.join(str(item) for item in value if item)
+            if value:
+                return str(value)
+    return ''
+
+
+def _source_url_for_paper(doi, arxiv_id):
+    if doi:
+        return f'https://doi.org/{doi}'
+    if arxiv_id:
+        return f'https://arxiv.org/abs/{arxiv_id}'
+    return ''
+
+
+def _paper_from_record(record, paper_id_override=None):
+    identity = record.identity
+    doi = _normalize_doi_value(identity.doi or '')
+    arxiv_id = identity.arxiv_id or ''
+    pmid = identity.pmid or ''
+    pmcid = identity.pmcid or ''
+    source_url = _source_url_for_paper(doi, arxiv_id)
+    paper_id = paper_id_override or doi or arxiv_id or pmid or pmcid or ''
+    authors = ', '.join(identity.authors or [])
+    paper = {
+        'paper_id': paper_id,
+        'source': (identity.sources or ['paper_info'])[0],
+        'doi': doi,
+        'arxiv_id': arxiv_id,
+        'pmid': pmid,
+        'title': identity.title or paper_id or 'untitled',
+        'authors': authors,
+        'abstract': identity.abstract or record.abstract or '',
+        'date': identity.year or '',
+        'category': identity.journal or identity.preprint_server or '',
+        'pdf_url': '',
+        'abs_url': source_url,
+        'source_url': source_url,
+        'journal': identity.journal or '',
+        'pmcid': pmcid,
+        'paper_info_sources': identity.sources,
+        'paper_info_match_type': identity.match_type or '',
+        'paper_info_confidence': identity.confidence,
+    }
+    issn = _raw_metadata_value(identity.raw, ('issn', 'ISSN', 'issns'))
+    if issn:
+        paper['issn'] = issn
+    if identity.raw:
+        paper['paper_info_raw'] = identity.raw
+    return paper
+
+
+def _candidate_identifier(candidate):
+    for attr, prefix in (('doi', ''), ('pmid', 'pmid:'), ('pmcid', ''), ('arxiv_id', 'arxiv:')):
+        value = getattr(candidate, attr, None)
+        if value:
+            return f'{prefix}{value}'
+    return getattr(candidate, 'title', '') or ''
+
+
+def _fallback_pdf_paper(args, hints, pdf_sha256, resolver_error=''):
+    local_pdf_id = f'local_pdf_{pdf_sha256[:16]}'
+    title_candidates = _dedupe_strings([getattr(args, 'title', ''), *hints.get('title_candidates', [])])
+    doi_candidates = _dedupe_strings([_normalize_doi_value(getattr(args, 'doi', '')), *hints.get('doi_candidates', [])])
+    title = title_candidates[0] if title_candidates else local_pdf_id
+    doi = doi_candidates[0] if doi_candidates else ''
+    virtual_doi = f'local-pdf:{pdf_sha256[:16]}'
+    return {
+        'paper_id': getattr(args, 'paper_id', None) or local_pdf_id,
+        'source': 'local_pdf',
+        'doi': doi,
+        'arxiv_id': '',
+        'pmid': '',
+        'title': title,
+        'authors': hints.get('embedded_authors', ''),
+        'abstract': '',
+        'date': '',
+        'category': '',
+        'pdf_url': '',
+        'abs_url': '',
+        'source_url': '',
+        'issn': LOCAL_UNRESOLVED_ISSN,
+        'issn_is_virtual': True,
+        'local_unresolved': True,
+        'local_pdf_id': local_pdf_id,
+        'pdf_sha256': pdf_sha256,
+        'virtual_doi': virtual_doi,
+        'doi_is_virtual': True,
+        'resolver_error': resolver_error,
+    }
+
+
+def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
+    doi_candidates = _dedupe_strings([_normalize_doi_value(getattr(args, 'doi', '')), *hints.get('doi_candidates', [])])
+    title_candidates = _dedupe_strings([getattr(args, 'title', ''), *hints.get('title_candidates', [])])
+    paper_id_override = getattr(args, 'paper_id', None) or (existing_local or {}).get('paper_id')
+    last_error = ''
+
+    try:
+        resolver, _info_md = _load_paper_info_modules()
+    except Exception as e:
+        paper = _fallback_pdf_paper(args, hints, pdf_sha256, str(e))
+        return paper, None, {'status': 'fallback', 'error': str(e), 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
+
+    for doi in doi_candidates:
+        try:
+            record = resolver.get_paper(doi, depth='full', timeout=8.0)
+            paper = _paper_from_record(record, paper_id_override=paper_id_override)
+            return paper, record, {'status': 'resolved', 'identifier': doi, 'method': 'doi', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
+        except Exception as e:
+            last_error = str(e)
+
+    for title in title_candidates:
+        try:
+            candidates = resolver.find_papers(title, limit=5, domain='auto', timeout=8.0)
+            best = None
+            best_score = 0.0
+            for candidate in candidates:
+                score = _title_similarity(title, getattr(candidate, 'title', ''))
+                if score > best_score:
+                    best = candidate
+                    best_score = score
+            if best and best_score >= 0.75:
+                identifier = _candidate_identifier(best)
+                record = resolver.get_paper(identifier, depth='full', timeout=8.0)
+                paper = _paper_from_record(record, paper_id_override=paper_id_override)
+                return paper, record, {
+                    'status': 'resolved',
+                    'identifier': identifier,
+                    'method': 'title',
+                    'title_score': best_score,
+                    'doi_candidates': doi_candidates,
+                    'title_candidates': title_candidates,
+                }
+        except Exception as e:
+            last_error = str(e)
+
+    paper = _fallback_pdf_paper(args, hints, pdf_sha256, last_error)
+    return paper, None, {'status': 'fallback', 'error': last_error, 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
+
+
+def _build_pdf_import_metadata(paper, hints, pdf_path, pdf_sha256, resolver_info):
+    local_pdf_id = f'local_pdf_{pdf_sha256[:16]}'
+    metadata = dict(paper)
+    metadata['_pdf_import'] = {
+        'original_path': os.path.abspath(pdf_path),
+        'imported_at': datetime.now().isoformat(),
+        'resolver_status': resolver_info.get('status', ''),
+        'resolver_identifier': resolver_info.get('identifier', ''),
+        'resolver_method': resolver_info.get('method', ''),
+        'resolver_error': resolver_info.get('error', ''),
+        'doi_candidates': resolver_info.get('doi_candidates') or hints.get('doi_candidates', []),
+        'title_candidates': resolver_info.get('title_candidates') or hints.get('title_candidates', []),
+        'embedded_pdf_metadata': hints.get('embedded_metadata', {}),
+        'pdf_sha256': pdf_sha256,
+        'local_pdf_id': metadata.get('local_pdf_id') or local_pdf_id,
+        'virtual_issn': metadata.get('issn') if metadata.get('issn_is_virtual') else '',
+        'virtual_doi': metadata.get('virtual_doi', ''),
+    }
+    return metadata
+
+
+def _build_pdf_import_dir(paper, safe_pid):
+    data_dir = os.path.join(REPO_ROOT, 'data')
+    dirname = title_to_dirname(paper.get('title', ''))
+    paper_dir = os.path.join(data_dir, dirname)
+    if os.path.isdir(paper_dir):
+        meta_file = os.path.join(paper_dir, f'{safe_pid}.metadata.json')
+        if not os.path.exists(meta_file):
+            dirname = f'{dirname}_{safe_pid}'[:256]
+            paper_dir = os.path.join(data_dir, dirname)
+    return dirname, paper_dir
+
+
+def _same_file(src, dst):
+    try:
+        return os.path.exists(dst) and os.path.samefile(src, dst)
+    except OSError:
+        return False
+
+
+def _fallback_info_md(paper, metadata):
+    pdf_import = metadata.get('_pdf_import', {})
+    lines = [
+        f"# {paper.get('title') or paper.get('paper_id') or 'Local PDF'}",
+        '',
+        '## Paper Identity',
+        '',
+        '| Field | Value |',
+        '|-------|-------|',
+        f"| **Paper ID** | {paper.get('paper_id', '') or '*Not available*'} |",
+        f"| **Title** | {paper.get('title', '') or '*Not available*'} |",
+        f"| **Authors** | {paper.get('authors', '') or '*Not available*'} |",
+        f"| **DOI** | {paper.get('doi', '') or '*Not available*'} |",
+        f"| **ISSN** | {paper.get('issn', '') or '*Not available*'} |",
+        f"| **Local PDF ID** | {paper.get('local_pdf_id', '') or pdf_import.get('local_pdf_id', '') or '*Not available*'} |",
+        '',
+        '## Local Import',
+        '',
+        f"- Source: {paper.get('source', 'local_pdf')}",
+        f"- Original path: {pdf_import.get('original_path', '')}",
+        f"- PDF SHA-256: {pdf_import.get('pdf_sha256', '')}",
+        f"- Resolver status: {pdf_import.get('resolver_status', '') or 'fallback'}",
+    ]
+    if pdf_import.get('resolver_error'):
+        lines.append(f"- Resolver error: {pdf_import['resolver_error']}")
+    if paper.get('local_unresolved'):
+        lines.append(f"- Local unresolved sentinel ISSN: {LOCAL_UNRESOLVED_ISSN}")
+    return '\n'.join(lines) + '\n'
+
+
+def _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record):
+    os.makedirs(paper_dir, exist_ok=True)
+    dest_pdf = os.path.join(paper_dir, f'{safe_pid}.pdf')
+    if not _same_file(pdf_path, dest_pdf):
+        shutil.copy2(pdf_path, dest_pdf)
+
+    metadata_path = os.path.join(paper_dir, f'{safe_pid}.metadata.json')
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2, default=str)
+
+    info_path = os.path.join(paper_dir, f'{safe_pid}.info.md')
+    try:
+        _resolver, info_md = _load_paper_info_modules()
+        content = info_md.generate(record) if record else _fallback_info_md(metadata, metadata)
+    except Exception:
+        content = _fallback_info_md(metadata, metadata)
+    _write_text(info_path, content)
+    return dest_pdf
+
+
+def _print_existing_results(paper, config):
+    paper_id = paper.get('paper_id', '')
+    safe_pid = sanitize(paper_id)
+    paper_dir = paper.get('dir_name', '') or get_paper_dir(get_conn(config), paper_id) or ''
+    ts_print(f"  [exists] already interpreted: {paper_id}")
+    if paper_dir:
+        paper_path = os.path.join(REPO_ROOT, 'data', paper_dir)
+        ts_print(f"  Dir: {paper_dir}")
+        for suffix in ('interpret.md', 'brief.md', 'interpret.html', 'brief.html', 'interpret.json'):
+            path = os.path.join(paper_path, f'{safe_pid}.{suffix}')
+            if os.path.exists(path):
+                ts_print(f"  {path}")
+    return 0
 
 
 def log_phase(log_file, paper_id, phase, status, msg=''):
@@ -792,6 +1197,106 @@ def process_paper(paper, config, phases, log_file, cn=False, trans=False):
             break
 
 
+def _get_paper_by_doi(conn, doi):
+    if not doi:
+        return None
+    row = conn.execute("SELECT paper_id FROM papers WHERE doi = ?", (doi,)).fetchone()
+    return get_paper(conn, row['paper_id']) if row else None
+
+
+def _merge_canonical_metadata(metadata, canonical):
+    merged = dict(metadata)
+    if not canonical:
+        return merged
+    for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'arxiv_id', 'source', 'source_url', 'pdf_url'):
+        if canonical.get(key) and not merged.get(key):
+            merged[key] = canonical[key]
+    merged['paper_id'] = canonical.get('paper_id') or merged.get('paper_id')
+    return merged
+
+
+def _target_dir_for_paper(paper, safe_pid):
+    if paper.get('dir_name'):
+        dirname = paper['dir_name']
+        return dirname, os.path.join(REPO_ROOT, 'data', dirname)
+    return _build_pdf_import_dir(paper, safe_pid)
+
+
+def _parse_phases(args):
+    phase_str = getattr(args, 'phase', None)
+    return set(phase_str.split(',')) if phase_str else {'1', '2', '3', '4'}
+
+
+def cmd_pdf(args, config):
+    pdf_path = os.path.abspath(args.pdf_path)
+    if not os.path.isfile(pdf_path):
+        ts_print(f"PDF not found: {pdf_path}", file=sys.stderr)
+        return 1
+
+    try:
+        pdf_sha256 = _sha256_file(pdf_path)
+        hints = extract_pdf_hints(pdf_path)
+    except Exception as e:
+        ts_print(f"Invalid PDF: {e}", file=sys.stderr)
+        return 1
+
+    conn = get_conn(config)
+    local_pdf_id = f'local_pdf_{pdf_sha256[:16]}'
+    existing_local = get_paper(conn, getattr(args, 'paper_id', None) or local_pdf_id)
+    if existing_local and existing_local.get('status') == 'interpreted' and not args.force and not getattr(args, 'doi', None):
+        return _print_existing_results(existing_local, config)
+
+    paper, record, resolver_info = resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=existing_local)
+    if not paper.get('paper_id'):
+        paper['paper_id'] = getattr(args, 'paper_id', None) or local_pdf_id
+    metadata = _build_pdf_import_metadata(paper, hints, pdf_path, pdf_sha256, resolver_info)
+
+    if getattr(args, 'dry_run', False):
+        existing = existing_local or _get_paper_by_doi(conn, metadata.get('doi'))
+        display_paper = _merge_canonical_metadata(metadata, existing)
+        safe_pid = sanitize(display_paper.get('paper_id', ''))
+        dirname, paper_dir = _target_dir_for_paper(display_paper, safe_pid)
+        ts_print("Would import local PDF:")
+        ts_print(f"  paper_id: {display_paper.get('paper_id', '')}")
+        ts_print(f"  title: {(display_paper.get('title', '') or '')[:120]}")
+        ts_print(f"  doi: {display_paper.get('doi', '') or '(none)'}")
+        ts_print(f"  status: {(existing or {}).get('status', 'new')}")
+        ts_print(f"  resolver: {resolver_info.get('status', '')}")
+        ts_print(f"  target: {os.path.join(paper_dir, f'{safe_pid}.pdf')}")
+        return 0
+
+    canonical_id = upsert_single_paper(conn, metadata, by_doi=bool(metadata.get('doi')))
+    if not canonical_id:
+        ts_print("Failed to create database row for local PDF", file=sys.stderr)
+        return 1
+
+    canonical = get_paper(conn, canonical_id)
+    if canonical and canonical.get('status') == 'interpreted' and not args.force:
+        return _print_existing_results(canonical, config)
+
+    metadata = _merge_canonical_metadata(metadata, canonical)
+    metadata['paper_id'] = canonical_id
+    safe_pid = sanitize(canonical_id)
+    dirname, paper_dir = _target_dir_for_paper(metadata if metadata.get('dir_name') else (canonical or metadata), safe_pid)
+    metadata['dir_name'] = dirname
+
+    dest_pdf = _write_pdf_import_files(pdf_path, paper_dir, safe_pid, metadata, record)
+    mark_downloaded(conn, canonical_id, dirname, metadata_updates=metadata)
+    paper = get_paper(conn, canonical_id) or metadata
+    paper['dir_name'] = dirname
+
+    phases = _parse_phases(args)
+    log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
+    trans = getattr(args, 'trans', False)
+    cn = getattr(args, 'cn', False) or trans
+    ts_print(f"Imported local PDF: {dest_pdf}")
+    ts_print(f"Paper: {canonical_id}")
+    ts_print(f"Phases: {sorted(phases)}")
+    ts_print(f"Languages: {'English + Chinese' if cn else 'English'}" + (' (translated)' if trans else ''))
+    process_paper(paper, config, phases, log_file, cn=cn, trans=trans)
+    return 0
+
+
 def cmd_run(args, config):
     conn = get_conn(config)
 
@@ -882,7 +1387,7 @@ def main():
     p.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
 
     sub = p.add_subparsers(dest='cmd', title='commands',
-                           description='"run" a single paper, or omit for auto-mode')
+                           description='"run" a single paper, "pdf" a local file, or omit for auto-mode')
 
     run_p = sub.add_parser('run', help='Run interpretation on a single paper',
                            formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -897,10 +1402,34 @@ def main():
                        help='Generate Chinese outputs from English outputs plus PDF context (implies --cn)')
     run_p.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
 
+    pdf_p = sub.add_parser('pdf', help='Import a local PDF and interpret it',
+                           formatter_class=argparse.RawDescriptionHelpFormatter)
+    pdf_p.add_argument('pdf_path', help='Path to local PDF file')
+    pdf_p.add_argument('--paper-id', default=None,
+                       help='Override paper ID. Defaults to resolved ID or local PDF content hash.')
+    pdf_p.add_argument('--title', default=None,
+                       help='Override/inject title if metadata search fails')
+    pdf_p.add_argument('--doi', default=None,
+                       help='Override/inject DOI for metadata resolution')
+    pdf_p.add_argument('--phase', default=None,
+                       help='Phases to run (1,2,3,4 or 1,2). Default: all four.')
+    pdf_p.add_argument('-f', '--force', action='store_true',
+                       help='Re-import/overwrite PDF artifacts and re-interpret if already interpreted')
+    pdf_p.add_argument('--dry-run', action='store_true',
+                       help='Show planned import without writing files or changing the database')
+    pdf_p.add_argument('--cn', action='store_true',
+                       help='Also generate Chinese reports, HTML, and posters')
+    pdf_p.add_argument('--trans', action='store_true',
+                       help='Generate Chinese outputs from English outputs plus PDF context (implies --cn)')
+    pdf_p.add_argument('--en', action='store_true', help=argparse.SUPPRESS)
+
     args = p.parse_args()
 
     config = load_config(args.config)
     config['__config_path__'] = args.config
+
+    if args.cmd == 'pdf':
+        return cmd_pdf(args, config)
 
     if args.dry_run:
         conn = get_conn(config)

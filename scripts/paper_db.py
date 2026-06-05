@@ -605,6 +605,14 @@ def upsert_search_results(conn: sqlite3.Connection, papers: list[dict],
     return count
 
 
+def upsert_single_paper(conn: sqlite3.Connection, paper: dict, *, by_doi: bool = True) -> str:
+    """Insert or merge one paper and return the canonical paper_id."""
+    cleaned = _clean_paper_text(paper)
+    paper_id, _inserted = _insert_or_merge_paper(conn, cleaned, _now(), by_doi=by_doi)
+    conn.commit()
+    return paper_id
+
+
 # ---------------------------------------------------------------------------
 # Downloader skill operations
 # ---------------------------------------------------------------------------
