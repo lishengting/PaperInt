@@ -32,8 +32,11 @@ from datetime import datetime, timedelta
 
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, '..', '..', '..', 'scripts'))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, '..', '..', 'bio-paper-downloader', 'scripts'))
 from paper_db import get_conn, get_db_path, insert_search_results, upsert_search_results
+from paper_info.matching import title_similarity as _find_title_similarity, titles_match as _find_titles_match
 
 # ---------------------------------------------------------------------------
 # SSL workaround for older servers (bioRxiv, etc.)
@@ -468,14 +471,7 @@ def arxiv_search(keywords, config, max_results=50, start_date=None, end_date=Non
 def arxiv_search_title(title, config, max_results=10):
     xml_data = arxiv_api(f'ti:"{title}"', config, max_results)
     papers = arxiv_parse(xml_data) if xml_data else []
-    tw = set(title.lower().split())
-    for p in papers:
-        pw = set(p['title'].lower().split())
-        p['_score'] = len(tw & pw) / max(len(tw), 1)
-    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-    for p in papers:
-        p.pop('_score', None)
-    return papers[:max_results]
+    return _rank_find_title_matches(title, papers, max_results)
 
 
 # ---------------------------------------------------------------------------
@@ -660,21 +656,14 @@ async def _preprint_search_title_browser(title, server, config, max_results, chr
 def preprint_search_title(title, config, server='biorxiv', use_browser=False):
     if use_browser:
         import asyncio as _asyncio
-        return _asyncio.run(_preprint_search_title_browser(
+        papers = _asyncio.run(_preprint_search_title_browser(
             title, server, config, max_results=20,
-            chrome_port=_get_or_start_chrome())), 0
+            chrome_port=_get_or_start_chrome()))
+        return _rank_find_title_matches(title, papers, 20), 0
 
     keywords = [w.lower() for w in title.split() if w.lower() not in STOP_WORDS]
     papers, scanned = preprint_search(keywords, config, server, max_results=500, max_scan=500)
-
-    tw = set(title.lower().split())
-    for p in papers:
-        pw = set(p['title'].lower().split())
-        p['_score'] = len(tw & pw) / max(len(tw), 1)
-    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-    for p in papers:
-        p.pop('_score', None)
-    return papers, scanned
+    return _rank_find_title_matches(title, papers, 20), scanned
 
 
 def _get_or_start_chrome(force_headed=False):
@@ -872,7 +861,10 @@ def pubmed_fetch_details(pmids, config):
 
 
 def pubmed_search(keywords, config, max_results=50, start_date=None, end_date=None):
-    query = ' AND '.join(f'{kw}[All Fields]' for kw in keywords)
+    query = ' AND '.join(
+        kw if re.search(r'\[[^\]]+\]\s*$', kw) else f'{kw}[All Fields]'
+        for kw in keywords
+    )
     base_params = {
         'db': 'pubmed', 'term': query,
         'sort': 'pub date', 'datetype': 'pdat',
@@ -990,34 +982,14 @@ def _pubmed_esummary_batched(idlist, config):
 
 def pubmed_search_title(title, config, max_results=10):
     papers, total = pubmed_search([f'{title}[Title]'], config, max_results)
-    tw = set(title.lower().split())
-    for p in papers:
-        pw = set(p['title'].lower().split())
-        p['_score'] = len(tw & pw) / max(len(tw), 1)
-    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-    for p in papers:
-        p.pop('_score', None)
-    return papers[:max_results], total
+    return _rank_find_title_matches(title, papers, max_results), total
 
 
 # ---------------------------------------------------------------------------
 # Crossref
 # ---------------------------------------------------------------------------
 
-def crossref_search(keywords, config, max_results=50, start_date=None, end_date=None):
-    """Search Crossref API for papers matching keywords."""
-    max_results = min(max_results, 1000)  # Crossref API limit
-    query = ' '.join(keywords)
-    params = {
-        'query': query,
-        'rows': str(max_results),
-        'sort': 'published',
-        'order': 'desc',
-    }
-    if start_date:
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
-        params['filter'] = f'from-pub-date:{start_date},until-pub-date:{end}'
-
+def _crossref_api(params, config):
     encoded = urllib.parse.urlencode(params, doseq=True)
     url = f"https://api.crossref.org/works?{encoded}"
     print(f"{_ts()}   Crossref API: {url}")
@@ -1030,9 +1002,11 @@ def crossref_search(keywords, config, max_results=50, start_date=None, end_date=
         print(f"{_ts()}   Crossref error: {e}", file=sys.stderr)
         return [], 0
 
-    items = data.get('message', {}).get('items', [])
-    total = data.get('message', {}).get('total-results', 0)
+    message = data.get('message', {})
+    return message.get('items', []), message.get('total-results', 0)
 
+
+def _crossref_items_to_papers(items):
     papers = []
     for item in items:
         doi = (item.get('DOI') or '').strip().lower()
@@ -1084,20 +1058,36 @@ def crossref_search(keywords, config, max_results=50, start_date=None, end_date=
         ))
         _add_abbrev_to_paper(papers[-1])
 
-    return papers, total
+    return papers
+
+
+def crossref_search(keywords, config, max_results=50, start_date=None, end_date=None):
+    """Search Crossref API for papers matching keywords."""
+    max_results = min(max_results, 1000)  # Crossref API limit
+    query = ' '.join(keywords)
+    params = {
+        'query': query,
+        'rows': str(max_results),
+        'sort': 'published',
+        'order': 'desc',
+    }
+    if start_date:
+        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        params['filter'] = f'from-pub-date:{start_date},until-pub-date:{end}'
+
+    items, total = _crossref_api(params, config)
+    return _crossref_items_to_papers(items), total
 
 
 def crossref_search_title(title, config, max_results=10):
     """Search Crossref by title."""
-    papers, total = crossref_search([title], config, max_results)
-    tw = set(title.lower().split())
-    for p in papers:
-        pw = set(p['title'].lower().split())
-        p['_score'] = len(tw & pw) / max(len(tw), 1)
-    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-    for p in papers:
-        p.pop('_score', None)
-    return papers[:max_results], total
+    params = {
+        'query.title': title,
+        'rows': str(min(max(max_results * 3, 20), 100)),
+    }
+    items, total = _crossref_api(params, config)
+    papers = _crossref_items_to_papers(items)
+    return _rank_find_title_matches(title, papers, max_results), total
 
 
 # ---------------------------------------------------------------------------
@@ -1109,7 +1099,9 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
     max_results = min(max_results, 1000)  # Europe PMC API limit
     query_parts = []
     for kw in keywords:
-        if ' ' in kw:
+        if re.match(r'^[A-Za-z_]+:', kw):
+            query_parts.append(kw)
+        elif ' ' in kw:
             query_parts.append(f'"{kw}"')
         else:
             query_parts.append(kw)
@@ -1200,15 +1192,8 @@ def europepmc_search(keywords, config, max_results=50, start_date=None, end_date
 
 def europepmc_search_title(title, config, max_results=10):
     """Search Europe PMC by title."""
-    papers, total = europepmc_search([title], config, max_results)
-    tw = set(title.lower().split())
-    for p in papers:
-        pw = set(p['title'].lower().split())
-        p['_score'] = len(tw & pw) / max(len(tw), 1)
-    papers.sort(key=lambda x: x.get('_score', 0), reverse=True)
-    for p in papers:
-        p.pop('_score', None)
-    return papers[:max_results], total
+    papers, total = europepmc_search([f'TITLE:"{title}"'], config, max_results)
+    return _rank_find_title_matches(title, papers, max_results), total
 
 
 # ---------------------------------------------------------------------------
@@ -1353,7 +1338,8 @@ async def _scholar_search_async(keywords, config, max_results, chrome_port=None)
 def scholar_search_title(title, config, max_results=5, chrome_port=None):
     import asyncio as _asyncio
     keywords = [title]
-    return _asyncio.run(_scholar_search_async(keywords, config, max_results, chrome_port=chrome_port))
+    papers, total = _asyncio.run(_scholar_search_async(keywords, config, max_results, chrome_port=chrome_port))
+    return _rank_find_title_matches(title, papers, max_results), total
 
 
 # ---------------------------------------------------------------------------
@@ -1381,6 +1367,16 @@ def _titles_similar(t1, t2, threshold=0.7):
     if not w1 or not w2:
         return False
     return len(w1 & w2) / len(w1 | w2) >= threshold
+
+
+def _rank_find_title_matches(title, papers, max_results):
+    ranked = []
+    for paper in papers:
+        candidate = paper.get('title', '')
+        if _find_titles_match(title, candidate):
+            ranked.append((_find_title_similarity(title, candidate), paper))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [paper for _, paper in ranked[:max_results]]
 
 
 def _merge_dedup(papers, source_priority=None):
@@ -1911,15 +1907,8 @@ def cmd_find(args, config):
 
             if all_papers:
                 merged = _merge_dedup(all_papers)
-                tw = set(args.title.lower().split())
-                for p in merged:
-                    pw = set(p['title'].lower().split())
-                    p['_score'] = len(tw & pw) / max(len(tw), 1)
-                merged.sort(key=lambda x: x.get('_score', 0), reverse=True)
-                for p in merged:
-                    p.pop('_score', None)
-                print(f"{_ts()}   Merged: {len(merged)} unique papers (from {len(all_papers)} total)")
-                papers = merged
+                papers = _rank_find_title_matches(args.title, merged, 10)
+                print(f"{_ts()}   Merged: {len(papers)} matching papers (from {len(all_papers)} total)")
             else:
                 papers = []
         finally:
@@ -1949,9 +1938,9 @@ examples:
   paper_cli.py search -k "methylation,single-cell" -n 3
   paper_cli.py search -k "CRISPR" -s pubmed -n 5
 
-  # Title search
+  # Title/DOI lookup; use search -k for keywords
   paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
-  paper_cli.py find -t "CRISPR editing" -s pubmed
+  paper_cli.py find -d "10.1038/s41586-023-00000-0"
 
   # Google Scholar (disabled by default, use -s scholar explicitly)
   paper_cli.py search -k "deep learning single cell" -s scholar -n 3
@@ -1971,7 +1960,7 @@ def main():
     p = argparse.ArgumentParser(
         prog='paper_cli.py',
         description='Bio Paper Search — search bioinformatics papers across multiple sources.\n'
-                    'Run `paper_cli.py search -h` or `paper_cli.py find -h` for detailed options.',
+                    'Use search for keywords and find for title/DOI lookup.',
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1981,7 +1970,7 @@ def main():
                    help='Path to SQLite database (default: from config.yaml)')
     sub = p.add_subparsers(dest='cmd', required=True,
                            title='commands',
-                           description='"search" by keywords or "find" by title')
+                           description='"search" by keywords or "find" by title/DOI')
 
     # ---- search ----
     sp = sub.add_parser(
@@ -2016,12 +2005,12 @@ def main():
     # ---- find ----
     fp = sub.add_parser(
         'find',
-        help='Search for a paper by title or DOI',
-        description='Look up a paper by title or DOI.',
+        help='Look up a paper by title or DOI',
+        description='Look up a specific paper by full title or DOI. Use search for keywords.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     fp.add_argument('-t', '--title',
-                    help='Paper title to search for')
+                    help='Full paper title to look up, not keywords')
     fp.add_argument('-d', '--doi',
                     help='Look up paper by DOI (e.g., 10.1038/s41586-023-00000-0)')
     fp.add_argument('-s', '--source', choices=SOURCES,

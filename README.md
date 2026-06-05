@@ -66,8 +66,9 @@ python3 skills/bio-paper-search/scripts/paper_cli.py search -k "single cell RNA-
 # Search across all sources (arXiv, bioRxiv, medRxiv, PubMed, Crossref, Europe PMC)
 python3 skills/bio-paper-search/scripts/paper_cli.py search -k "CRISPR" -s all -n 10
 
-# Semantic search via topic
+# Find a specific paper by full title or DOI; use search -k for topics/keywords
 python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Deep learning for protein structure prediction"
+python3 skills/bio-paper-search/scripts/paper_cli.py find -d "10.1038/s41586-023-00000-0"
 ```
 
 ### Download

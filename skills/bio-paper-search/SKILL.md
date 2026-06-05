@@ -57,7 +57,7 @@ Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-k, --keywords` | config | Comma-separated keywords |
-| `-s, --source` | config (`arxiv`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `crossref`, `europepmc`, `cnsp`, `all` |
+| `-s, --source` | config (`search.default_source`) | `arxiv`, `biorxiv`, `medrxiv`, `pubmed`, `scholar`, `crossref`, `europepmc`, `cnsp`, `all` |
 | `-n, --num` | config (1) | Number of papers |
 | `-l, --list` | off | Preview only, do not save to database |
 | `--start-date` | 7 days ago | Search from this date (YYYY-MM-DD). Supported by arxiv, biorxiv, medrxiv, pubmed, crossref, europepmc, cnsp. |
@@ -69,8 +69,9 @@ Options:
 ### find — search by title or DOI
 
 ```bash
+# Use find for full-title or DOI lookup; use search -k for keywords/topics.
 python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Deep learning for single cell RNA-seq analysis"
-python3 skills/bio-paper-search/scripts/paper_cli.py find -t "CRISPR editing methylation" -s pubmed
+python3 skills/bio-paper-search/scripts/paper_cli.py find -t "Gut Microbiome Communities Vary Across Translocated Populations of the Seychelles Warbler" -s crossref
 python3 skills/bio-paper-search/scripts/paper_cli.py find -d "10.1038/s41586-023-00000-0"
 ```
 
