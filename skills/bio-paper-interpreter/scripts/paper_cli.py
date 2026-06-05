@@ -1377,6 +1377,8 @@ def cmd_pdf(args, config):
         for key in ('title', 'authors', 'abstract', 'doi', 'pmid', 'arxiv_id'):
             if metadata.get(key) and metadata.get(key) != (canonical or {}).get(key, ''):
                 resolver_fields[key] = metadata[key]
+        if metadata.get('source') and (canonical or {}).get('source') == 'local_pdf':
+            resolver_fields['source'] = metadata['source']
         if resolver_fields:
             _update_paper_fields(conn, canonical_id, resolver_fields)
             ts_print(f"  Updated {len(resolver_fields)} field(s) from resolver: {', '.join(resolver_fields)}")
