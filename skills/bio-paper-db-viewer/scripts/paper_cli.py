@@ -696,6 +696,12 @@ def cmd_show(args, config):
         print(f"Paper not found: {args.paper_id}", file=sys.stderr)
         return 1
 
+    _normalize_viewer_paper(paper)
+    if args.json:
+        paper.pop('metadata_json', None)
+        print(json.dumps(paper, indent=2, ensure_ascii=False, default=str))
+        return 0
+
     # Fields to display in order, with labels
     field_order = [
         ('paper_id', 'Paper ID'),
@@ -920,6 +926,8 @@ def main():
                         description='Display all available fields for a single paper by its ID.')
     sp.add_argument('-p', '--paper-id', required=True,
                     help='Paper ID from the database (e.g., DOI, arXiv ID)')
+    sp.add_argument('--json', action='store_true',
+                    help='Output as JSON with full paper details')
     sp.add_argument('--explain', default=None,
                     help='When showing search provenance, focus matched evidence on this keyword')
 
