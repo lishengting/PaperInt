@@ -771,7 +771,7 @@ INDEX_HTML = """<!doctype html>
 
     function buildParams(page = currentPage) {
       const params = new URLSearchParams();
-      params.set('k', $('keywordInput').value.trim() || 'microbiome');
+      params.set('k', $('keywordInput').value.trim());
       params.set('status', $('statusSelect').value || 'interpreted');
       params.set('limit', $('limitSelect').value || '10');
       params.set('page', String(page));
