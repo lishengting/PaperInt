@@ -477,6 +477,28 @@ def _print_existing_results(paper, config):
     return 0
 
 
+def _try_incremental_cn(paper, conn, args, config):
+    """If --cn/--trans and zh outputs missing, run incremental phases. Returns True if handled."""
+    cn = getattr(args, 'cn', False) or getattr(args, 'trans', False)
+    if not cn:
+        return False
+    safe_pid = sanitize(paper.get('paper_id', ''))
+    paper_dir = paper.get('dir_name', '') or get_paper_dir(conn, paper.get('paper_id', '')) or ''
+    if paper_dir:
+        zh_path = os.path.join(REPO_ROOT, 'data', paper_dir, f'{safe_pid}.interpret.zh.md')
+        if os.path.exists(zh_path):
+            return False
+    phases = {'2', '3', '4'}
+    log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
+    trans = getattr(args, 'trans', False)
+    ts_print(f"Incremental: adding Chinese outputs for {paper.get('paper_id')}")
+    ts_print(f"Phases: {sorted(phases)}")
+    ts_print(f"Languages: English + Chinese" + (' (translated)' if trans else ''))
+    process_paper(paper, config, phases, log_file, cn=True, trans=trans,
+                  skip_existing_en=True)
+    return True
+
+
 def log_phase(log_file, paper_id, phase, status, msg=''):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     line = f"{ts} | Phase {phase} - {status}: {paper_id}"
@@ -1277,21 +1299,9 @@ def cmd_pdf(args, config):
     if existing_local and existing_local.get('status') == 'interpreted' and not args.force and not getattr(args, 'doi', None):
         if not cn:
             return _print_existing_results(existing_local, config)
-        safe_pid = sanitize(existing_local.get('paper_id', ''))
-        paper_dir = existing_local.get('dir_name', '') or get_paper_dir(conn, existing_local.get('paper_id', '')) or ''
-        if paper_dir:
-            zh_path = os.path.join(REPO_ROOT, 'data', paper_dir, f'{safe_pid}.interpret.zh.md')
-            if os.path.exists(zh_path):
-                return _print_existing_results(existing_local, config)
-        phases = {'2', '3', '4'}
-        log_file = os.path.join(REPO_ROOT, 'data', 'execution_log.md')
-        trans = getattr(args, 'trans', False)
-        ts_print(f"Incremental: adding Chinese outputs for {existing_local.get('paper_id')}")
-        ts_print(f"Phases: {sorted(phases)}")
-        ts_print(f"Languages: English + Chinese" + (' (translated)' if trans else ''))
-        process_paper(existing_local, config, phases, log_file, cn=True, trans=trans,
-                      skip_existing_en=True)
-        return 0
+        if _try_incremental_cn(existing_local, conn, args, config):
+            return 0
+        return _print_existing_results(existing_local, config)
 
     paper, record, resolver_info = resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=existing_local)
     resolved = resolver_info.get('status') == 'resolved'
@@ -1347,6 +1357,10 @@ def cmd_pdf(args, config):
 
     canonical = get_paper(conn, canonical_id)
     if canonical and canonical.get('status') == 'interpreted' and not args.force:
+        if not cn:
+            return _print_existing_results(canonical, config)
+        if _try_incremental_cn(canonical, conn, args, config):
+            return 0
         return _print_existing_results(canonical, config)
 
     metadata = _merge_canonical_metadata(metadata, canonical)
