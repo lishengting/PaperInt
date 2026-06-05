@@ -289,15 +289,17 @@ def _candidate_identifier(candidate):
     return getattr(candidate, 'title', '') or ''
 
 
-def _fallback_pdf_paper(args, hints, pdf_sha256, resolver_error=''):
+def _fallback_pdf_paper(args, hints, pdf_sha256, resolver_error='', existing_local=None):
     local_pdf_id = f'local_pdf_{pdf_sha256[:16]}'
+    existing_paper_id = (existing_local or {}).get('paper_id', '')
+    paper_id = getattr(args, 'paper_id', None) or existing_paper_id or local_pdf_id
     title_candidates = _dedupe_strings([getattr(args, 'title', ''), *hints.get('title_candidates', [])])
     doi_candidates = _dedupe_strings([_normalize_doi_value(getattr(args, 'doi', '')), *hints.get('doi_candidates', [])])
-    title = title_candidates[0] if title_candidates else local_pdf_id
+    title = title_candidates[0] if title_candidates else paper_id
     doi = doi_candidates[0] if doi_candidates else ''
     virtual_doi = f'local-pdf:{pdf_sha256[:16]}'
     return {
-        'paper_id': getattr(args, 'paper_id', None) or local_pdf_id,
+        'paper_id': paper_id,
         'source': 'local_pdf',
         'doi': doi,
         'arxiv_id': '',
@@ -324,13 +326,13 @@ def _fallback_pdf_paper(args, hints, pdf_sha256, resolver_error=''):
 def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
     doi_candidates = _dedupe_strings([_normalize_doi_value(getattr(args, 'doi', '')), *hints.get('doi_candidates', [])])
     title_candidates = _dedupe_strings([getattr(args, 'title', ''), *hints.get('title_candidates', [])])
-    paper_id_override = getattr(args, 'paper_id', None) or (existing_local or {}).get('paper_id')
+    paper_id_override = getattr(args, 'paper_id', None)
     last_error = ''
 
     try:
         resolver, _info_md = _load_paper_info_modules()
     except Exception as e:
-        paper = _fallback_pdf_paper(args, hints, pdf_sha256, str(e))
+        paper = _fallback_pdf_paper(args, hints, pdf_sha256, str(e), existing_local=existing_local)
         return paper, None, {'status': 'fallback', 'error': str(e), 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
 
     for doi in doi_candidates:
@@ -366,7 +368,7 @@ def resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=None):
         except Exception as e:
             last_error = str(e)
 
-    paper = _fallback_pdf_paper(args, hints, pdf_sha256, last_error)
+    paper = _fallback_pdf_paper(args, hints, pdf_sha256, last_error, existing_local=existing_local)
     return paper, None, {'status': 'fallback', 'error': last_error, 'identifier': '', 'doi_candidates': doi_candidates, 'title_candidates': title_candidates}
 
 
@@ -1292,9 +1294,27 @@ def cmd_pdf(args, config):
         return 0
 
     paper, record, resolver_info = resolve_pdf_metadata(args, hints, pdf_sha256, existing_local=existing_local)
+    resolved = resolver_info.get('status') == 'resolved'
+    paper_id_for_lookup = paper.get('paper_id') or local_pdf_id
     if not paper.get('paper_id'):
         paper['paper_id'] = getattr(args, 'paper_id', None) or local_pdf_id
+    if resolved:
+        paper.pop('issn_is_virtual', None)
+        paper.pop('local_unresolved', None)
+        paper.pop('doi_is_virtual', None)
+        paper.pop('virtual_doi', None)
+        paper.pop('local_pdf_id', None)
+        paper.pop('resolver_error', None)
+        if not paper.get('issn'):
+            paper['issn'] = _raw_metadata_value((record.identity.raw if record else {}), ('issn', 'ISSN', 'issns'))
+        if paper.get('issn') == LOCAL_UNRESOLVED_ISSN:
+            paper['issn'] = ''
     metadata = _build_pdf_import_metadata(paper, hints, pdf_path, pdf_sha256, resolver_info)
+    if resolved:
+        metadata['local_unresolved'] = False
+        metadata['issn_is_virtual'] = False
+        metadata['doi_is_virtual'] = False
+    paper_id_for_lookup = paper.get('paper_id') or local_pdf_id
 
     if getattr(args, 'dry_run', False):
         existing = existing_local or _get_paper_by_doi(conn, metadata.get('doi'))
@@ -1314,6 +1334,16 @@ def cmd_pdf(args, config):
     if not canonical_id:
         ts_print("Failed to create database row for local PDF", file=sys.stderr)
         return 1
+
+    if resolved and paper_id_for_lookup != local_pdf_id and paper_id_for_lookup != canonical_id:
+        existing_resolved = get_paper(conn, paper_id_for_lookup)
+        if existing_resolved:
+            canonical_id = existing_resolved.get('paper_id')
+        else:
+            conn.execute("UPDATE papers SET paper_id = ? WHERE paper_id = ?",
+                         [paper_id_for_lookup, canonical_id])
+            conn.commit()
+            canonical_id = paper_id_for_lookup
 
     canonical = get_paper(conn, canonical_id)
     if canonical and canonical.get('status') == 'interpreted' and not args.force:
