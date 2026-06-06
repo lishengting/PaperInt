@@ -998,6 +998,163 @@ async def _do_download_via_publisher(doi_url, output_path, chrome_bin, timeout,
         chrome.stop()
 
 
+async def _do_discover_supplements_via_publisher(article_url, chrome_bin, timeout,
+                                                  headless, profile_dir=None, wait=10,
+                                                  xvfb=True, captcha_enabled=False,
+                                                  captcha_api_key='', stealth_enabled=False,
+                                                  aabots_stealth=False,
+                                                  aabots_handoff=None):
+    from playwright.async_api import async_playwright
+
+    result = {'success': False, 'links': [], 'final_url': None, 'message': ''}
+    mode = 'headless' if headless else 'headed'
+    chrome = ChromeInstance(chrome_bin=chrome_bin or _pick_chrome(),
+                            headless=headless,
+                            profile_dir=profile_dir,
+                            xvfb=xvfb)
+    try:
+        chrome.start()
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(chrome.cdp_url)
+            ctx = browser.contexts[0]
+            handoff_url = await _apply_aabots_handoff(ctx, aabots_handoff, f'  [publisher-sm:{mode}]')
+            page = await ctx.new_page()
+            if stealth_enabled and _STEALTH_AVAILABLE:
+                await Stealth().apply_stealth_async(page)
+            if aabots_stealth:
+                await _apply_enhanced_stealth(page)
+
+            target_url = handoff_url or article_url
+            print(f"  [publisher-sm:{mode}] URL: {target_url}", file=sys.stderr)
+            await page.goto(target_url, wait_until='domcontentloaded', timeout=timeout * 1000)
+            await _wait_for_url_stable(page, max_wait=max(5, min(20, timeout // 3)))
+            if wait:
+                await asyncio.sleep(wait)
+
+            snapshot_loaded = False
+            page_ready = await _wait_for_page(page, 30,
+                                              captcha_enabled=captcha_enabled,
+                                              captcha_api_key=captcha_api_key,
+                                              log_prefix=f'  [publisher-sm:{mode}]')
+            if not page_ready:
+                if aabots_handoff and aabots_handoff.get('html'):
+                    await page.set_content(aabots_handoff['html'], wait_until='domcontentloaded',
+                                           timeout=timeout * 1000)
+                    snapshot_loaded = True
+                else:
+                    result['message'] = 'Anti-bot challenge did not resolve'
+                    return result
+
+            try:
+                link_count = await _safe_eval(page, '() => document.querySelectorAll("a").length')
+            except Exception:
+                result['message'] = 'Page navigation destroyed execution context'
+                return result
+            if link_count < 5 and not snapshot_loaded:
+                result['message'] = f'Page has no content ({link_count} links), likely blocked'
+                return result
+
+            try:
+                links = await _safe_eval(page, '''() => {
+                    const positive = [
+                        'supplement', 'supplementary', 'supplemental', 'suppl',
+                        'supporting information', 'supporting material',
+                        'supplementary data', 'source data', 'additional file',
+                        'extended data', 'appendix', 'table s', 'figure s',
+                        'mmc', 'moesm', 'esm', 'supinfo'
+                    ];
+                    const negative = [
+                        'login', 'signin', 'sign-in', 'subscribe', 'citation',
+                        'cite', 'rights', 'permissions', 'reprints', 'share',
+                        'twitter', 'facebook', 'linkedin', 'privacy', 'terms'
+                    ];
+                    const files = ['.pdf', '.zip', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.tsv', '.txt', '.xml', '.tar', '.gz', '.ppt', '.pptx'];
+                    const found = [];
+                    const add = (href, text, source) => {
+                        if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) return;
+                        let url;
+                        try { url = new URL(href, location.href).href; } catch (e) { return; }
+                        const hay = ((text || '') + ' ' + url).toLowerCase();
+                        if (negative.some(x => hay.includes(x))) return;
+                        const hasPositive = positive.some(x => hay.includes(x));
+                        const hasFile = files.some(x => new URL(url).pathname.toLowerCase().endsWith(x));
+                        if (!hasPositive && !hasFile) return;
+                        found.push({url, label: (text || '').trim(), source});
+                    };
+                    document.querySelectorAll('a, button').forEach(el => {
+                        const href = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-download-url') || '';
+                        const text = [el.innerText, el.getAttribute('title'), el.getAttribute('aria-label'), el.getAttribute('download')].filter(Boolean).join(' ');
+                        add(href, text, el.tagName.toLowerCase());
+                    });
+                    document.querySelectorAll('meta, link').forEach(el => {
+                        const href = el.getAttribute('href') || el.getAttribute('content') || '';
+                        const text = [el.getAttribute('rel'), el.getAttribute('name'), el.getAttribute('property'), el.getAttribute('title')].filter(Boolean).join(' ');
+                        add(href, text, el.tagName.toLowerCase());
+                    });
+                    return found;
+                }''')
+            except Exception:
+                result['message'] = 'Page navigation destroyed execution context'
+                return result
+
+            seen = set()
+            unique = []
+            for link in links or []:
+                url = link.get('url')
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                unique.append(link)
+            result.update({'success': True, 'links': unique, 'final_url': page.url, 'message': ''})
+            return result
+    except Exception as e:
+        result['message'] = str(e)
+        return result
+    finally:
+        chrome.stop()
+
+
+async def discover_supplements_via_publisher(url, output_dir='.', chrome_bin=None,
+                                             timeout=60, fallback_level=2, wait=10,
+                                             captcha_enabled=False, captcha_api_key='',
+                                             stealth_enabled=False, aabots_stealth=False,
+                                             aabots_handoff_path=None, headless_first=False):
+    aabots_handoff = _load_aabots_handoff(aabots_handoff_path)
+    article_url = aabots_handoff.get('final_url') if aabots_handoff and aabots_handoff.get('final_url') else url
+    profile_dir = os.path.join(output_dir, 'chrome_profile')
+    os.makedirs(profile_dir, exist_ok=True)
+    orig_display = os.environ.get('DISPLAY')
+    result = {'success': False, 'links': [], 'final_url': None, 'message': ''}
+
+    async def _try(headless, xvfb, label):
+        print(f"  [publisher-sm] trying {label}...", file=sys.stderr)
+        return await _do_discover_supplements_via_publisher(
+            article_url, chrome_bin, timeout, headless=headless,
+            profile_dir=profile_dir, wait=wait, xvfb=xvfb,
+            captcha_enabled=captcha_enabled, captcha_api_key=captcha_api_key,
+            stealth_enabled=stealth_enabled or _STEALTH_AVAILABLE,
+            aabots_stealth=aabots_stealth, aabots_handoff=aabots_handoff)
+
+    if fallback_level < 1:
+        result['message'] = 'Browser fallback disabled'
+        return result
+
+    if headless_first or fallback_level == 1:
+        result = await _try(True, False, 'headless Chrome')
+        if result.get('success') or fallback_level < 2:
+            return result
+
+    result = await _try(False, True, 'headed Chrome (Xvfb)')
+    if result.get('success') or fallback_level < 3:
+        return result
+
+    if orig_display:
+        os.environ['DISPLAY'] = orig_display
+    else:
+        os.environ.pop('DISPLAY', None)
+    return await _try(False, False, 'headed Chrome (system display)')
+
+
 async def download_via_publisher(doi=None, pmid=None, output_dir='.',
                                   chrome_bin=None, timeout=60,
                                   fallback_level=2, wait=10,
@@ -1173,6 +1330,9 @@ def main():
         description='Download paper PDF via DOI → publisher page')
     p.add_argument('--doi', default=None, help='Paper DOI')
     p.add_argument('--pmid', default=None, help='PubMed ID (resolves DOI automatically)')
+    p.add_argument('--url', default=None, help='Article URL for supplement discovery')
+    p.add_argument('--discover-supplements', action='store_true',
+                   help='Discover supplementary-material links and print JSON')
     p.add_argument('-o', '--output-dir', default='.',
                    help='Output directory for PDF (default: .)')
     p.add_argument('--chrome-bin', default=None,
@@ -1195,6 +1355,28 @@ def main():
     p.add_argument('--headless', action='store_true', default=False,
                    help='Try headless Chrome before headed fallbacks (default: headed/Xvfb first)')
     args = p.parse_args()
+
+    if args.discover_supplements:
+        url = args.url
+        doi = args.doi
+        if not url:
+            if args.pmid and not doi:
+                doi = doi_from_pmid(args.pmid)
+            if doi:
+                url = f'https://doi.org/{doi}'
+        if not url:
+            p.error('Either --url, --doi, or --pmid is required for --discover-supplements')
+        result = asyncio.run(discover_supplements_via_publisher(
+            url, output_dir=args.output_dir, chrome_bin=args.chrome_bin,
+            timeout=args.timeout, fallback_level=args.fallback_level,
+            wait=args.wait, captcha_enabled=args.captcha,
+            captcha_api_key=args.twocap_api,
+            stealth_enabled=args.stealth,
+            aabots_stealth=args.aabots_stealth,
+            aabots_handoff_path=args.aabots_handoff,
+            headless_first=args.headless))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get('success') else 1)
 
     if not args.doi and not args.pmid:
         p.error('Either --doi or --pmid is required')

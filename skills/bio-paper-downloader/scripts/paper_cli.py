@@ -12,6 +12,7 @@ Usage:
 """
 import argparse
 import json
+import mimetypes
 import os
 import random
 import re
@@ -29,6 +30,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import asyncio
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 
 os.environ.setdefault('NODE_NO_WARNINGS', '1')
 
@@ -38,7 +40,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from paper_db import (get_conn, get_db_path, get_papers_by_status,
                       is_downloaded, mark_downloaded, mark_download_failed,
                       get_paper, get_stats, load_cnsp_journal_set, filter_cnsp_papers,
-                      load_cns_journal_set)
+                      load_cns_journal_set, update_supplement_metadata,
+                      upsert_single_paper)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -660,6 +663,654 @@ def make_paper(source, paper_id, title, authors, abstract, date, category,
 
 
 # ---------------------------------------------------------------------------
+# Supplementary-material discovery and download helpers
+# ---------------------------------------------------------------------------
+
+_SUPPLEMENT_POSITIVE_PHRASES = (
+    'supplementary material', 'supplementary materials',
+    'supplemental material', 'supplemental materials',
+    'supplementary information', 'supplemental information',
+    'supporting information', 'supporting material', 'supporting materials',
+    'supplementary data', 'supplemental data', 'source data',
+    'additional file', 'additional files', 'extended data', 'appendix',
+    'supplement', 'supplemental', 'supplementary', 'suppl', 'suppinfo',
+    'table s', 'figure s', 'fig. s', 'data s', 'dataset',
+)
+
+_SUPPLEMENT_URL_MARKERS = (
+    'supplement', 'supplementary', 'supplemental', 'suppl', 'suppinfo',
+    'supporting-information', 'supporting_information', 'supportinginfo',
+    'supporting-material', 'additional_file', 'additional-files',
+    'source-data', 'sourcedata', 'mmc', 'moesm', 'esm', 'supinfo',
+)
+
+_SUPPLEMENT_FILE_EXTENSIONS = (
+    '.pdf', '.zip', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.tsv',
+    '.txt', '.xml', '.tar', '.gz', '.tgz', '.ppt', '.pptx', '.rtf',
+)
+
+_SUPPLEMENT_NEGATIVE_MARKERS = (
+    'login', 'signin', 'sign-in', 'subscribe', 'cart', 'permissions',
+    'rights', 'reprints', 'citation', 'cite', 'reference', 'references',
+    'share', 'email', 'twitter', 'facebook', 'linkedin', 'privacy', 'terms',
+    'cookie', 'metrics', 'alerts', 'recommend', 'related-articles',
+)
+
+_SUPPLEMENT_TRACKING_PARAMS = {
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+}
+
+_SUPPLEMENT_HTML_LIMIT = 3_000_000
+
+
+class _SupplementLinkParser(HTMLParser):
+    def __init__(self, base_url):
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.links = []
+        self._recent_text = ''
+        self._current = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = {k.lower(): v for k, v in attrs if k}
+        if tag in ('a', 'button'):
+            href = (attrs.get('href') or attrs.get('data-href') or
+                    attrs.get('data-url') or attrs.get('data-download-url'))
+            if not href:
+                return
+            label = ' '.join(
+                v for v in (
+                    self._recent_text[-240:], attrs.get('title'),
+                    attrs.get('aria-label'), attrs.get('download')
+                ) if v
+            )
+            self._current = {
+                'tag': tag,
+                'href': href,
+                'label_parts': [label],
+            }
+            return
+
+        if tag in ('link', 'meta'):
+            href = attrs.get('href') or attrs.get('content')
+            if not href:
+                return
+            label = ' '.join(
+                v for v in (
+                    attrs.get('rel'), attrs.get('name'), attrs.get('property'),
+                    attrs.get('title'), attrs.get('aria-label')
+                ) if v
+            )
+            self._add_link(href, label)
+
+    def handle_endtag(self, tag):
+        if self._current and tag == self._current['tag']:
+            self._add_link(self._current['href'], ' '.join(self._current['label_parts']))
+            self._current = None
+
+    def handle_data(self, data):
+        text = ' '.join((data or '').split())
+        if not text:
+            return
+        if self._current:
+            self._current['label_parts'].append(text)
+        else:
+            self._recent_text = (self._recent_text + ' ' + text)[-500:]
+
+    def _add_link(self, href, label):
+        url = urllib.parse.urljoin(self.base_url, href)
+        self.links.append({'url': url, 'label': ' '.join(str(label or '').split())})
+
+
+def _resolve_paper_dir(paper, data_dir, conn=None, create=False):
+    pid = paper.get('paper_id', '')
+    safe_pid = sanitize(pid)
+    if conn is not None and pid:
+        try:
+            row = get_paper(conn, pid)
+        except Exception:
+            row = None
+        dir_name = row.get('dir_name') if row else None
+        if dir_name:
+            paper_dir = os.path.join(data_dir, dir_name)
+            if os.path.isdir(paper_dir) or create:
+                if create:
+                    os.makedirs(paper_dir, exist_ok=True)
+                return paper_dir, dir_name
+
+    if safe_pid and os.path.isdir(data_dir):
+        meta_name = f'{safe_pid}.metadata.json'
+        for root, _dirs, files in os.walk(data_dir):
+            if meta_name in files:
+                return root, os.path.relpath(root, data_dir)
+
+    dirname = title_to_dirname(paper.get('title', ''))
+    paper_dir = os.path.join(data_dir, dirname)
+    if os.path.isdir(paper_dir):
+        meta_file = os.path.join(paper_dir, f'{safe_pid}.metadata.json')
+        if safe_pid and not os.path.exists(meta_file):
+            dirname = f'{dirname}_{safe_pid}'[:256]
+            paper_dir = os.path.join(data_dir, dirname)
+    if create:
+        os.makedirs(paper_dir, exist_ok=True)
+    return paper_dir, dirname
+
+
+def _canonical_supplement_url(url):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        return url
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query = [(k, v) for k, v in query if k.lower() not in _SUPPLEMENT_TRACKING_PARAMS]
+    return urllib.parse.urlunsplit((
+        parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
+        urllib.parse.urlencode(query, doseq=True), ''
+    ))
+
+
+def _score_supplement_link(url, label=''):
+    text = f'{label or ""} {url or ""}'.lower()
+    score = 0
+    for phrase in _SUPPLEMENT_POSITIVE_PHRASES:
+        if phrase in text:
+            score += 80 if 'supp' in phrase or 'supporting' in phrase else 45
+    path = urllib.parse.urlsplit(url or '').path.lower()
+    if any(marker in text for marker in _SUPPLEMENT_URL_MARKERS):
+        score += 60
+    if any(path.endswith(ext) for ext in _SUPPLEMENT_FILE_EXTENSIONS):
+        score += 15
+    if re.search(r'\b(?:table|fig(?:ure)?|data)[-_\s.]?s\d+\b', text):
+        score += 60
+    if any(marker in text for marker in _SUPPLEMENT_NEGATIVE_MARKERS):
+        score -= 120
+    if 'download pdf' in text and score < 50:
+        score -= 40
+    return score
+
+
+def _add_supplement_candidate(candidates, url, *, label='', source='', referer=None,
+                              score=None, link_type=None, threshold=50):
+    if not url:
+        return
+    url = str(url).strip()
+    if not url or url.startswith('#') or url.lower().startswith(('mailto:', 'javascript:', 'tel:')):
+        return
+    if referer and not url.lower().startswith(('http://', 'https://')):
+        url = urllib.parse.urljoin(referer, url)
+    if not url.lower().startswith(('http://', 'https://')):
+        return
+    computed_score = _score_supplement_link(url, label) if score is None else score
+    if computed_score < threshold:
+        return
+    candidates.append({
+        'url': url,
+        'label': ' '.join(str(label or '').split())[:500],
+        'source': source or 'unknown',
+        'score': computed_score,
+        'referer': referer,
+        'type': link_type,
+    })
+
+
+def _iter_link_values(value, source='metadata'):
+    if not value:
+        return
+    if isinstance(value, str):
+        yield value, '', source, None
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _iter_link_values(item, source=source)
+        return
+    if isinstance(value, dict):
+        if value.get('url'):
+            label = value.get('type') or value.get('label') or value.get('title') or value.get('name') or ''
+            yield value['url'], label, source, value.get('type')
+        for key, item in value.items():
+            if key in {'url', 'label', 'title', 'name'}:
+                continue
+            if isinstance(item, str):
+                yield item, str(key), source, str(key)
+            elif isinstance(item, (dict, list)):
+                yield from _iter_link_values(item, source=source)
+
+
+def _metadata_supplement_candidates(paper):
+    candidates = []
+    for field in ('supplement', 'supplements', 'full_text_links', 'links'):
+        for url, label, source, link_type in _iter_link_values(paper.get(field), source=f'paper.{field}') or []:
+            text = f'{label} {url}'
+            if field in ('supplement', 'supplements') or _score_supplement_link(url, text) >= 50:
+                _add_supplement_candidate(candidates, url, label=label, source=source,
+                                          link_type=link_type, score=max(120, _score_supplement_link(url, text)),
+                                          threshold=0)
+    for alt in paper.get('_alt_sources') or []:
+        for url, label, source, link_type in _iter_link_values(alt.get('full_text_links'), source='alt.full_text_links') or []:
+            if _score_supplement_link(url, label) >= 50:
+                _add_supplement_candidate(candidates, url, label=label, source=source,
+                                          link_type=link_type, score=100, threshold=0)
+    return candidates
+
+
+def _paper_info_supplement_candidates(paper):
+    candidates = []
+    if not _PI_AVAILABLE:
+        return candidates
+    try:
+        from paper_info.fetchers.helpers import classify_link
+        record = _pi_resolver.get_paper(_make_paper_info_identifier(paper), depth='full', timeout=8.0)
+    except Exception as e:
+        print(f"  [sm] paper_info supplement lookup unavailable: {e}", file=sys.stderr)
+        return candidates
+
+    supplement = getattr(record, 'supplement', None) or {}
+    for item in supplement.get('files') or []:
+        url = item.get('url') if isinstance(item, dict) else None
+        link_type = item.get('type') if isinstance(item, dict) else None
+        _add_supplement_candidate(candidates, url, label=link_type or 'supplement',
+                                  source='paper_info.supplement', link_type=link_type,
+                                  score=160, threshold=0)
+
+    for link in getattr(record, 'full_text_links', None) or []:
+        if not isinstance(link, dict):
+            continue
+        for link_type, url in link.items():
+            try:
+                classified = classify_link(url, default=link_type)
+            except Exception:
+                classified = link_type
+            label = f'{link_type} {classified}'
+            if classified == 'supplement' or _score_supplement_link(url, label) >= 50:
+                _add_supplement_candidate(candidates, url, label=label,
+                                          source='paper_info.full_text_links',
+                                          link_type=classified, score=140, threshold=0)
+    return candidates
+
+
+def _article_page_urls(paper):
+    urls = []
+    for key in ('source_url', 'abs_url', 'article_url', 'landing_url'):
+        value = paper.get(key)
+        if value:
+            urls.append(value)
+    doi = paper.get('doi')
+    if doi:
+        urls.append(f'https://doi.org/{doi}')
+    pmc_id = paper.get('pmc_id') or paper.get('pmcid')
+    if pmc_id:
+        urls.append(f'https://pmc.ncbi.nlm.nih.gov/articles/{pmc_id}/')
+    pdf_url = paper.get('pdf_url')
+    if pdf_url and not pdf_url.lower().endswith('.pdf'):
+        urls.append(pdf_url)
+    seen = set()
+    unique = []
+    for url in urls:
+        if not url or url in seen or not str(url).startswith(('http://', 'https://')):
+            continue
+        seen.add(url)
+        unique.append(url)
+    return unique
+
+
+def _looks_like_html(content_type, data):
+    ctype = (content_type or '').lower()
+    if 'text/html' in ctype or 'application/xhtml' in ctype:
+        return True
+    prefix = (data or b'')[:200].lstrip().lower()
+    return prefix.startswith(b'<!doctype html') or prefix.startswith(b'<html')
+
+
+def _decode_response_text(data, headers):
+    charset = None
+    try:
+        charset = headers.get_content_charset()
+    except Exception:
+        pass
+    return data.decode(charset or 'utf-8', errors='replace')
+
+
+def _static_html_supplement_candidates(paper, config):
+    candidates = []
+    for page_url in _article_page_urls(paper):
+        try:
+            req = urllib.request.Request(page_url, headers={
+                'User-Agent': ua(config),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            })
+            with _urlopen_with_retry(req, config, attempts=1) as r:
+                data = r.read(_SUPPLEMENT_HTML_LIMIT)
+                response_headers = r.headers
+                content_type = response_headers.get('Content-Type', '')
+                final_url = r.geturl()
+            if not _looks_like_html(content_type, data):
+                continue
+            parser = _SupplementLinkParser(final_url)
+            parser.feed(_decode_response_text(data, response_headers))
+        except Exception as e:
+            print(f"  [sm] static page scan failed: {page_url} ({e})", file=sys.stderr)
+            continue
+        for link in parser.links:
+            score = _score_supplement_link(link['url'], link.get('label', ''))
+            _add_supplement_candidate(candidates, link['url'], label=link.get('label', ''),
+                                      source='static_html', referer=final_url,
+                                      score=score, threshold=50)
+    return candidates
+
+
+def _browser_supplement_candidates(paper, config, fallback_level=2,
+                                   captcha_enabled=False, stealth_enabled=False,
+                                   aabots=None, headless_first=False):
+    if fallback_level < 1:
+        return []
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'download_publisher_pdf.py')
+    tmpdir = _data_tmp(config)
+    browser_wait = cfg(config, 'download.browser_wait_seconds', 10)
+    candidates = []
+    for page_url in _article_page_urls(paper)[:3]:
+        cmd = [sys.executable, script, '--discover-supplements', '--url', page_url,
+               '-o', tmpdir, '--timeout', '90', '--fallback-level', str(fallback_level),
+               '--wait', str(browser_wait)]
+        if captcha_enabled:
+            cmd.append('--captcha')
+            api_key_env = cfg(config, 'download.twocaptcha_api_key_env', 'TWOCAPTCHA_API_KEY')
+            twocap_api = os.environ.get(api_key_env, '')
+            if not twocap_api and len(api_key_env) > 20:
+                twocap_api = api_key_env
+            if twocap_api:
+                cmd.extend(['--twocap-api', twocap_api])
+        if stealth_enabled:
+            cmd.append('--stealth')
+        if headless_first:
+            cmd.append('--headless')
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=240, env={**os.environ, 'PYTHONUNBUFFERED': '1'})
+        except Exception as e:
+            print(f"  [sm] browser supplement discovery failed: {e}", file=sys.stderr)
+            continue
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr)
+        if result.returncode != 0:
+            continue
+        try:
+            json_line = next(
+                line for line in reversed(result.stdout.splitlines())
+                if line.strip().startswith('{')
+            )
+            payload = json.loads(json_line)
+        except Exception as e:
+            print(f"  [sm] browser discovery JSON parse failed: {e}", file=sys.stderr)
+            continue
+        final_url = payload.get('final_url') or page_url
+        for link in payload.get('links') or []:
+            label = link.get('label') or ''
+            url = link.get('url')
+            _add_supplement_candidate(candidates, url, label=label,
+                                      source='browser_html', referer=final_url,
+                                      link_type=link.get('source'))
+        if candidates:
+            break
+    return candidates
+
+
+def _dedupe_supplement_candidates(candidates):
+    best = {}
+    for candidate in candidates:
+        key = _canonical_supplement_url(candidate.get('url', ''))
+        if not key:
+            continue
+        current = best.get(key)
+        if current is None or candidate.get('score', 0) > current.get('score', 0):
+            best[key] = candidate
+    return sorted(best.values(), key=lambda c: c.get('score', 0), reverse=True)
+
+
+def discover_supplement_links(paper, config, fallback_level=2, captcha_enabled=False,
+                              stealth_enabled=False, aabots=None, headless_first=False):
+    candidates = []
+    candidates.extend(_metadata_supplement_candidates(paper))
+    candidates.extend(_paper_info_supplement_candidates(paper))
+    candidates.extend(_static_html_supplement_candidates(paper, config))
+    candidates = _dedupe_supplement_candidates(candidates)
+    if not candidates:
+        candidates.extend(_browser_supplement_candidates(
+            paper, config, fallback_level=fallback_level,
+            captcha_enabled=captcha_enabled, stealth_enabled=stealth_enabled,
+            aabots=aabots, headless_first=headless_first))
+        candidates = _dedupe_supplement_candidates(candidates)
+    return candidates
+
+
+def _filename_from_content_disposition(value):
+    if not value:
+        return None
+    m = re.search(r"filename\*\s*=\s*(?:UTF-8'')?([^;]+)", value, re.I)
+    if m:
+        return urllib.parse.unquote(m.group(1).strip().strip('"'))
+    m = re.search(r'filename\s*=\s*"?([^";]+)"?', value, re.I)
+    if m:
+        return urllib.parse.unquote(m.group(1).strip())
+    return None
+
+
+def _extension_from_content_type(content_type):
+    ctype = (content_type or '').split(';', 1)[0].strip().lower()
+    explicit = {
+        'application/vnd.ms-excel': '.xls',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+        'application/msword': '.doc',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+        'application/zip': '.zip',
+        'application/x-zip-compressed': '.zip',
+        'text/tab-separated-values': '.tsv',
+    }
+    return explicit.get(ctype) or mimetypes.guess_extension(ctype or '') or ''
+
+
+def _safe_supplement_filename(name, default_ext=''):
+    name = urllib.parse.unquote(str(name or '')).split('?', 1)[0].split('#', 1)[0]
+    name = os.path.basename(name.strip())
+    name = sanitize(name).strip('._ ')
+    if not name:
+        return ''
+    if default_ext and not os.path.splitext(name)[1]:
+        name = f'{name}{default_ext}'
+    return name[:180]
+
+
+def _filename_from_label(label, default_ext=''):
+    label = re.sub(r'[^A-Za-z0-9._-]+', '_', str(label or '').strip()).strip('_')
+    label = re.sub(r'_+', '_', label)[:80]
+    if not label or label.lower() in {'download', 'view', 'supplement', 'supplementary'}:
+        return ''
+    if default_ext and not os.path.splitext(label)[1]:
+        label = f'{label}{default_ext}'
+    return _safe_supplement_filename(label)
+
+
+def _guess_supplement_filename(url, headers=None, label='', index=1):
+    headers = headers or {}
+    content_type = headers.get('Content-Type', '') if hasattr(headers, 'get') else ''
+    default_ext = _extension_from_content_type(content_type)
+    disposition = headers.get('Content-Disposition', '') if hasattr(headers, 'get') else ''
+    name = _safe_supplement_filename(_filename_from_content_disposition(disposition), default_ext)
+    if name:
+        return name
+    path_name = _safe_supplement_filename(urllib.parse.urlsplit(url or '').path, default_ext)
+    if path_name and path_name.lower() not in {'download', 'view', 'full', 'article'}:
+        return path_name
+    label_name = _filename_from_label(label, default_ext)
+    if label_name:
+        return label_name
+    return f'supplement_{index:02d}{default_ext or ".bin"}'
+
+
+def _target_supplement_path(supplements_dir, filename, force=False, used_names=None):
+    used_names = used_names if used_names is not None else set()
+    filename = _safe_supplement_filename(filename) or 'supplement.bin'
+    base, ext = os.path.splitext(filename)
+    target = os.path.join(supplements_dir, filename)
+    if os.path.exists(target) and not force:
+        return target, True
+    if force:
+        used_names.add(filename)
+        return target, False
+    n = 2
+    while filename in used_names or os.path.exists(target):
+        filename = f'{base}-{n}{ext}'
+        target = os.path.join(supplements_dir, filename)
+        n += 1
+    used_names.add(filename)
+    return target, False
+
+
+def _record_for_supplement(candidate, status, paper_dir, path=None, **extra):
+    record = {
+        'url': candidate.get('url'),
+        'final_url': extra.pop('final_url', candidate.get('url')),
+        'source': candidate.get('source'),
+        'label': candidate.get('label'),
+        'status': status,
+    }
+    if path:
+        record['path'] = os.path.relpath(path, paper_dir)
+        record['filename'] = os.path.basename(path)
+    for key, value in extra.items():
+        if value is not None:
+            record[key] = value
+    return record
+
+
+def _nested_html_supplement_candidate(html_text, base_url):
+    parser = _SupplementLinkParser(base_url)
+    parser.feed(html_text)
+    candidates = []
+    for link in parser.links:
+        score = _score_supplement_link(link['url'], link.get('label', ''))
+        if score >= 50 and _canonical_supplement_url(link['url']) != _canonical_supplement_url(base_url):
+            candidates.append({
+                'url': link['url'],
+                'label': link.get('label', ''),
+                'source': 'html_landing',
+                'score': score,
+                'referer': base_url,
+            })
+    return max(candidates, key=lambda c: c.get('score', 0)) if candidates else None
+
+
+def _download_supplement_url(candidate, supplements_dir, paper_dir, config, index,
+                             force=False, used_names=None, depth=0):
+    url = candidate.get('url')
+    pre_name = _guess_supplement_filename(url, label=candidate.get('label', ''), index=index)
+    pre_path = os.path.join(supplements_dir, _safe_supplement_filename(pre_name) or pre_name)
+    if os.path.exists(pre_path) and not force:
+        return _record_for_supplement(candidate, 'skipped', paper_dir, pre_path)
+
+    headers = {'User-Agent': ua(config)}
+    if candidate.get('referer'):
+        headers['Referer'] = candidate['referer']
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with _urlopen_with_retry(req, config, attempts=2) as r:
+            data = r.read()
+            response_headers = r.headers
+            final_url = r.geturl()
+            content_type = response_headers.get('Content-Type', '')
+    except Exception as e:
+        return _record_for_supplement(candidate, 'failed', paper_dir,
+                                      error=str(e))
+
+    if _looks_like_html(content_type, data):
+        if depth < 1:
+            nested = _nested_html_supplement_candidate(
+                _decode_response_text(data, response_headers), final_url)
+            if nested:
+                nested.setdefault('referer', final_url)
+                return _download_supplement_url(nested, supplements_dir, paper_dir,
+                                                config, index, force=force,
+                                                used_names=used_names, depth=depth + 1)
+        return _record_for_supplement(candidate, 'failed', paper_dir,
+                                      final_url=final_url, content_type=content_type,
+                                      error='supplement link returned HTML landing page')
+
+    filename = _guess_supplement_filename(final_url, response_headers,
+                                          candidate.get('label', ''), index)
+    path, skip = _target_supplement_path(supplements_dir, filename, force=force,
+                                         used_names=used_names)
+    if skip:
+        return _record_for_supplement(candidate, 'skipped', paper_dir, path,
+                                      final_url=final_url, content_type=content_type,
+                                      bytes=len(data))
+    with open(path, 'wb') as f:
+        f.write(data)
+    return _record_for_supplement(candidate, 'downloaded', paper_dir, path,
+                                  final_url=final_url, content_type=content_type,
+                                  bytes=len(data))
+
+
+def _write_supplements_manifest(supplements_dir, info):
+    os.makedirs(supplements_dir, exist_ok=True)
+    with open(os.path.join(supplements_dir, 'supplements.json'), 'w', encoding='utf-8') as f:
+        json.dump(info, f, ensure_ascii=False, indent=2)
+
+
+def download_supplements(paper, paper_dir, config, conn=None, force=False,
+                         fallback_level=2, captcha_enabled=False,
+                         stealth_enabled=False, aabots=None, headless_first=False):
+    pid = paper.get('paper_id', '')
+    checked_at = datetime.now().isoformat()
+    print(f"  [sm] discovering supplementary materials...", file=sys.stderr)
+    candidates = discover_supplement_links(
+        paper, config, fallback_level=fallback_level,
+        captcha_enabled=captcha_enabled, stealth_enabled=stealth_enabled,
+        aabots=aabots, headless_first=headless_first)
+
+    results = []
+    if candidates:
+        supplements_dir = os.path.join(paper_dir, 'supplements')
+        os.makedirs(supplements_dir, exist_ok=True)
+        used_names = set()
+        for index, candidate in enumerate(candidates, 1):
+            results.append(_download_supplement_url(
+                candidate, supplements_dir, paper_dir, config, index,
+                force=force, used_names=used_names))
+    else:
+        supplements_dir = os.path.join(paper_dir, 'supplements')
+        print(f"  [sm] no supplementary materials found", file=sys.stderr)
+
+    downloaded = sum(1 for item in results if item.get('status') == 'downloaded')
+    skipped = sum(1 for item in results if item.get('status') == 'skipped')
+    failed = sum(1 for item in results if item.get('status') == 'failed')
+    info = {
+        'requested': True,
+        'found': bool(candidates),
+        'candidate_count': len(candidates),
+        'downloaded_count': downloaded,
+        'skipped_count': skipped,
+        'failed_count': failed,
+        'last_checked_at': checked_at,
+        'last_downloaded_at': datetime.now().isoformat() if downloaded else None,
+        'force': bool(force),
+        'sources': sorted({c.get('source') for c in candidates if c.get('source')}),
+        'files': results,
+    }
+    if candidates:
+        _write_supplements_manifest(supplements_dir, info)
+    if conn is not None:
+        try:
+            update_supplement_metadata(conn, pid, info, paper=paper)
+        except Exception as e:
+            print(f"  [sm] DB metadata update failed: {e}", file=sys.stderr)
+    print(
+        f"  [sm] found={len(candidates)} downloaded={downloaded} skipped={skipped} failed={failed}",
+        file=sys.stderr,
+    )
+    return info
+
+
+# ---------------------------------------------------------------------------
 # PubMed API helpers (needed for detect_url and PMC lookup)
 # ---------------------------------------------------------------------------
 
@@ -1053,6 +1704,15 @@ def _download_browser_only(paper, config, data_dir, conn, force=False,
     Returns True on success, False on failure, None if skipped.
     """
     pid = paper.get('paper_id', '')
+
+    if conn is not None and pid:
+        try:
+            canonical_pid = upsert_single_paper(conn, paper, by_doi=True)
+            if canonical_pid:
+                pid = canonical_pid
+                paper['paper_id'] = canonical_pid
+        except Exception as e:
+            print(f"  [db] paper upsert failed: {e}", file=sys.stderr)
 
     if not force and is_downloaded(conn, pid):
         print(f"  [skip] already downloaded")
@@ -1749,7 +2409,7 @@ def _print_and_record_subprocess_failure(result, category=None, subtype=None, ta
 
 def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_level=2,
                          captcha_enabled=False, stealth_enabled=False, aabots=None,
-                         headless_first=False):
+                         headless_first=False, download_sm=False):
     """Download a paper. Returns True on success, False if unavailable, None if skipped."""
     global _LAST_DOWNLOAD_FAILURE
     _LAST_DOWNLOAD_FAILURE = None
@@ -1758,20 +2418,29 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
     pid = paper.get('paper_id', '')
     src = paper.get('source', '')
 
+    if conn is not None and pid:
+        try:
+            canonical_pid = upsert_single_paper(conn, paper, by_doi=True)
+            if canonical_pid:
+                pid = canonical_pid
+                paper['paper_id'] = canonical_pid
+        except Exception as e:
+            print(f"  [db] paper upsert failed: {e}", file=sys.stderr)
+
     if not force and is_downloaded(conn, pid):
         print(f"  [skip] already downloaded")
+        if download_sm:
+            paper_dir, _dirname = _resolve_paper_dir(paper, data_dir, conn, create=True)
+            download_supplements(
+                paper, paper_dir, config, conn=conn, force=False,
+                fallback_level=fallback_level, captcha_enabled=captcha_enabled,
+                stealth_enabled=stealth_enabled, aabots=aabots,
+                headless_first=headless_first)
         return None
 
     safe_pid = sanitize(pid)
 
-    dirname = title_to_dirname(paper.get('title', ''))
-    paper_dir = os.path.join(data_dir, dirname)
-    if os.path.isdir(paper_dir):
-        meta_file = os.path.join(paper_dir, f"{safe_pid}.metadata.json")
-        if not os.path.exists(meta_file):
-            dirname = f"{dirname}_{safe_pid}"[:256]
-            paper_dir = os.path.join(data_dir, dirname)
-    os.makedirs(paper_dir, exist_ok=True)
+    paper_dir, dirname = _resolve_paper_dir(paper, data_dir, conn, create=True)
 
     # Save metadata
     with open(os.path.join(paper_dir, f"{safe_pid}.metadata.json"), 'w', encoding='utf-8') as f:
@@ -1971,6 +2640,12 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
             f.write(pdf_data)
         mark_downloaded(conn, pid, dirname, paper)
         print(f"  OK: {len(pdf_data)} bytes")
+        if download_sm:
+            download_supplements(
+                paper, paper_dir, config, conn=conn, force=False,
+                fallback_level=fallback_level, captcha_enabled=captcha_enabled,
+                stealth_enabled=stealth_enabled, aabots=aabots,
+                headless_first=headless_first)
         return True
     else:
         failure = _LAST_DOWNLOAD_FAILURE or {
@@ -1991,7 +2666,7 @@ def _download_paper_impl(paper, config, data_dir, conn, force=False, fallback_le
 
 def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                    captcha_enabled=False, stealth_enabled=False, aabots=None,
-                   headless_first=False):
+                   headless_first=False, download_sm=False):
     """Download a paper and log resource state afterward."""
     label = _paper_resource_label(paper)
     try:
@@ -2001,7 +2676,8 @@ def download_paper(paper, config, data_dir, conn, force=False, fallback_level=2,
                                     captcha_enabled=captcha_enabled,
                                     stealth_enabled=stealth_enabled,
                                     aabots=aabots,
-                                    headless_first=headless_first)
+                                    headless_first=headless_first,
+                                    download_sm=download_sm)
     finally:
         _log_resource_state_after_paper(label)
 
@@ -2181,6 +2857,21 @@ def cmd_get(args, config):
         return 0
 
     conn = get_conn(config)
+    from aabots import resolve_methods
+    aabots_methods = resolve_methods(args.aabots) if args.aabots else []
+    download_sm = bool(getattr(args, 'sm', False) or getattr(args, 'force_sm', False))
+    force_sm = bool(getattr(args, 'force_sm', False))
+
+    if force_sm:
+        paper_dir, _dirname = _resolve_paper_dir(paper, args.data_dir, conn, create=True)
+        download_supplements(
+            paper, paper_dir, config, conn=conn, force=True,
+            fallback_level=args.fallback_level, captcha_enabled=args.captcha,
+            stealth_enabled=args.stealth, aabots=aabots_methods,
+            headless_first=args.headless)
+        print("Supplementary materials refreshed")
+        return 0
+
     if getattr(args, 'browser_only', False):
         if paper['source'] not in ('biorxiv', 'medrxiv'):
             print("Error: --browser-only only supports biorxiv/medrxiv URLs",
@@ -2193,14 +2884,20 @@ def cmd_get(args, config):
                                         stealth_enabled=args.stealth)
         finally:
             _log_resource_state_after_paper(label)
+        if download_sm and ok is not False:
+            paper_dir, _dirname = _resolve_paper_dir(paper, args.data_dir, conn, create=True)
+            download_supplements(
+                paper, paper_dir, config, conn=conn, force=False,
+                fallback_level=args.fallback_level, captcha_enabled=args.captcha,
+                stealth_enabled=args.stealth, aabots=aabots_methods,
+                headless_first=args.headless)
     else:
-        from aabots import resolve_methods
-        aabots_methods = resolve_methods(args.aabots) if args.aabots else []
         ok = download_paper(paper, config, args.data_dir, conn,
                             force=args.force, fallback_level=args.fallback_level,
                             captcha_enabled=args.captcha,
                             stealth_enabled=args.stealth,
-                            aabots=aabots_methods, headless_first=args.headless)
+                            aabots=aabots_methods, headless_first=args.headless,
+                            download_sm=download_sm)
     if ok is True:
         print("Downloaded")
     elif ok is False:
@@ -2356,6 +3053,10 @@ def main():
                     help='Parse and show paper info from the URL without downloading')
     gp.add_argument('-f', '--force', action='store_true',
                     help='Force re-download even if already downloaded')
+    gp.add_argument('--sm', action='store_true',
+                    help='Download supplementary materials into the paper supplements/ directory')
+    gp.add_argument('--force-sm', action='store_true',
+                    help='Force re-download supplementary materials only; does not download the body PDF')
     gp.add_argument('--fallback-level', type=int, default=2, choices=[0, 1, 2, 3],
                     help='Browser fallback level: 0=direct-HTTP, 1=headless-only, 2=Xvfb headed (default), 3=+system-display')
     gp.add_argument('--headless', action='store_true', default=False,

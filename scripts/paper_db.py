@@ -613,6 +613,45 @@ def upsert_single_paper(conn: sqlite3.Connection, paper: dict, *, by_doi: bool =
     return paper_id
 
 
+def update_supplement_metadata(conn: sqlite3.Connection, paper_id: str,
+                               supplement_info: dict,
+                               paper=None) -> str:
+    """Store supplementary-material info in metadata_json without schema changes."""
+    pid = paper_id or (paper or {}).get('paper_id') or (paper or {}).get('doi')
+    if not pid:
+        return ''
+
+    if paper:
+        canonical = upsert_single_paper(conn, paper, by_doi=True)
+        if canonical:
+            pid = canonical
+
+    row = conn.execute(
+        "SELECT metadata_json FROM papers WHERE paper_id = ?", (pid,)
+    ).fetchone()
+    if row is None:
+        now = _now()
+        conn.execute(
+            """INSERT OR IGNORE INTO papers
+               (paper_id, status, search_date, metadata_json, updated_at)
+               VALUES (?, 'searched', ?, ?, ?)""",
+            (pid, now, json.dumps({}, ensure_ascii=False), now),
+        )
+        row = conn.execute(
+            "SELECT metadata_json FROM papers WHERE paper_id = ?", (pid,)
+        ).fetchone()
+
+    metadata = _load_metadata(row['metadata_json'] if row else None)
+    metadata['supplementary_materials'] = supplement_info or {}
+    now = _now()
+    conn.execute(
+        "UPDATE papers SET metadata_json = ?, updated_at = ? WHERE paper_id = ?",
+        (json.dumps(metadata, ensure_ascii=False), now, pid),
+    )
+    conn.commit()
+    return pid
+
+
 # ---------------------------------------------------------------------------
 # Downloader skill operations
 # ---------------------------------------------------------------------------
