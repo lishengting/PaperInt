@@ -2,6 +2,10 @@
 if [ -f ~/.bashrc ]; then
     . ~/.bashrc
 fi
+if [ -f ~/.env ]; then
+    . ~/.env
+fi
+
 . venv/bin/activate
 
 python3 skills/bio-paper-search/scripts/paper_cli.py search -k "microbiome" --days 2
